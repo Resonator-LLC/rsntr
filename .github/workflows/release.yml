@@ -74,7 +74,12 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             archive: tar.gz
-          - os: macos-13
+          # Cross-compiled from the arm64 runner, not built on macos-13.
+          # GitHub is retiring the Intel macOS images: a macos-13 job sat
+          # queued for 43 minutes without ever being assigned a runner
+          # while every other leg finished. The macOS SDK carries both
+          # architectures, so the arm64 runner produces this natively.
+          - os: macos-14
             target: x86_64-apple-darwin
             archive: tar.gz
           - os: windows-latest

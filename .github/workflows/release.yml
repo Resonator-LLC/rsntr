@@ -87,7 +87,13 @@ jobs:
             archive: zip
     runs-on: ${{ matrix.os }}
     steps:
+      # Check out the tag being released, not the ref the workflow was
+      # dispatched from. On a tag push these are the same; on a manual
+      # re-run they are not, and building main while labelling the result
+      # with an older tag would ship artifacts that do not match it.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
 
       - name: Install Rust
         run: |

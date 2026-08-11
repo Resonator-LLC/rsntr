@@ -11,6 +11,15 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 
+# Release binaries ship over the network (npm, Homebrew, curl installers), so
+# size is a distribution cost. Measured on the rsntr bin, x86_64 linux, default
+# features: 77M plain, 56M stripped, 45M with the settings below. Fat LTO costs
+# build time (~1m15s -> ~4m30s here) and is why this is not the dev default.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
 [workspace.dependencies]
 iroh = "1"
 iroh-tickets = "1"

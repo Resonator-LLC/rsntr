@@ -1,0 +1,156 @@
+name: release
+
+# Tag-driven binary releases. Push a tag like v0.1.0 and this builds the
+# rsntr CLI for every supported platform and attaches the archives to a
+# GitHub Release. Those archives are the source of truth for the npm
+# wrapper, a Homebrew tap, and the curl installer -- none of which can
+# exist until this workflow has produced them.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Release builds are fat-LTO (see [profile.release] in Cargo.toml); a
+  # failed build after 20 minutes is worse than a slow one that succeeds.
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag and version
+        id: resolve
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      # Draft first: assets upload into it, and it only becomes visible in
+      # the publish job once every platform has succeeded. A half-populated
+      # release is worse than a late one, because installers will happily
+      # fetch a missing-platform release and fail confusingly.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.resolve.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release already exists; reusing it."
+          else
+            gh release create "${{ steps.resolve.outputs.tag }}" \
+              --draft \
+              --title "rsntr ${{ steps.resolve.outputs.version }}" \
+              --notes "Binary release of the rsntr CLI. See README for install options."
+          fi
+
+  build:
+    needs: create-release
+    strategy:
+      # One platform failing should not cancel the others; partial results
+      # make it obvious which target is broken.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      # rusqlite is built bundled (C source) and needs a musl-targeting C
+      # compiler; the linker override matches what cargo looks for.
+      - name: Install musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools musl-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: cargo build --release --target ${{ matrix.target }} -p rsntr --bin rsntr
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="rsntr-${{ needs.create-release.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cp "target/${{ matrix.target }}/release/rsntr.exe" "dist/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/rsntr" "dist/$name/"
+          fi
+          cp README.md LICENSE "dist/$name/"
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "$name.zip" "$name" >/dev/null
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+          # Per-asset checksum; the installer and the npm wrapper verify
+          # against these rather than trusting the download.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$name.${{ matrix.archive }}" > "$name.${{ matrix.archive }}.sha256"
+          else
+            shasum -a 256 "$name.${{ matrix.archive }}" > "$name.${{ matrix.archive }}.sha256"
+          fi
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="rsntr-${{ needs.create-release.outputs.version }}-${{ matrix.target }}"
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            "dist/$name.${{ matrix.archive }}" \
+            "dist/$name.${{ matrix.archive }}.sha256" \
+            --clobber
+
+  publish:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Undraft the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.create-release.outputs.tag }}" --draft=false

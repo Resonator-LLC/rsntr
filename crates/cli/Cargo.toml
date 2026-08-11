@@ -1,0 +1,48 @@
+[package]
+name = "rsntr"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[lib]
+name = "rsntr"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rsntr"
+path = "src/main.rs"
+required-features = ["web"]
+
+[features]
+default = ["mods", "web"]
+# The extism mods host (wasm modulation plugins); heavy (wasmtime), so
+# it stays a feature. The node-side handler seam is feature-free.
+mods = ["dep:resonator-mods"]
+# The axum web interface and the csv code it owns; off for embedded
+# consumers (mobile ffi) that only need the owner channel and serving.
+web = ["dep:resonator-web"]
+
+[dependencies]
+bytes = { workspace = true }
+resonator-protocol = { path = "../protocol" }
+resonator-transport = { path = "../transport" }
+resonator-node = { path = "../node" }
+resonator-authenticator = { path = "../authenticator" }
+resonator-surfaces = { path = "../surfaces" }
+resonator-web = { path = "../web", optional = true }
+resonator-mods = { path = "../mods", optional = true }
+anyhow = { workspace = true }
+blake3 = { workspace = true }
+clap = { workspace = true }
+iroh = { workspace = true }
+oxrdf = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+ulid = { workspace = true }
+
+[dev-dependencies]
+bytes = { workspace = true }
+reqwest = { workspace = true }

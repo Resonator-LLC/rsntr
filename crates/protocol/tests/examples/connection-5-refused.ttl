@@ -1,0 +1,3 @@
+[] a rsntr:Refused ;
+   rsntr:code "envelope-version" ;
+   rsntr:reason "this node speaks envelope 0.x only" .

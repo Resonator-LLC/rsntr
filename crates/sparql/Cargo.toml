@@ -1,0 +1,28 @@
+[package]
+name = "resonator-sparql"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "SPARQL-over-SQLite engine: RDF triple store with graph column, SPARQL compiled to a single SQL SELECT"
+
+[features]
+default = ["native", "bundled"]
+# Everything that touches SQLite. Off for wasm32-unknown-unknown builds,
+# where only the parser, compiler and serializers are available.
+native = ["dep:rusqlite", "dep:oxttl", "dep:oxrdf", "dep:regex"]
+# Compile and link rusqlite's bundled sqlite. Off only for the
+# crates/extension loadable-extension build, which must not carry any
+# sqlite of its own (all calls route through the host's api routines).
+bundled = ["rusqlite?/bundled"]
+
+[dependencies]
+# Not the workspace rusqlite: that one hard-enables bundled, which the
+# loadable-extension build must be able to opt out of. Keep the version
+# in sync with [workspace.dependencies].
+rusqlite = { version = "0.40", features = ["functions", "vtab"], optional = true }
+oxttl = { workspace = true, optional = true }
+oxrdf = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

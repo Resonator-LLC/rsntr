@@ -1,0 +1,6 @@
+[] a rsntr:Query ;
+   rsntr:id "01J9V3Z8K7Q2M4X6P8R0T2V4W6" ;
+   rsntr:mod "sql-sqlite" ;
+   rsntr:signal "SELECT name, mtime FROM notes WHERE mtime > ?" ;
+   rsntr:params ("2026-07-01") ;
+   rsntr:rowLimit 1000 .

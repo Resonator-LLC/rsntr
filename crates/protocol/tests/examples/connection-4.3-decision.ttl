@@ -1,0 +1,6 @@
+[] a rsntr:Decision ;
+   rsntr:id "01J9V6QK3M8ZT0R4Y2W6B8N1D5" ;
+   rsntr:decision "allow" ;
+   rsntr:decidedBy "human" ;
+   rsntr:reason "welcome, recipes are readable" ;
+   rsntr:at "2026-07-23T09:20:00"^^xsd:dateTime .

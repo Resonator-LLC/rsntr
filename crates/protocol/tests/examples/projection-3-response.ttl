@@ -1,0 +1,25 @@
+[] a rsntr:Projection ;
+   rsntr:id "01K12M8Z4T9Q6W2E8R4T0Y6X3A" ;
+   rsntr:offers ( <urn:notes:browse> <urn:notes:add> <urn:notes:changed> <urn:notes:admin> ) .
+
+<urn:notes:browse> a rsntr:Radiant ;
+   rdfs:label "browse notes" ;
+   rsntr:mod "sql-sqlite" ;
+   rsntr:signal "SELECT title, mtime FROM notes ORDER BY mtime DESC" .
+
+<urn:notes:add> a rsntr:Excitable ;
+   rdfs:label "add a note" ;
+   rsntr:icon "plus" ;
+   rsntr:coupling [ rsntr:field (
+       [ rsntr:name "title" ; rsntr:datatype xsd:string ; rsntr:required true ; rsntr:hint "short title for the note" ]
+       [ rsntr:name "body" ; rsntr:datatype xsd:string ; rsntr:required false ] ) ] ;
+   rsntr:mod "sql-sqlite" ;
+   rsntr:signal "INSERT INTO notes (title, body) VALUES (?, ?)" ;
+   rsntr:paramsOrder ( "title" "body" ) .
+
+<urn:notes:changed> a rsntr:Sympathetic ;
+   rdfs:label "a note was added" .
+
+<urn:notes:admin> a rsntr:ResonancePoint ;
+   rdfs:label "admin" ;
+   rsntr:projects "urn:notes:admin" .

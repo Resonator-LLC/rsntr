@@ -1,0 +1,30 @@
+[package]
+name = "resonator-web"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "The rsntr web interface: RDF envelope frames and the JSON convenience API over HTTP (docs/web-api.md)"
+
+[dependencies]
+resonator-protocol = { path = "../protocol" }
+resonator-transport = { path = "../transport" }
+resonator-node = { path = "../node" }
+resonator-authenticator = { path = "../authenticator" }
+resonator-sparql = { path = "../sparql" }
+axum = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+iroh = { workspace = true }
+oxrdf = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }

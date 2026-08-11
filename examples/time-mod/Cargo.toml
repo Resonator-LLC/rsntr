@@ -1,0 +1,16 @@
+[package]
+name = "time-mod"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+resonator-mod-pdk = { path = "../../crates/pdk" }
+extism-pdk = "1"
+
+# Standalone project, deliberately not a member of the v3 workspace.
+[workspace]

@@ -1,0 +1,5 @@
+[] a rsntr:Execute ;
+   rsntr:id "01J9V3ZS3FQZJ8B1N5D7F9H1K3" ;
+   rsntr:mod "sql-sqlite" ;
+   rsntr:signal "INSERT INTO notes (title, body) VALUES (?, ?)" ;
+   rsntr:params ("hello from bob" "...") .

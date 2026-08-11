@@ -1,0 +1,27 @@
+@prefix ex:   <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:alice a foaf:Person ;
+    foaf:name  "Alice" ;
+    foaf:age   30 ;
+    foaf:mbox  <mailto:alice@example.org> ;
+    foaf:knows ex:bob, ex:carol .
+
+ex:bob a foaf:Person ;
+    foaf:name  "Bob"@en ;
+    foaf:age   25 ;
+    foaf:knows ex:carol .
+
+ex:carol a foaf:Person ;
+    foaf:name "Carol" ;
+    foaf:age  41 ;
+    foaf:nick "cc"^^xsd:string .
+
+# Dave has no age -> exercises OPTIONAL
+ex:dave a foaf:Person ;
+    foaf:name "Dave" .
+
+# RDF collection and a blank node
+ex:group ex:members ( ex:alice ex:bob ) .
+_:room ex:label "Server room" .

@@ -1,0 +1,4 @@
+module resonator_ffiFFI {
+    header "resonator_ffiFFI.h"
+    export *
+}

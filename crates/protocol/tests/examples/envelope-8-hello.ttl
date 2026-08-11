@@ -1,0 +1,4 @@
+[] a rsntr:Hello ;
+   rsntr:ver "0.1" ;
+   rsntr:enc "turtle", "compact-postcard" ;
+   rsntr:mods "sql-sqlite-3.46", "help" .

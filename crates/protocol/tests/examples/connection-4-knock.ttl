@@ -1,0 +1,3 @@
+[] a rsntr:Knock ;
+   rsntr:id "01J9V6QK3M8ZT0R4Y2W6B8N1D5" ;
+   rsntr:message "Hi, this is alice, we met at the workshop. Requesting read access to recipes." .

@@ -1,0 +1,34 @@
+# rsntr hologram vocabulary - mod-served web views for the resonator network
+# Status: accepted, 2026-08-03 (M12).
+# Normative prose: hologram-protocol.md (same directory).
+# Two response classes and two properties; rsntr:contentType, rsntr:name and
+# rsntr:seq are reused from the envelope vocabulary and are not re-declared.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix rsntr: <http://resonator.network/v3/rsntr#> .
+
+# ---------------------------------------------------------------------------
+# The hologram - a projection the observer can step into
+# ---------------------------------------------------------------------------
+
+rsntr:Hologram a rdfs:Class ;
+    rdfs:label "Hologram" ;
+    rdfs:comment "Header frame of a hologram response: a mod-authored interactive document the observer reconstructs in a sealed web view. Announces rsntr:contentType and rsntr:size; followed by rsntr:Chunk frames and a Done trailer. Also usable as a _projection point kind (the class IRI in the kind column) to hint that invoking the point yields a hologram. Rendering is response-driven: a client switches to hologram rendering when the first response frame is a Hologram, hint or no hint. All of the mounted document's network traffic rides the resonator envelope, pinned to the serving peer and modulation (hologram-protocol.md sec 5)." .
+
+rsntr:Chunk a rdfs:Class ;
+    rdfs:label "Chunk" ;
+    rdfs:comment "One slice of a hologram body: rsntr:seq (0-based order) and rsntr:data (base64). A Chunk's serialized frame stays under the frame budget; the recommended raw slice is 128 KiB. The client concatenates decoded chunks and verifies the total against the header's rsntr:size." .
+
+rsntr:size a rdf:Property ;
+    rdfs:label "size" ;
+    rdfs:comment "Total raw byte count of the hologram document before base64 encoding; lets the client preallocate and detect truncation." ;
+    rdfs:domain rsntr:Hologram ;
+    rdfs:range xsd:integer .
+
+rsntr:data a rdf:Property ;
+    rdfs:label "data" ;
+    rdfs:comment "The bytes of one Chunk, base64-encoded." ;
+    rdfs:domain rsntr:Chunk ;
+    rdfs:range xsd:base64Binary .

@@ -1,0 +1,5 @@
+[] a rsntr:Hello ;
+   rsntr:ver "0.1" ;
+   rsntr:enc "turtle", "compact-postcard" ;
+   rsntr:mods "sql-sqlite-3.46", "help" ;
+   rsntr:hint "resonator node; send an rsntr:Query with modulation 'help' for usage, or type HELP" .

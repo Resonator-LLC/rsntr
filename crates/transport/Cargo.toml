@@ -1,0 +1,17 @@
+[package]
+name = "resonator-transport"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+resonator-protocol = { path = "../protocol" }
+iroh = { workspace = true }
+iroh-blobs = { workspace = true }
+iroh-gossip = { workspace = true }
+iroh-tickets = { workspace = true }
+bytes = { workspace = true }
+oxrdf = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

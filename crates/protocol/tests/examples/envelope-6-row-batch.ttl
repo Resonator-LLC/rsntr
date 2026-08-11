@@ -1,0 +1,3 @@
+# frame 2..n: row batches (many Row objects per frame, up to the frame budget)
+[] a rsntr:Row ; rsntr:seq 0 ; rsntr:col_name "groceries" ; rsntr:col_mtime "2026-07-04T10:11:12" .
+[] a rsntr:Row ; rsntr:seq 1 ; rsntr:col_name "reading list" ; rsntr:col_mtime "2026-07-19T08:00:00" .

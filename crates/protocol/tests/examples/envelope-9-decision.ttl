@@ -1,0 +1,5 @@
+[] a rsntr:Decision ;
+   rsntr:id "01J9V3Z8K7Q2M4X6P8R0T2V4W6" ;
+   rsntr:decision "deny" ;
+   rsntr:decidedBy "script" ;
+   rsntr:reason "bulk read exceeds hourly row budget for this peer" .

@@ -1,0 +1,54 @@
+stages:
+  - check
+  - test
+
+fmt:
+  stage: check
+  image: rust:latest
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --check
+
+clippy:
+  stage: check
+  image: rust:latest
+  script:
+    - rustup component add clippy
+    - cargo clippy --workspace -- -D warnings
+
+wasm-check:
+  stage: check
+  image: rust:latest
+  script:
+    - rustup target add wasm32-unknown-unknown
+    - cargo check -p resonator-protocol --target wasm32-unknown-unknown
+    # sparql's default "native" feature (rusqlite/oxttl/regex) cannot build
+    # on wasm32; the parser/compiler/serializer half must keep compiling.
+    - cargo check -p resonator-sparql --no-default-features --target wasm32-unknown-unknown
+
+test-linux:
+  stage: test
+  image: rust:latest
+  script:
+    - cargo test --workspace
+
+test-macos:
+  stage: test
+  image: macos-14-xcode-15
+  tags:
+    - saas-macos-medium-m1
+  script:
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    - source "$HOME/.cargo/env"
+    - cargo test --workspace
+
+test-windows:
+  stage: test
+  tags:
+    - saas-windows-medium-amd64
+  before_script:
+    - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+    - .\rustup-init.exe -y --profile minimal
+    - $env:Path += ";$env:USERPROFILE\.cargo\bin"
+  script:
+    - cargo test --workspace

@@ -1,0 +1,11 @@
+[] a rsntr:Help ;
+   rsntr:id "01J9V8..." ;
+   rsntr:topic "modulations", "tables", "knock", "examples" ;
+   rsntr:signal """This is a resonator node (rsntr, envelope 0.1).
+You talk to me in RDF objects over QUIC; I serve the modulations: sql-sqlite, help.
+Publicly readable now: notes(title, body, mtime).
+To run a read:
+  [] a rsntr:Query ; rsntr:mod \"sql-sqlite\" ; rsntr:signal \"SELECT title FROM notes\" .
+Not admitted yet? Introduce yourself and I may let you in:
+  [] a rsntr:Knock ; rsntr:message \"who you are and what you want\" .
+Ask for more: send a help query with signal one of: modulations, tables, knock, examples.""" .

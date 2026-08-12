@@ -61,6 +61,9 @@ jobs:
       - name: Pack (dry run)
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
+          set -euo pipefail
+          # npm pack does not create --pack-destination for you.
+          mkdir -p /tmp/packs
           for d in npm/dist/*/; do
             npm pack "$d" --pack-destination /tmp/packs
           done

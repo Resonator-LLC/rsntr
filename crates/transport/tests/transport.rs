@@ -333,7 +333,7 @@ async fn ticket_round_trip() {
         let expected_peer = endpoint_id_from_secret(secret);
 
         // Offline mint: localhost direct addresses only, no network needed.
-        let ticket = mint_ticket(secret, true, Duration::from_secs(5))
+        let ticket = mint_ticket(secret, true, &[], Duration::from_secs(5))
             .await
             .expect("mint ticket");
         let (peer, addrs) = parse_ticket(&ticket).expect("parse ticket");

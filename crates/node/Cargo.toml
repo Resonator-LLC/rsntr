@@ -4,11 +4,21 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
+[features]
+# Forwarded, so an embedder can reach the optional pieces of the crates
+# below without depending on them directly. Both on by default, so
+# building this crate is unchanged; `default-features = false` gives a
+# node with no gossip ALPN and no scripting engine, which is a materially
+# smaller binary.
+default = ["gossip", "script"]
+gossip = ["resonator-transport/gossip"]
+script = ["resonator-authenticator/script"]
+
 [dependencies]
 resonator-protocol = { path = "../protocol" }
-resonator-transport = { path = "../transport" }
+resonator-transport = { path = "../transport", default-features = false }
 resonator-sparql = { path = "../sparql" }
-resonator-authenticator = { path = "../authenticator" }
+resonator-authenticator = { path = "../authenticator", default-features = false }
 rusqlite = { workspace = true }
 oxrdf = { workspace = true }
 oxttl = { workspace = true }

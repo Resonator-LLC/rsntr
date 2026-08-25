@@ -103,6 +103,21 @@ impl Tier for CacheTier {
         if footprint.has_denied() {
             return Decision::Escalate;
         }
+        // A knock is never answered from memory, whatever is in the
+        // table. Its statement is the knock's own message, and a message
+        // is where a one-time credential travels — an invite code, a
+        // pairing token. The fingerprint is taken over the *normalized*
+        // statement, in which numeric literals are blanked to `?`, so two
+        // different codes of the same shape share a key: remembering the
+        // answer to one would answer for the other, in whichever
+        // direction the remembered answer pointed.
+        //
+        // `answer_inbox` already returns before recording anything for a
+        // knock, so nothing writes such a row today. This is here so that
+        // stays true no matter who adds the next tier.
+        if action == "knock" {
+            return Decision::Escalate;
+        }
         let fp = statement_fingerprint(action, statement, footprint);
         let row: Result<Option<(String, Option<String>)>, _> = conn
             .query_row(

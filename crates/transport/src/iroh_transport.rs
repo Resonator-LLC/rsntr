@@ -21,7 +21,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, SendStream, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey, TransportAddr};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, SecretKey, TransportAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use oxrdf::{Literal, NamedNode, Term};
 use resonator_protocol::vocab::prop;
@@ -80,8 +80,16 @@ pub fn endpoint_id_from_secret(secret: [u8; 32]) -> PeerId {
 
 /// Binds an iroh endpoint for `secret_key`: localhost-only with relays
 /// and lookup disabled when `offline`, the n0 production preset
-/// otherwise.
-async fn bind_endpoint(secret_key: SecretKey, offline: bool) -> Result<Endpoint, TransportError> {
+/// otherwise, or the n0 preset pointed at `relays` when those are given.
+///
+/// `relays` is ignored under `offline` - that preset exists to keep test
+/// and LAN traffic off every relay, and honouring a relay list there
+/// would quietly undo it.
+async fn bind_endpoint(
+    secret_key: SecretKey,
+    offline: bool,
+    relays: &[String],
+) -> Result<Endpoint, TransportError> {
     let transport_config = QuicTransportConfig::builder()
         .max_idle_timeout(Some(CONN_IDLE_TIMEOUT.try_into().expect("10s fits an IdleTimeout")))
         .build();
@@ -95,11 +103,20 @@ async fn bind_endpoint(secret_key: SecretKey, offline: bool) -> Result<Endpoint,
             .bind()
             .await
     } else {
-        Endpoint::builder(presets::N0)
+        let builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
-            .transport_config(transport_config)
-            .bind()
-            .await
+            .transport_config(transport_config);
+        // A relay list that does not parse is a configuration error, not
+        // a reason to fall back to n0: silently relaying through someone
+        // else's servers is exactly what setting this was meant to stop.
+        let builder = if relays.is_empty() {
+            builder
+        } else {
+            let map = RelayMap::try_from_iter(relays.iter().map(String::as_str))
+                .map_err(|e| TransportError::Bind(format!("relay url: {e}")))?;
+            builder.relay_mode(RelayMode::Custom(map))
+        };
+        builder.bind().await
     };
     bound.map_err(|e| TransportError::Bind(e.to_string()))
 }
@@ -110,13 +127,15 @@ async fn bind_endpoint(secret_key: SecretKey, offline: bool) -> Result<Endpoint,
 /// is dropped before returning and no router ever runs; this backs
 /// `rsntr ticket`, and its output pastes into any iroh app (dumbpipe
 /// included). Offline tickets carry direct addresses only, so they dial
-/// on the local network; the default carries a relay for NAT traversal.
+/// on the local network; the default carries a relay for NAT traversal -
+/// one of `relays` when given, else n0's.
 pub async fn mint_ticket(
     secret: [u8; 32],
     offline: bool,
+    relays: &[String],
     wait: std::time::Duration,
 ) -> Result<String, TransportError> {
-    let endpoint = bind_endpoint(SecretKey::from_bytes(&secret), offline).await?;
+    let endpoint = bind_endpoint(SecretKey::from_bytes(&secret), offline, relays).await?;
     let deadline = tokio::time::Instant::now() + wait;
     while endpoint.addr().addrs.is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -238,6 +257,17 @@ pub struct IrohConfig {
     /// Dialing then needs manual addresses via
     /// [`IrohTransport::add_peer_addrs`]. Meant for tests and LAN use.
     pub offline: bool,
+    /// Relay servers to use instead of n0's, as URLs
+    /// (`https://relay.example.org`). Empty means n0's production relays,
+    /// which is what [`IrohConfig::n0`] gives you.
+    ///
+    /// Relays carry traffic that could not be hole-punched, so whoever
+    /// runs them sees connection metadata and, for a relayed path, the
+    /// (still end-to-end encrypted) bytes. Pointing this at your own
+    /// relays is the difference between "someone else's infrastructure
+    /// is in the path" and "mine is". Ignored when `offline`, which
+    /// disables relays outright.
+    pub relays: Vec<String>,
     /// Serve the iroh-gossip ALPN on the same endpoint and router, so
     /// one identity covers both the rdf protocol and presence. The
     /// spawned handle comes back through [`IrohTransport::gossip`] for
@@ -256,6 +286,7 @@ impl IrohConfig {
             hello,
             secret_key: None,
             offline: false,
+            relays: Vec::new(),
             gossip: false,
             blobs: None,
         }
@@ -267,6 +298,7 @@ impl IrohConfig {
             hello,
             secret_key: None,
             offline: true,
+            relays: Vec::new(),
             gossip: false,
             blobs: None,
         }
@@ -381,6 +413,7 @@ fn watch_paths(conn: Connection, peer: PeerId, slot: Arc<AddrSinkSlot>) {
 pub struct IrohTransport {
     endpoint: Endpoint,
     router: Router,
+    #[cfg(feature = "gossip")]
     gossip: Option<iroh_gossip::Gossip>,
     blobs: Option<iroh_blobs::store::fs::FsStore>,
     local_hello: Hello,
@@ -418,7 +451,7 @@ impl IrohTransport {
             .secret_key
             .map(|bytes| SecretKey::from_bytes(&bytes))
             .unwrap_or_else(SecretKey::generate);
-        let endpoint = bind_endpoint(secret_key, config.offline).await?;
+        let endpoint = bind_endpoint(secret_key, config.offline, &config.relays).await?;
 
         let (tx, rx) = mpsc::channel(INCOMING_QUEUE);
         let accepted = Arc::new(AtomicU64::new(0));
@@ -432,6 +465,7 @@ impl IrohTransport {
                 addr_sink: addr_sink.clone(),
             },
         );
+        #[cfg(feature = "gossip")]
         let gossip = if config.gossip {
             let gossip = iroh_gossip::Gossip::builder().spawn(endpoint.clone());
             builder = builder.accept(iroh_gossip::ALPN, gossip.clone());
@@ -439,6 +473,18 @@ impl IrohTransport {
         } else {
             None
         };
+        // Asking for presence from a build that cannot serve it is a
+        // configuration error, not something to shrug off: a node whose
+        // gossip ALPN never came up looks, to everyone else, exactly like
+        // one that is simply never present.
+        #[cfg(not(feature = "gossip"))]
+        if config.gossip {
+            return Err(TransportError::Bind(
+                "gossip was requested but this build of resonator-transport \
+                 has the `gossip` feature off"
+                    .to_string(),
+            ));
+        }
         let blobs = match config.blobs {
             Some(bc) => {
                 let store = iroh_blobs::store::fs::FsStore::load(&bc.store_dir)
@@ -460,6 +506,7 @@ impl IrohTransport {
         let transport = Arc::new(Self {
             endpoint,
             router,
+            #[cfg(feature = "gossip")]
             gossip,
             blobs,
             local_hello: config.hello,
@@ -485,6 +532,7 @@ impl IrohTransport {
     }
 
     /// The gossip handle, when [`IrohConfig::gossip`] asked for one.
+    #[cfg(feature = "gossip")]
     pub fn gossip(&self) -> Option<&iroh_gossip::Gossip> {
         self.gossip.as_ref()
     }
@@ -574,6 +622,49 @@ impl IrohTransport {
         EndpointTicket::from(self.endpoint.addr()).to_string()
     }
 
+    /// The dialing ticket, shortened to fit `max_bytes` by dropping direct
+    /// addresses. `None` when even the shortest possible ticket is longer.
+    ///
+    /// A ticket carries every address the endpoint has learned, and a
+    /// multi-homed host has a lot of them: a phone holding wifi, cellular
+    /// and a tailnet at once, or an emulator. That is fine when the ticket
+    /// is pasted and fatal when it has to fit in something with a fixed
+    /// capacity — a QR code, an SMS, a line someone reads aloud.
+    ///
+    /// **Only `TransportAddr::Ip` entries are dropped, never the relay.**
+    /// The relay lives in the same set as the direct addresses, so a naive
+    /// trim would take the one thing that must survive: it is how a NAT'd
+    /// node is dialed at all, while direct addresses only let two nodes on
+    /// one network skip it. Dropping those costs a hole-punch, not a
+    /// connection.
+    ///
+    /// A ticket that is still too long once every IP is gone yields `None`
+    /// rather than a shorter ticket nobody can dial.
+    pub fn ticket_within(&self, max_bytes: usize) -> Option<String> {
+        let mut addr = self.endpoint.addr();
+        let ticket = EndpointTicket::from(addr.clone()).to_string();
+        if ticket.len() <= max_bytes {
+            return Some(ticket);
+        }
+        // Highest-sorting IP first. The order within the set is `Ord`, not
+        // the order iroh learned them, so there is no "keep the most local
+        // one" to preserve here — only "keep the relay".
+        while let Some(ip) = addr
+            .addrs
+            .iter()
+            .filter(|a| !a.is_relay())
+            .next_back()
+            .cloned()
+        {
+            addr.addrs.remove(&ip);
+            let candidate = EndpointTicket::from(addr.clone()).to_string();
+            if candidate.len() <= max_bytes {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     /// The socket addresses this endpoint is bound to, for the other
     /// side of an offline test or for persisting as dial hints.
     pub fn direct_addrs(&self) -> Vec<SocketAddr> {
@@ -655,6 +746,7 @@ impl IrohTransport {
     /// Stops the router (and gossip, when served) and closes the
     /// endpoint.
     pub async fn shutdown(&self) {
+        #[cfg(feature = "gossip")]
         if let Some(gossip) = &self.gossip
             && let Err(e) = gossip.shutdown().await
         {

@@ -29,10 +29,29 @@ pub trait ModHandler: Send + Sync {
     /// Error outcomes) goes through `frames`; the pipeline forwards them
     /// to the stream and stops the handler by dropping the receiver when
     /// the client goes away.
+    ///
+    /// By the time this runs the node has already admitted the peer and
+    /// carried the `mod:<name>` action through the chain, unless
+    /// [`ModHandler::self_gated`] says otherwise.
     fn handle(
         &self,
         peer: String,
         request: Request,
         frames: mpsc::Sender<EnvelopeObject>,
     ) -> ModHandlerFuture<'_>;
+
+    /// Whether this handler runs the peer gate and the chain itself.
+    ///
+    /// Default `false`: the node gates every mod request the same way it
+    /// gates sql, sparql, chat and media, so a handler cannot be reached
+    /// by a peer that is not in `_peers` or not allowed `mod:<name>`.
+    ///
+    /// Return `true` only when the handler must own the `_audit` row —
+    /// the extism host does, because it updates that row with the frame
+    /// and byte counts once the mod has run, and the id never crosses
+    /// this trait. A handler that answers `true` and then does not gate
+    /// is reachable by any peer that completes the handshake.
+    fn self_gated(&self) -> bool {
+        false
+    }
 }

@@ -951,8 +951,12 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 
 async fn cmd_ticket(dir: PathBuf, offline: bool, json: bool) -> Result<i32> {
     let secret = store::load_secret(&dir)?;
+    // No relay list here: this path mints a ticket without opening the
+    // node, so it has nothing to read a configured relay from and takes
+    // n0's. A ticket for a node serving on its own relays comes from
+    // `RunningNode::ready_ticket`, off the live endpoint.
     let ticket =
-        resonator_transport::mint_ticket(secret, offline, std::time::Duration::from_secs(3))
+        resonator_transport::mint_ticket(secret, offline, &[], std::time::Duration::from_secs(3))
             .await
             .map_err(|e| anyhow::anyhow!("minting the ticket: {e}"))?;
     if json {

@@ -1157,7 +1157,7 @@ impl Node {
             ))
             .await?;
 
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncReadExt;
         let mut buf = vec![0u8; 64 * 1024];
 
         // Phase 1: full duplex while the caller's write half is open.
@@ -1382,6 +1382,15 @@ impl Node {
     /// mpsc channel and are forwarded to the stream. A failed send drops
     /// the receiver, which fails the handler's next send and stops it
     /// (the same client-gone contract SQL execution has).
+    ///
+    /// Gated first, like every other arm of `dispatch`: an unknown peer
+    /// gets the same `rsntr:Knock` refusal sql and sparql give, and the
+    /// chain decides the `mod:<name>` action. The name gated on is the
+    /// handler's own, not the one asked for — `mod_matches` lets a
+    /// request for `time` reach a handler advertising `time-1`, and a
+    /// `_policy` row naming one must not be sidestepped by asking for the
+    /// other. A handler that owns its `_audit` row gates itself instead;
+    /// see [`ModHandler::self_gated`].
     async fn serve_mod<S: RequestStream>(
         &self,
         peer: &str,
@@ -1389,6 +1398,38 @@ impl Node {
         handler: Arc<dyn ModHandler>,
         stream: &mut S,
     ) -> Result<(), NodeError> {
+        if !handler.self_gated() {
+            let id = request.id_string();
+            let name = handler
+                .mods()
+                .into_iter()
+                .find(|advertised| mod_matches(&request.modulation, advertised))
+                .unwrap_or_else(|| request.modulation.clone());
+            let gate = {
+                let peer = peer.to_string();
+                let id = id.clone();
+                let signal = request.signal.clone();
+                let chain = self.chain.clone();
+                self.db
+                    .call(move |conn| gate_mod_request(conn, &peer, &id, &name, &chain, &signal))
+                    .await?
+            };
+            match gate {
+                ModVerdict::UnknownPeer => {
+                    return send_denied(
+                        stream,
+                        Some(id),
+                        "unknown peer: only rsntr:Knock is accepted".to_string(),
+                    )
+                    .await;
+                }
+                ModVerdict::Denied { reason } => {
+                    return send_denied(stream, Some(id), reason).await;
+                }
+                ModVerdict::Allowed => {}
+            }
+        }
+
         let (ftx, mut frx) = mpsc::channel::<EnvelopeObject>(16);
         let run = handler.handle(peer.to_string(), request, ftx);
         let forward = async {
@@ -2325,6 +2366,90 @@ fn screen_source(
 }
 
 // ---------------------------------------------------------------------------
+// Mod invocation gate
+// ---------------------------------------------------------------------------
+
+/// What the mod gate decided.
+enum ModVerdict {
+    UnknownPeer,
+    Denied { reason: String },
+    Allowed,
+}
+
+/// Peer gate, then the chain on action `mod:<name>` with an empty
+/// footprint; every outcome writes exactly one `_audit` row.
+///
+/// A mod invocation has no SQL to collect a footprint from — what it
+/// reaches is the mod's business, and anything it asks the database for
+/// comes back through this same chain as its own decision. So the row
+/// records that the mod was invoked and by whom, and the policy question
+/// is the coarse one: may this peer run this mod at all.
+fn gate_mod_request(
+    conn: &mut Connection,
+    peer: &str,
+    id: &str,
+    mod_name: &str,
+    chain: &Chain,
+    signal: &str,
+) -> ModVerdict {
+    if !peer_known(conn, peer) {
+        audit_direct(conn, peer, id, signal, "deny", "peer-gate", "unknown peer");
+        return ModVerdict::UnknownPeer;
+    }
+    let action = format!("mod:{mod_name}");
+    let footprint = Footprint::default();
+    let start = Instant::now();
+    let decided = chain.decide(conn, peer, &action, &footprint, signal);
+    let duration = start.elapsed().as_millis() as u64;
+    match decided.decision {
+        Decision::Allow | Decision::AllowNarrowed { .. } => {
+            audit_full(
+                conn,
+                peer,
+                id,
+                signal,
+                "{}",
+                "allow",
+                &decided.decided_by,
+                Some(&format!("mod {mod_name} invoked")),
+                duration,
+            );
+            ModVerdict::Allowed
+        }
+        Decision::Deny { reason } => {
+            audit_full(
+                conn,
+                peer,
+                id,
+                signal,
+                "{}",
+                "deny",
+                &decided.decided_by,
+                Some(&reason),
+                duration,
+            );
+            ModVerdict::Denied { reason }
+        }
+        // The chain's tail default is Deny; Escalate cannot get past it.
+        Decision::Escalate => {
+            let reason = "authenticator chain did not decide".to_string();
+            audit_full(
+                conn,
+                peer,
+                id,
+                signal,
+                "{}",
+                "deny",
+                "node",
+                Some(&reason),
+                duration,
+            );
+            ModVerdict::Denied { reason }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Knock admission
 // ---------------------------------------------------------------------------
 
@@ -2389,10 +2514,15 @@ fn weigh_knock(
         return KnockReply::Dropped;
     }
 
-    // Through the chain as a knock decision: no SQL, no footprint.
+    // Through the chain as a knock decision: no SQL, no footprint. The
+    // knock's own message rides in the statement slot, which is what lets
+    // an automated tier answer a knock on its contents (an invite code, a
+    // pairing token) instead of parking every stranger for a human. It is
+    // attacker-supplied text bounded by the frame cap: a tier must treat
+    // it as data, never as a query.
     let footprint = Footprint::default();
     let start = Instant::now();
-    let decided = chain.decide(conn, peer, "knock", &footprint, "");
+    let decided = chain.decide(conn, peer, "knock", &footprint, message);
     let duration = start.elapsed().as_millis() as u64;
 
     match decided.decision {

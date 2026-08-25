@@ -96,6 +96,7 @@ async fn bind_client(
         hello,
         secret_key: Some(secret),
         offline,
+        relays: Vec::new(),
         gossip: false,
         blobs: None,
     };

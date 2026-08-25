@@ -5,7 +5,10 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use resonator_authenticator::Chain;
-use resonator_node::{DbHandle, Node, NodeConfig, open_node_db_in_memory, seed_rsntr_defaults};
+use resonator_node::{
+    DbHandle, ModHandler, ModHandlerFuture, Node, NodeConfig, open_node_db_in_memory,
+    seed_rsntr_defaults,
+};
 use resonator_protocol::{EnvelopeObject, Hello, Knock, Request, RequestKind, Value};
 use resonator_transport::{IncomingRequest, PeerId, RequestStream, TransportError, basic_hello};
 
@@ -134,6 +137,42 @@ async fn drive(
     .ok();
     let raw = out.raw_bytes();
     (out, raw)
+}
+
+/// A mod handler that does no gating of its own and records every call
+/// that reaches it. Advertises `probe-1`, so a request for `probe` finds
+/// it through `mod_matches` — which is the case the node must gate on the
+/// advertised name, not the asked-for one.
+#[derive(Clone, Default)]
+struct ProbeMod {
+    reached: Arc<Mutex<Vec<String>>>,
+}
+
+impl ModHandler for ProbeMod {
+    fn mods(&self) -> Vec<String> {
+        vec!["probe-1".to_string()]
+    }
+
+    fn handle(
+        &self,
+        peer: String,
+        request: Request,
+        frames: tokio::sync::mpsc::Sender<EnvelopeObject>,
+    ) -> ModHandlerFuture<'_> {
+        self.reached.lock().unwrap().push(peer);
+        let id = request.id_string();
+        Box::pin(async move {
+            let _ = frames
+                .send(EnvelopeObject::Done(resonator_protocol::Done {
+                    id,
+                    row_count: None,
+                    affected_rows: None,
+                    last_insert_rowid: None,
+                    truncated: false,
+                }))
+                .await;
+        })
+    }
 }
 
 fn query(modulation: &str, signal: &str) -> (EnvelopeObject, String) {
@@ -1013,5 +1052,99 @@ async fn audio_duplex_survives_a_source_that_never_reads() {
         left.stdout.is_empty(),
         "the deaf source survived: {}",
         String::from_utf8_lossy(&left.stdout)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mod invocation gate
+// ---------------------------------------------------------------------------
+//
+// `serve_mod` is the arm that used to delegate to a handler with no peer
+// gate and no chain decision, on the assumption that every handler gates
+// itself. These pin the node doing it, because the cost of that
+// assumption failing is a mod reachable by anyone who completes the
+// handshake.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mod_is_refused_to_a_peer_that_is_not_admitted() {
+    let node = test_node(NodeConfig::default()).await;
+    let probe = ProbeMod::default();
+    node.set_mod_handler(Box::new(probe.clone()));
+
+    let (q, _) = query("probe", "anything");
+    let (out, _) = drive(&node, STRANGER, q, vec![]).await;
+
+    let frames = out.frames();
+    assert!(
+        matches!(frames.first(), Some(EnvelopeObject::Denied(_))),
+        "an unadmitted peer must be denied, got {frames:?}"
+    );
+    assert!(
+        probe.reached.lock().unwrap().is_empty(),
+        "the handler ran for a peer that was never admitted"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mod_is_refused_without_a_policy_row() {
+    let node = test_node(NodeConfig::default()).await;
+    let probe = ProbeMod::default();
+    node.set_mod_handler(Box::new(probe.clone()));
+    admit(&node, PEER).await; // in `_peers`, but nothing allows `mod:probe-1`
+
+    let (q, _) = query("probe", "anything");
+    let (out, _) = drive(&node, PEER, q, vec![]).await;
+
+    assert!(
+        matches!(out.frames().first(), Some(EnvelopeObject::Denied(_))),
+        "admission is not authorization: {:?}",
+        out.frames()
+    );
+    assert!(probe.reached.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mod_runs_once_admitted_and_allowed() {
+    let node = test_node(NodeConfig::default()).await;
+    let probe = ProbeMod::default();
+    node.set_mod_handler(Box::new(probe.clone()));
+    admit(&node, PEER).await;
+    // Named for what the handler advertises, not what the request asked
+    // for: `mod_matches` routes "probe" to "probe-1", and the policy row
+    // has to be the one that decides.
+    allow(&node, &peer_hex(), "*", "mod:probe-1").await;
+
+    let (q, _) = query("probe", "anything");
+    let (out, _) = drive(&node, PEER, q, vec![]).await;
+
+    assert_eq!(
+        probe.reached.lock().unwrap().as_slice(),
+        &[peer_hex()],
+        "the handler should have run exactly once: {:?}",
+        out.frames()
+    );
+    let rows = audit_rows(&node).await;
+    assert!(
+        rows.iter().any(|(d, _, _)| d == "allow"),
+        "the invocation must leave an audit row: {rows:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_policy_row_cannot_be_sidestepped_by_asking_for_another_name() {
+    let node = test_node(NodeConfig::default()).await;
+    node.set_mod_handler(Box::new(ProbeMod::default()));
+    admit(&node, PEER).await;
+    // Allowing the name the client asked for must not open the handler:
+    // the node gates on what the handler advertises.
+    allow(&node, &peer_hex(), "*", "mod:probe").await;
+
+    let (q, _) = query("probe", "anything");
+    let (out, _) = drive(&node, PEER, q, vec![]).await;
+
+    assert!(
+        matches!(out.frames().first(), Some(EnvelopeObject::Denied(_))),
+        "a row for the requested alias must not authorize the advertised mod: {:?}",
+        out.frames()
     );
 }

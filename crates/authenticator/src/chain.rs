@@ -21,9 +21,15 @@ pub trait Tier: Send + Sync {
 
     /// Decides on one request. `action` is a policy action string
     /// ("read", "write", "knock", "media", "entrain", "mod:<name>");
-    /// `statement` is the SQL/signal text ("" when there is none, e.g.
-    /// knocks). Tiers must never fail open: internal errors are
-    /// returned as [`Decision::Escalate`].
+    /// `statement` is the SQL/signal text, or `""` where the request
+    /// carries none. On a `knock` it is the knock's own message, so a
+    /// tier can answer on an invite code or a pairing token rather than
+    /// parking every stranger for a human.
+    ///
+    /// `statement` is remote input in every case, and on a knock it has
+    /// passed no parser at all: treat it as data, match it, never
+    /// interpolate it into a query. Tiers must never fail open: internal
+    /// errors are returned as [`Decision::Escalate`].
     fn decide(
         &self,
         conn: &Connection,
@@ -100,10 +106,17 @@ impl Chain {
     /// A registry with the built-in tiers: `"cache"`, `"policy"`,
     /// `"script"`, and `"human"`. Which of them run (and in what order)
     /// stays `_rsntr.auth_chain` configuration.
+    ///
+    /// `"script"` is present only when the crate's `script` feature is
+    /// on. Without it, an `auth_chain` naming `"script"` finds no tier
+    /// registered under that name, which the chain already treats as an
+    /// abstention — the same as a tier that failed — and the tail default
+    /// is still Deny.
     pub fn with_builtin_tiers() -> Self {
         let mut chain = Self::new();
         chain.register(Box::new(crate::cache::CacheTier));
         chain.register(Box::new(crate::policy::PolicyTier));
+        #[cfg(feature = "script")]
         chain.register(Box::new(crate::script::ScriptTier::default()));
         chain.register(Box::new(crate::human::HumanTier));
         chain

@@ -4,11 +4,21 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
+[features]
+default = ["gossip"]
+# The iroh-gossip ALPN, served on the same endpoint so one identity covers
+# both the rdf protocol and presence. On by default; off for an embedder
+# that never advertises presence and would rather not carry it. Asking for
+# `IrohConfig::gossip` from a build with this off is a bind error, not a
+# silent no-op — a node whose gossip ALPN never came up is
+# indistinguishable, from outside, from one that is simply never present.
+gossip = ["dep:iroh-gossip"]
+
 [dependencies]
 resonator-protocol = { path = "../protocol" }
 iroh = { workspace = true }
 iroh-blobs = { workspace = true }
-iroh-gossip = { workspace = true }
+iroh-gossip = { workspace = true, optional = true }
 iroh-tickets = { workspace = true }
 bytes = { workspace = true }
 oxrdf = { workspace = true }

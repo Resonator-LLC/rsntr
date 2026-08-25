@@ -56,6 +56,7 @@ async fn bind_provider(store_dir: &Path, allowed: Option<PeerId>) -> Arc<IrohTra
         hello: hello(),
         secret_key: None,
         offline: true,
+        relays: Vec::new(),
         gossip: false,
         blobs: Some(BlobsConfig {
             store_dir: store_dir.to_path_buf(),

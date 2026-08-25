@@ -29,7 +29,11 @@ pub use chain::{Chain, Decided, Tier};
 pub use fingerprint::{normalize_statement, statement_fingerprint};
 pub use human::{AnswerError, HumanTier, InboxAnswer, PENDING_REASON, ParkedParams, answer_inbox};
 pub use policy::{POLICY_DDL, PolicyTier, ensure_policy_table};
-pub use script::{SCRIPTS_DDL, ScriptTier, ensure_scripts_table};
+// The `_scripts` DDL is unconditional so the schema is identical either
+// way; only the tier that evaluates the scripts is behind the feature.
+pub use script::{SCRIPTS_DDL, ensure_scripts_table};
+#[cfg(feature = "script")]
+pub use script::ScriptTier;
 pub use types::{ActionKind, Decision, Footprint};
 
 /// Creates every table this crate owns (`_policy`, `_scripts`,

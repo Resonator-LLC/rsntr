@@ -255,6 +255,15 @@ impl ModHandler for ModsHost {
     ) -> ModHandlerFuture<'_> {
         Box::pin(self.serve(peer, request, frames))
     }
+
+    /// This host gates itself, in [`gate_mod`]: it needs the `_audit` row
+    /// id back so it can write the frame and byte counts onto that same
+    /// row once the mod has run, and the id does not cross the
+    /// `ModHandler` seam. Letting the node gate as well would put two
+    /// rows in the ledger for one invocation.
+    fn self_gated(&self) -> bool {
+        true
+    }
 }
 
 /// The Send bundle a request carries onto its blocking thread; becomes

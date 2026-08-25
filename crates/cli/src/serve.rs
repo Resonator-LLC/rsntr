@@ -162,6 +162,10 @@ pub async fn start_node_with(
         hello,
         secret_key: Some(secret),
         offline,
+        // Empty is n0's relays. A node that should ride its own puts them
+        // here; the ticket this node hands out then names them, because
+        // `ready_ticket` reads the live endpoint.
+        relays: Vec::new(),
         gossip: true,
         blobs: Some(blobs),
     };

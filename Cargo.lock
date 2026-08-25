@@ -4474,7 +4474,7 @@ checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 
 [[package]]
 name = "resonator-authenticator"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rhai",
  "rusqlite",
@@ -4487,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-ffi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "resonator-node",
@@ -4503,7 +4503,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-mod-pdk"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "extism-pdk",
@@ -4513,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-mods"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "extism",
@@ -4534,7 +4534,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-node"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "oxrdf",
@@ -4553,7 +4553,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-protocol"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "bytes",
@@ -4587,7 +4587,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-sparql"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxrdf",
  "oxttl",
@@ -4598,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-surfaces"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "iroh",
@@ -4619,7 +4619,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-transport"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "iroh",
@@ -4635,7 +4635,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -4722,7 +4722,7 @@ dependencies = [
 
 [[package]]
 name = "rsntr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "blake3",

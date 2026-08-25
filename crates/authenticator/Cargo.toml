@@ -4,8 +4,21 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
+[features]
+default = ["script"]
+# The rhai-backed `script` tier. On by default, so the chain keeps its
+# full set of tiers; off for an embedder running a fixed chain (say
+# ["cache", "policy"]) that would rather not carry a scripting engine —
+# rhai is one of the largest single contributions to a linked binary.
+#
+# With it off, `ScriptTier` is not compiled and `with_builtin_tiers` does
+# not register it, so naming "script" in `auth_chain` finds no tier. The
+# chain already treats a missing tier as an abstention and its tail
+# default is Deny, so this cannot fail open.
+script = ["dep:rhai"]
+
 [dependencies]
-rhai = { workspace = true }
+rhai = { workspace = true, optional = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

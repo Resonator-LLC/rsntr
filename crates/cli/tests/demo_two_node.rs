@@ -370,6 +370,7 @@ async fn demo() {
             hello,
             secret_key: Some(store::load_secret(tc.path()).expect("c key")),
             offline: true,
+            relays: Vec::new(),
             gossip: false,
             blobs: None,
         };

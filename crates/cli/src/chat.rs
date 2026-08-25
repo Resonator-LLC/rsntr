@@ -677,6 +677,7 @@ pub async fn chat_watch(
         hello,
         secret_key: None,
         offline: true,
+        relays: Vec::new(),
         gossip: false,
         blobs: None,
     };

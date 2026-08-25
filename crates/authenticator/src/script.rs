@@ -11,12 +11,21 @@
 //! Enabled scripts run in name order; the first non-escalate value wins.
 //! A script that errors, panics, times out on the instruction budget, or
 //! returns anything else counts as Escalate: the tier never fails open.
+//!
+//! The tier itself is behind the `script` feature; the `_scripts` DDL is
+//! not. A database is the same shape either way, so one written by a
+//! build that can run scripts still opens in a build that cannot — it
+//! simply never consults the table.
 
+#[cfg(feature = "script")]
 use rhai::{Dynamic, Engine, Scope};
 use rusqlite::Connection;
+#[cfg(feature = "script")]
 use tracing::warn;
 
+#[cfg(feature = "script")]
 use crate::chain::Tier;
+#[cfg(feature = "script")]
 use crate::types::{Decision, Footprint};
 
 /// Owner-authored decision scripts; `body` is Rhai source.
@@ -34,6 +43,7 @@ pub fn ensure_scripts_table(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 /// The scripted tier; registered in the chain as `"script"`.
+#[cfg(feature = "script")]
 #[derive(Debug, Clone)]
 pub struct ScriptTier {
     /// Rhai operations one evaluation may spend before it is aborted
@@ -43,8 +53,10 @@ pub struct ScriptTier {
 
 /// Generous for policy logic, far below anything that could stall the
 /// db thread noticeably.
+#[cfg(feature = "script")]
 const DEFAULT_MAX_OPERATIONS: u64 = 100_000;
 
+#[cfg(feature = "script")]
 impl Default for ScriptTier {
     fn default() -> Self {
         Self {
@@ -53,6 +65,7 @@ impl Default for ScriptTier {
     }
 }
 
+#[cfg(feature = "script")]
 impl ScriptTier {
     pub fn new() -> Self {
         Self::default()
@@ -65,6 +78,7 @@ impl ScriptTier {
 }
 
 /// What a script hands back through `allow()` / `deny(r)` / `escalate()`.
+#[cfg(feature = "script")]
 #[derive(Debug, Clone)]
 enum Verdict {
     Allow,
@@ -72,6 +86,7 @@ enum Verdict {
     Escalate,
 }
 
+#[cfg(feature = "script")]
 fn build_engine(max_operations: u64) -> Engine {
     let mut engine = Engine::new();
     engine.set_max_operations(max_operations);
@@ -83,6 +98,7 @@ fn build_engine(max_operations: u64) -> Engine {
     engine
 }
 
+#[cfg(feature = "script")]
 fn footprint_map(footprint: &Footprint) -> rhai::Map {
     let mut map = rhai::Map::new();
     for (table, cols) in &footprint.tables {
@@ -92,6 +108,7 @@ fn footprint_map(footprint: &Footprint) -> rhai::Map {
     map
 }
 
+#[cfg(feature = "script")]
 impl Tier for ScriptTier {
     fn name(&self) -> &str {
         "script"
@@ -165,7 +182,7 @@ impl Tier for ScriptTier {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "script"))]
 mod tests {
     use super::*;
     use crate::types::ActionKind;

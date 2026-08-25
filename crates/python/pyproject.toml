@@ -1,0 +1,34 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+# Distribution name: "resonator" was already taken on PyPI by an unrelated
+# project, so the package installs as rsntr but imports as resonator.
+name = "rsntr"
+description = "Peer-to-peer SQL, SPARQL, and chat over iroh, from Python (Jupyter / Colab). Import as `resonator`."
+requires-python = ">=3.8"
+license = { text = "MIT OR Apache-2.0" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Database",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.0"]
+
+[tool.maturin]
+# The cdylib in this crate; the module name is `resonator` (the [lib]
+# name). abi3: one wheel per platform serves every supported CPython.
+manifest-path = "Cargo.toml"
+module-name = "resonator"
+features = ["pyo3/extension-module"]
+strip = true
+# The metadata declares License-Files; ship both licenses inside the sdist so
+# they are present (the wheel already embeds them from the crate license field).
+include = ["LICENSE-MIT", "LICENSE-APACHE"]

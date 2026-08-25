@@ -1,0 +1,27 @@
+[package]
+name = "resonator-extension"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Loadable SQLite extension exposing the resonator-sparql surface to any stock sqlite3"
+
+# Standalone workspace: rusqlite's loadable_extension feature (calls routed
+# through the host's sqlite3_api_routines, no sqlite linked or bundled into
+# the dylib) must never unify with the bundled feature the main workspace
+# uses, so this crate is excluded from the v3 workspace and built on its own.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# default-features = false drops resonator-sparql's bundled feature: with
+# bundled in the graph, libsqlite3-sys would use bindings pinned to the
+# bundled sqlite version and refuse to load into any older host sqlite.
+# Without it the prebuilt 3.34.1 ext bindings apply (minimum host 3.34).
+resonator-sparql = { path = "../sparql", default-features = false, features = ["native"] }
+rusqlite = { version = "0.40", features = [
+    "loadable_extension",
+    "functions",
+    "vtab",
+] }

@@ -1,0 +1,87 @@
+name: npm
+
+# Publishes the rsntr npm packages for a release that already has binaries.
+# Runs after the release workflow has attached and undrafted its assets --
+# `on: release published` fires exactly then, so the archives this reads are
+# guaranteed to exist.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to publish, without the v (e.g. 0.1.0)"
+        required: true
+      dry_run:
+        description: "Build and pack, but do not publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # npm publish --provenance signs the packages with a GitHub OIDC token,
+  # letting npm show that these binaries were built by this workflow from
+  # this repo. Without this the publish step fails.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve version
+        id: v
+        run: |
+          raw="${{ github.event.inputs.version || github.event.release.tag_name }}"
+          echo "version=${raw#v}" >> "$GITHUB_OUTPUT"
+
+      # Downloads each archive and verifies it against the published
+      # .sha256 before unpacking; a mismatch fails the job here rather than
+      # shipping a bad binary to every npx user.
+      - name: Build packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node npm/build.mjs --version "${{ steps.v.outputs.version }}"
+
+      - name: Verify the built binary runs
+        run: |
+          chmod +x npm/dist/rsntr-linux-x64/bin/rsntr
+          got=$(npm/dist/rsntr-linux-x64/bin/rsntr --version)
+          echo "$got"
+          # The package is only worth publishing if the binary inside it
+          # reports the version we are publishing it as.
+          [ "$got" = "rsntr ${{ steps.v.outputs.version }}" ]
+
+      - name: Pack (dry run)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          set -euo pipefail
+          # npm pack does not create --pack-destination for you.
+          mkdir -p /tmp/packs
+          for d in npm/dist/*/; do
+            npm pack "$d" --pack-destination /tmp/packs
+          done
+          ls -la /tmp/packs
+
+      # Platform packages first, root last. The root package declares exact
+      # optionalDependency versions, so publishing it first would leave a
+      # window where `npm install rsntr` resolves and then fails to find its
+      # binary.
+      - name: Publish
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for pkg in rsntr-linux-x64 rsntr-linux-arm64 rsntr-darwin-x64 rsntr-darwin-arm64 rsntr-win32-x64; do
+            echo "publishing $pkg"
+            npm publish "npm/dist/$pkg" --access public --provenance
+          done
+          echo "publishing rsntr (root)"
+          npm publish npm/dist/rsntr --access public --provenance

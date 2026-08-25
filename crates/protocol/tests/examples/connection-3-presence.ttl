@@ -1,0 +1,3 @@
+[] a rsntr:Presence ;
+   rsntr:at "2026-07-23T09:15:00"^^xsd:dateTime ;
+   rsntr:status "around" .

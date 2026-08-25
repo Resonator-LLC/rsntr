@@ -1,0 +1,3 @@
+dist/
+ios/.build/
+ios/Sources/Resonator/resonator_ffi.swift

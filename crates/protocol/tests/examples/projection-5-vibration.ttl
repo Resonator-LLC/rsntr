@@ -1,0 +1,5 @@
+[] a rsntr:Vibration ;
+   rsntr:id "01K12MA53C6D9F2G5H8J1K4M7C" ;
+   rsntr:point <urn:notes:changed> ;
+   rsntr:seq 0 ;
+   rsntr:at "2026-07-26T10:00:00"^^xsd:dateTime .

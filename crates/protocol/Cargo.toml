@@ -1,0 +1,21 @@
+[package]
+name = "resonator-protocol"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+base64 = { workspace = true }
+bytes = { workspace = true }
+oxrdf = { workspace = true }
+oxttl = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+
+# oxrdf and ulid reach getrandom via rand; on wasm32-unknown-unknown it
+# needs the wasm_js backend opted in or it is a compile error.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+proptest = "1"

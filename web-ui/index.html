@@ -1,0 +1,4473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Resonator</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#f4f1e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12151a" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Resonator">
+<style>
+/* ------------------------------------------------------------------ */
+/* rsntr console: instrument-panel aesthetic, monospace throughout.   */
+/* No external requests: system font stack, inline everything.        */
+/* ------------------------------------------------------------------ */
+:root {
+  --bg: #f4f1e8;
+  --bg2: #ece8db;
+  --panel: #faf8f1;
+  --ink: #2a2a24;
+  --ink-dim: #6f6b5e;
+  --line: #d5d0bf;
+  --line-strong: #b8b29c;
+  --accent: #1d7a4f;
+  --accent-dim: #cfe4d6;
+  --warn: #a06a00;
+  --err: #b3372c;
+  --led-off: #b8b29c;
+  --sel: #e3efe7;
+  --code-bg: #efece0;
+  --shadow: 0 1px 3px rgba(60,55,40,.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151a;
+    --bg2: #0d1014;
+    --panel: #181c23;
+    --ink: #d6d8ce;
+    --ink-dim: #7d8272;
+    --line: #2a2f38;
+    --line-strong: #3c4350;
+    --accent: #4fce8f;
+    --accent-dim: #1c3a2b;
+    --warn: #d9a33c;
+    --err: #e06a5e;
+    --led-off: #3c4350;
+    --sel: #1e2b24;
+    --code-bg: #10131a;
+    --shadow: 0 1px 4px rgba(0,0,0,.5);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  background-image: radial-gradient(ellipse at top, var(--bg) 55%, var(--bg2));
+  color: var(--ink);
+  font: 13px/1.5 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  position: relative; /* anchors the contacts dropdown */
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  /* safe-area: clear the notch/status bar in standalone and WebView */
+  padding: calc(.6rem + env(safe-area-inset-top, 0px))
+           calc(1rem + env(safe-area-inset-right, 0px))
+           .5rem
+           calc(1rem + env(safe-area-inset-left, 0px));
+  border-bottom: 1px solid var(--line-strong);
+  flex-wrap: wrap;
+}
+.hdr-acts { display: flex; gap: .3rem; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.hdr-acts button.tb {
+  font: inherit; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+  background: none; border: 1px solid transparent; color: var(--ink-dim);
+  padding: .3rem .55rem; cursor: pointer; border-radius: 2px;
+}
+.hdr-acts button.tb:hover { color: var(--ink); border-color: var(--line); }
+.hdr-acts button.tb.open {
+  color: var(--accent); border-color: var(--accent); background: var(--accent-dim);
+}
+button.icon {
+  background: none; border: 1px solid transparent; color: var(--ink-dim);
+  padding: .32rem; cursor: pointer; border-radius: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+button.icon svg {
+  width: 17px; height: 17px; fill: none; stroke: currentColor;
+  stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
+}
+button.icon:hover { color: var(--ink); border-color: var(--line); }
+button.icon.on, button.icon.open {
+  color: var(--accent); border-color: var(--accent); background: var(--accent-dim);
+}
+.ft-acts { display: flex; gap: .25rem; margin-left: auto; }
+/* inside a projection the top bar yields the space; the strip and the
+   footer's go-back remain the navigation */
+body.immersive header { display: none; }
+body.immersive #ev-wrap { display: none; }
+body.immersive main { padding: .4rem .5rem; }
+/* ---- contacts: master-detail (list left, profile right) ----------- */
+#ct-list { list-style: none; margin: .5rem 0 0; padding: 0;
+  border: 1px solid var(--line-strong); border-radius: 2px; background: var(--panel); }
+#ct-list li {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .4rem .55rem; border-bottom: 1px solid var(--line); cursor: pointer;
+}
+#ct-list li:last-child { border-bottom: none; }
+#ct-list li:hover { background: var(--sel); }
+#ct-list li.sel { background: var(--sel); }
+#ct-list .who { min-width: 0; flex: 1; }
+#ct-list .who .tag { display: block; color: var(--ink-dim); font-size: .66rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ct-list .dot {
+  display: inline-block; width: .5em; height: .5em; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+}
+.ct-ava { display: inline-flex; flex-shrink: 0; }
+.ct-ava svg { border-radius: 2px; }
+.ct-split { align-items: stretch; }
+.ct-side { width: 17rem; }
+.ct-detail { flex: 1; min-width: 0; }
+.ct-head { display: flex; gap: .75rem; align-items: flex-start; margin-bottom: .6rem; }
+.ct-title { min-width: 0; }
+.ct-name { font-weight: 700; font-size: .95rem; cursor: pointer; }
+.ct-name .mini { font-weight: 400; }
+.ct-id { font-size: .7rem; color: var(--ink-dim); overflow-wrap: anywhere; }
+.ct-presence { font-size: .74rem; margin-top: .15rem; }
+.ct-presence .led {
+  display: inline-block; width: .55em; height: .55em; border-radius: 50%;
+  background: var(--led-off); margin-right: .35em;
+}
+.ct-presence .led.on { background: var(--accent); }
+.ct-presence .led.err { background: var(--err); }
+.ct-info { display: grid; grid-template-columns: 7rem 1fr; gap: .2rem .8rem;
+  font-size: .78rem; margin: .6rem 0; }
+.ct-info dt { color: var(--ink-dim); }
+.ct-info dd { margin: 0; overflow-wrap: anywhere; }
+.ct-info dd.editable { cursor: pointer; }
+.ct-info dd.editable:hover { color: var(--accent); }
+.ct-sec { font-size: .68rem; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--ink-dim); margin: 1rem 0 .4rem; }
+.ct-sec::before { content: "// "; color: var(--accent); }
+.ct-chips { display: flex; gap: .35rem; flex-wrap: wrap; }
+.chip {
+  font: inherit; font-size: .72rem; background: none; color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: .18rem .7rem; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.ct-embed { border: 1px solid var(--line); border-radius: 3px; padding: .5rem .7rem;
+  background: var(--panel); }
+.row.ct-backrow { display: none; margin: 0 0 .4rem; }
+.tabstrip.global {
+  flex-wrap: nowrap; overflow-x: auto; margin: 0;
+  padding: .3rem calc(1rem + env(safe-area-inset-right, 0px))
+           .3rem calc(1rem + env(safe-area-inset-left, 0px));
+  border-bottom: 1px solid var(--line);
+  background: var(--bg2);
+}
+.tabstrip.global button { flex-shrink: 0; }
+.tabstrip.global button.pin {
+  text-transform: uppercase; font-size: .66rem; letter-spacing: .12em;
+  border-color: transparent;
+}
+.tabstrip.global button.pin:hover { border-color: var(--line); }
+.tabstrip.global button.pin.active { border-color: var(--accent); }
+.tbl-launcher { max-width: 30rem; margin: 0 auto; }
+.tbl-launcher ul {
+  list-style: none; margin: .5rem 0; padding: 0;
+  border: 1px solid var(--line-strong); border-radius: 2px; background: var(--panel);
+}
+.tbl-launcher li {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: .4rem .6rem; border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.tbl-launcher li:last-child { border-bottom: none; }
+.tbl-launcher li:hover { background: var(--sel); }
+.tbl-launcher .tag { color: var(--ink-dim); font-size: .68rem; }
+.tbl-launcher .cmt { display: block; font-size: .68rem; color: var(--ink-dim); }
+.nodesc { color: var(--warn); }
+.desc-warn { color: var(--warn); font-size: .75rem; margin: .2rem 0; }
+.t-desc { margin: -.2rem 0 .4rem; }
+#chats-list { list-style: none; margin: 0 auto; padding: 0; max-width: 44rem;
+  border: 1px solid var(--line-strong); border-radius: 3px; background: var(--panel); }
+#chats-list li {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .55rem .8rem; border-bottom: 1px solid var(--line); cursor: pointer;
+}
+#chats-list li:last-child { border-bottom: none; }
+#chats-list li:hover { background: var(--sel); }
+#chats-list .who { font-weight: 600; }
+#chats-list .when { margin-left: auto; color: var(--ink-dim); font-size: .7rem; white-space: nowrap; }
+#chats-list .kind { color: var(--ink-dim); font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; }
+#chats-list .dot {
+  display: inline-block; width: .5em; height: .5em; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+}
+.blank-hint { text-align: center; margin-top: 4rem; }
+/* in a projection the tab area is everything: stretch the mounted app */
+body.immersive .holo-frame {
+  height: calc(100vh - 14rem); height: calc(100dvh - 14rem);
+}
+/* full-tab hologram: the projection chrome (crumbs, fetch row, menu,
+   form) hides while a hologram is mounted; only the holobox remains */
+.tabpane.holo-on > .t-crumbs, .tabpane.holo-on > .row,
+.tabpane.holo-on > .t-status, .tabpane.holo-on > .t-menu,
+.tabpane.holo-on > .t-form { display: none; }
+body.immersive .tabpane.holo-on .holo-frame {
+  height: calc(100vh - 10rem); height: calc(100dvh - 10rem);
+}
+#ev-wrap {
+  margin-top: .75rem; border-top: 1px dashed var(--line);
+  padding-top: .35rem; font-size: .72rem; color: var(--ink-dim);
+}
+#ev-wrap summary { cursor: pointer; user-select: none; }
+#ev-wrap summary .ghost { margin-left: .5rem; }
+.brand { font-size: 1.05rem; font-weight: 700; letter-spacing: .35em; }
+.brand em { font-style: normal; color: var(--accent); }
+.brand small {
+  display: block; font-size: .62rem; font-weight: 400;
+  letter-spacing: .18em; color: var(--ink-dim); text-transform: uppercase;
+}
+nav { display: flex; gap: .25rem; flex-wrap: wrap; margin-left: auto; }
+nav button {
+  font: inherit; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+  background: none; border: 1px solid transparent; color: var(--ink-dim);
+  padding: .3rem .65rem; cursor: pointer; border-radius: 2px;
+}
+nav button:hover { color: var(--ink); border-color: var(--line); }
+nav button.active {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-dim);
+}
+main { flex: 1; overflow: auto; padding: .75rem 1rem; }
+.panel { display: none; }
+.panel.active { display: block; }
+#panel-compose { max-width: 1100px; margin: 0 auto; }
+h2 {
+  font-size: .72rem; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--ink-dim); margin: 0 0 .75rem; font-weight: 600;
+}
+h2::before { content: "// "; color: var(--accent); }
+textarea, input[type=text], input[type=number], select {
+  font: inherit; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line-strong); border-radius: 2px;
+  padding: .4rem .5rem; width: 100%;
+}
+textarea { resize: vertical; min-height: 7em; }
+textarea:focus, input:focus, select:focus {
+  outline: none; border-color: var(--accent);
+}
+button.act {
+  font: inherit; font-size: .75rem; letter-spacing: .1em; text-transform: uppercase;
+  background: var(--accent); color: var(--bg); border: 1px solid var(--accent);
+  padding: .38rem .9rem; cursor: pointer; border-radius: 2px;
+}
+button.act:hover { filter: brightness(1.08); }
+button.act:disabled { opacity: .45; cursor: default; }
+button.ghost {
+  font: inherit; font-size: .72rem; letter-spacing: .08em;
+  background: none; color: var(--ink-dim); border: 1px solid var(--line-strong);
+  padding: .3rem .6rem; cursor: pointer; border-radius: 2px;
+}
+button.ghost:hover { color: var(--ink); border-color: var(--ink-dim); }
+button.ghost.on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+button.danger { color: var(--err); border-color: var(--err); }
+.row { display: flex; gap: .5rem; align-items: center; margin: .6rem 0; flex-wrap: wrap; }
+.status { font-size: .78rem; margin: .5rem 0; min-height: 1.2em; }
+.status.err { color: var(--err); }
+.status.ok { color: var(--accent); }
+.status.warn { color: var(--warn); }
+.gridwrap {
+  overflow: auto; max-height: 26rem;
+  border: 1px solid var(--line-strong); border-radius: 2px;
+  background: var(--panel); box-shadow: var(--shadow);
+}
+table.grid { border-collapse: collapse; width: 100%; font-size: .78rem; }
+table.grid th {
+  position: sticky; top: 0; background: var(--bg2); text-align: left;
+  padding: .35rem .6rem; border-bottom: 1px solid var(--line-strong);
+  font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim);
+  white-space: nowrap;
+}
+table.grid td {
+  padding: .28rem .6rem; border-bottom: 1px solid var(--line);
+  white-space: pre-wrap; word-break: break-word; vertical-align: top;
+  max-width: 28rem;
+}
+table.grid tr.sel td { background: var(--sel); }
+table.grid tr.clickable { cursor: pointer; }
+table.grid tr.clickable:hover td { background: var(--sel); }
+td .null { color: var(--ink-dim); font-style: italic; }
+td .note { color: var(--ink-dim); font-size: .85em; margin-left: .3em; }
+pre.out {
+  background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 2px; padding: .6rem .8rem; overflow: auto;
+  max-height: 24rem; font-size: .78rem; white-space: pre-wrap; word-break: break-word;
+}
+.split { display: flex; gap: 1rem; align-items: flex-start; }
+.side { width: 15rem; flex-shrink: 0; }
+.side ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line-strong);
+  border-radius: 2px; background: var(--panel); max-height: 30rem; overflow: auto; }
+.side li {
+  padding: .3rem .6rem; cursor: pointer; border-bottom: 1px solid var(--line);
+  font-size: .8rem; display: flex; justify-content: space-between; gap: .5rem;
+}
+.side li:last-child { border-bottom: none; }
+.side li:hover { background: var(--sel); }
+.side li.sel { background: var(--sel); color: var(--accent); }
+.side li .tag { color: var(--ink-dim); font-size: .68rem; }
+.side li .dot {
+  display: inline-block; width: .5em; height: .5em; border-radius: 50%;
+  background: var(--accent); margin-right: .4em; vertical-align: baseline;
+}
+.grow { flex: 1; min-width: 0; }
+fieldset {
+  border: 1px solid var(--line-strong); border-radius: 2px; padding: .75rem;
+  margin: .75rem 0; background: var(--panel);
+}
+legend { font-size: .68rem; letter-spacing: .15em; text-transform: uppercase;
+  color: var(--ink-dim); padding: 0 .4rem; }
+label.f { display: block; margin: .45rem 0; font-size: .78rem; }
+label.f span.n { display: inline-block; min-width: 9rem; color: var(--ink-dim); }
+label.f span.req { color: var(--warn); }
+label.f input, label.f select { width: 22rem; max-width: 100%; display: inline-block; }
+label.f .hint { color: var(--ink-dim); font-size: .72rem; margin-left: .4rem; }
+.menu { list-style: none; margin: .5rem 0; padding: 0; }
+.menu li {
+  padding: .3rem .5rem; cursor: pointer; border-radius: 2px; font-size: .85rem;
+  display: flex; gap: .6rem; align-items: baseline;
+}
+.menu li:hover { background: var(--sel); }
+.menu li .num { color: var(--accent); }
+.menu li .kind { color: var(--ink-dim); font-size: .7rem; margin-left: auto;
+  letter-spacing: .1em; text-transform: uppercase; }
+.menu li .args { color: var(--ink-dim); font-size: .78rem; }
+.menu li.destructive .lbl { color: var(--err); }
+.crumbs { font-size: .75rem; color: var(--ink-dim); margin-bottom: .4rem; }
+.crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+.eventlog {
+  border: 1px solid var(--line-strong); border-radius: 2px; background: var(--code-bg);
+  max-height: 14rem; overflow: auto; padding: .4rem .6rem; font-size: .74rem;
+}
+.eventlog div { border-bottom: 1px dotted var(--line); padding: .15rem 0; }
+.eventlog .t { color: var(--ink-dim); margin-right: .5em; }
+.eventlog .src { color: var(--accent); margin-right: .5em; }
+.eventlog .ttl-btn { color: var(--ink-dim); cursor: pointer; margin-left: .5em; user-select: none; }
+.eventlog .ttl-btn:hover { color: var(--ink); }
+.eventlog pre.ttl {
+  margin: .25rem 0 .1rem 1.2rem; padding: .25rem .5rem;
+  white-space: pre-wrap; word-break: break-all; font-size: .72rem;
+  border-left: 2px solid var(--line-strong); color: var(--ink);
+}
+footer {
+  display: flex; gap: 1.25rem; align-items: center; flex-wrap: wrap;
+  /* safe-area: clear the home-bar in standalone and WebView */
+  padding: .4rem
+           calc(1rem + env(safe-area-inset-right, 0px))
+           calc(.4rem + env(safe-area-inset-bottom, 0px))
+           calc(1rem + env(safe-area-inset-left, 0px));
+  border-top: 1px solid var(--line-strong);
+  font-size: .7rem; color: var(--ink-dim); background: var(--bg2);
+}
+footer .led {
+  display: inline-block; width: .55em; height: .55em; border-radius: 50%;
+  background: var(--led-off); margin-right: .35em; vertical-align: baseline;
+}
+footer .led.on { background: var(--accent); animation: pulse 2.4s infinite; }
+footer .led.err { background: var(--err); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+footer code { color: var(--ink); }
+#overlay {
+  position: fixed; inset: 0; background: var(--bg);
+  display: none; align-items: center; justify-content: center; z-index: 10;
+}
+#overlay.show { display: flex; }
+#overlay .card {
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 3px;
+  padding: 1.5rem 2rem; max-width: 30rem; box-shadow: var(--shadow);
+}
+#overlay .card h1 { font-size: 1rem; letter-spacing: .3em; margin: 0 0 .25rem; }
+#overlay .card h1 em { font-style: normal; color: var(--accent); }
+#overlay .card p { font-size: .78rem; color: var(--ink-dim); }
+.pager { display: flex; gap: .5rem; align-items: center; font-size: .75rem; }
+.mini { font-size: .72rem; color: var(--ink-dim); }
+a.dl { color: var(--accent); }
+.tabstrip {
+  display: flex; gap: .25rem; flex-wrap: wrap; align-items: center;
+  margin: .75rem 0 .5rem; border-bottom: 1px solid var(--line);
+  padding-bottom: .35rem;
+}
+.tabstrip button {
+  font: inherit; font-size: .7rem; letter-spacing: .06em;
+  background: none; border: 1px solid var(--line); color: var(--ink-dim);
+  padding: .22rem .5rem; cursor: pointer; border-radius: 2px;
+  display: inline-flex; gap: .45rem; align-items: baseline; max-width: 18rem;
+}
+.tabstrip button .lang { color: var(--accent); text-transform: uppercase; font-size: .62rem; }
+.tabstrip button .snip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabstrip button:hover { color: var(--ink); border-color: var(--ink-dim); }
+.tabstrip button.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+.tabstrip button .x { color: var(--ink-dim); padding-left: .2rem; }
+.tabstrip button .x:hover { color: var(--err); }
+.tabpane { display: none; }
+.tabpane.active { display: block; }
+.side li .acts { display: flex; gap: .25rem; flex-shrink: 0; }
+button.mini-act {
+  font: inherit; font-size: .6rem; letter-spacing: .06em;
+  background: none; color: var(--ink-dim); border: 1px solid var(--line);
+  padding: .1rem .35rem; cursor: pointer; border-radius: 2px;
+}
+button.mini-act:hover { color: var(--accent); border-color: var(--accent); }
+.chatlog {
+  border: 1px solid var(--line-strong); border-radius: 2px; background: var(--panel);
+  height: 22rem; overflow: auto; padding: .6rem .8rem; box-shadow: var(--shadow);
+}
+.msg { margin: .4rem 0; max-width: 82%; }
+.msg .meta { font-size: .66rem; color: var(--ink-dim); margin-bottom: .1rem; }
+.msg .body {
+  display: inline-block; background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 3px; padding: .28rem .55rem; white-space: pre-wrap;
+  word-break: break-word; font-size: .8rem; text-align: left;
+}
+.msg.me { margin-left: auto; text-align: right; }
+.msg.me .body { background: var(--accent-dim); border-color: var(--accent); }
+.att {
+  display: inline-block; margin-top: .2rem; font-size: .72rem; cursor: pointer;
+  border: 1px dashed var(--line-strong); border-radius: 2px; padding: .12rem .45rem;
+  color: var(--accent);
+}
+.att:hover { border-color: var(--accent); }
+.t-text { min-height: 3.4em; }
+/* ---- rdf lens cards ----------------------------------------------- */
+.lens { display: flex; flex-direction: column; gap: .5rem; max-height: 24rem;
+  overflow: auto; }
+.lens .card {
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  background: var(--panel); box-shadow: var(--shadow); padding: .5rem .7rem;
+}
+.lens .card .hd {
+  display: flex; gap: .6rem; align-items: baseline; margin-bottom: .25rem;
+  border-bottom: 1px solid var(--line); padding-bottom: .25rem;
+}
+.lens .card .hd .subj { font-weight: 700; word-break: break-all; }
+.lens .card .hd .cls {
+  color: var(--accent); font-size: .68rem; letter-spacing: .1em;
+  text-transform: uppercase; margin-left: auto; white-space: nowrap;
+}
+.lens .card .pr { display: flex; gap: .6rem; font-size: .78rem;
+  padding: .08rem 0; }
+.lens .card .pr .p { color: var(--ink-dim); min-width: 10rem;
+  flex-shrink: 0; word-break: break-all; }
+.lens .card .pr .o { word-break: break-word; white-space: pre-wrap; }
+.lens .card .pr .o .note { color: var(--ink-dim); font-size: .85em;
+  margin-left: .3em; }
+.lens .msgcard .body { background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 3px; padding: .3rem .55rem; white-space: pre-wrap;
+  word-break: break-word; margin-top: .25rem; }
+/* ---- media viewer -------------------------------------------------- */
+.mediabox video { width: 100%; max-height: 20rem; background: #000;
+  border: 1px solid var(--line-strong); border-radius: 2px; }
+.mediabox .notice { font-size: .78rem; color: var(--warn); margin: .4rem 0; }
+.mediabox code { background: var(--code-bg); padding: .1rem .3rem;
+  border-radius: 2px; }
+.doorbar { position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+  display: flex; gap: .8rem; align-items: center; justify-content: center;
+  background: #7a2a2a; color: #fff; padding: .55rem .9rem;
+  font-size: .85rem; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+.doorbar button { background: #101418; color: #e8e8e8; border: 1px solid #444;
+  border-radius: 3px; font: inherit; padding: .15rem .7rem; cursor: pointer; }
+.holo-frame { width: 100%; background: #fff;
+  height: calc(100vh - 24rem); height: calc(100dvh - 24rem); min-height: 22rem;
+  border: 1px solid var(--line-strong); border-radius: 2px; }
+/* ---- small screens ------------------------------------------------ */
+@media (max-width: 640px) {
+  header { gap: .5rem;
+    padding-left: calc(.6rem + env(safe-area-inset-left, 0px));
+    padding-right: calc(.6rem + env(safe-area-inset-right, 0px)); }
+  .brand { font-size: .95rem; letter-spacing: .25em; }
+  .brand small { display: none; }
+  .hdr-acts { gap: .25rem; }
+  .hdr-acts .ghost, #ct-btn { padding: .26rem .45rem; font-size: .66rem; }
+  .tabstrip.global { padding-left: .6rem; padding-right: .6rem; }
+  main { padding: .5rem .6rem; }
+  .split { flex-direction: column; }
+  .side { width: 100%; }
+  footer { gap: .6rem; font-size: .64rem;
+    padding-left: calc(.6rem + env(safe-area-inset-left, 0px)); }
+  footer .hide-sm { display: none; }
+  .holo-frame { height: calc(100vh - 19rem); height: calc(100dvh - 19rem); min-height: 16rem; }
+  /* contacts: single pane; selecting shows the detail with a back row */
+  #panel-contacts .ct-detail { display: none; }
+  #panel-contacts.detail-open .ct-detail { display: block; }
+  #panel-contacts.detail-open .ct-side { display: none; }
+  #panel-contacts.detail-open .row.ct-backrow { display: flex; }
+  .ct-side { width: 100%; }
+  .msg { max-width: 95%; }
+  .gridwrap { max-height: 20rem; }
+  /* long ids (peer hex) wrap instead of overflowing the viewport */
+  .tabpane .mini, #chats-list .who { overflow-wrap: anywhere; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">RSN<em>TR</em><small>resonator console</small></div>
+  <div class="hdr-acts">
+    <button class="tb" id="ct-btn">contacts</button>
+    <button class="tb" id="chat-btn">chats</button>
+    <button class="tb" id="tbl-btn">tables</button>
+    <button class="ghost" id="ct-refresh" title="refresh contacts and tables">refresh</button>
+    <button class="ghost" id="nt-mute" title="new-message sound">sound: on</button>
+    <button class="ghost" id="nt-desk" style="display:none">notify</button>
+  </div>
+</header>
+
+<div class="tabstrip global" id="ct-tabs"></div>
+
+<main>
+
+<section class="panel" id="panel-compose">
+  <h2>composer</h2>
+  <textarea id="cmp-text" spellcheck="false" placeholder="SQL, SPARQL, or Turtle; the chip guesses, click it to override&#10;SELECT name FROM sqlite_schema WHERE type = 'table'"></textarea>
+  <div class="row">
+    <button class="act" id="cmp-run">run</button>
+    <button class="ghost" id="cmp-lang" title="detected language; click to override">sql (auto)</button>
+    <label class="mini" id="cmp-base-row" style="display:none">base IRI (optional)
+      <input type="text" id="cmp-base" style="width:20rem"></label>
+    <span class="mini">ctrl+enter runs; each run opens a result tab</span>
+  </div>
+  <div class="status" id="cmp-status"></div>
+  <div class="tabstrip" id="cmp-tabs" style="display:none"></div>
+  <div id="cmp-out"></div>
+</section>
+
+<section class="panel" id="panel-tables">
+  <div class="tbl-launcher">
+    <div class="mini">click a table to open it in its own tab</div>
+    <ul id="tbl-list"></ul>
+    <div class="row"><button class="ghost" id="tbl-refresh">refresh list</button></div>
+    <div class="status" id="tbl-status"></div>
+    <fieldset>
+      <legend>csv</legend>
+      <div class="row">
+        <select id="csv-exp-table" style="width:14rem"></select>
+        <button class="act" id="csv-exp">export csv</button>
+        <span class="status" id="csv-exp-status" style="margin:0"></span>
+      </div>
+      <div class="row">
+        <label class="mini">import into <input type="text" id="csv-imp-table" style="width:11rem" placeholder="notes"></label>
+        <input type="file" id="csv-imp-file" accept=".csv,text/csv" style="width:auto">
+        <button class="act" id="csv-imp">import</button>
+      </div>
+      <div class="row">
+        <label class="mini" style="flex:1">description (required for a new table)
+          <input type="text" id="csv-imp-desc" placeholder="what is this table for?"></label>
+      </div>
+      <div class="status" id="csv-imp-status"></div>
+    </fieldset>
+  </div>
+</section>
+
+<section class="panel" id="panel-work">
+  <div id="ct-out"></div>
+</section>
+
+<section class="panel" id="panel-chats">
+  <div class="status" id="chats-status"></div>
+  <ul id="chats-list"></ul>
+</section>
+
+<section class="panel active" id="panel-blank">
+  <div class="mini blank-hint">open contacts, chats or tables from the top bar</div>
+</section>
+
+<section class="panel" id="panel-contacts">
+  <div class="split ct-split">
+    <div class="side ct-side">
+      <input type="text" id="ct-search" placeholder="search contacts and chats" spellcheck="false" autocomplete="off">
+      <div class="status" id="ct-status"></div>
+      <ul id="ct-list"></ul>
+    </div>
+    <div class="ct-detail" id="ct-detail">
+      <div class="mini ct-hint">select a contact</div>
+    </div>
+  </div>
+</section>
+
+<details id="ev-wrap">
+  <summary>event log (vibrations + feed)
+    <button class="ghost" id="ev-ttl" title="log the full turtle of every frame">turtle: off</button></summary>
+  <div class="eventlog" id="ev-log"></div>
+</details>
+
+</main>
+
+<footer>
+  <span><span class="led" id="feed-led"></span>feed: <span id="st-feed">idle</span></span>
+  <span><span class="led" id="inbox-led"></span>inbox: <span id="st-inbox">off</span></span>
+  <span class="hide-sm">node <code id="st-node">--</code></span>
+  <span class="hide-sm">mods: <span id="st-mods">--</span></span>
+  <span class="ft-acts">
+    <button class="icon" id="go-back" title="go back" aria-label="go back"><svg viewBox="0 0 16 16"><path d="M10.5 3 5.5 8l5 5"/></svg></button>
+  </span>
+</footer>
+
+<div id="overlay">
+  <div class="card">
+    <h1>RSN<em>TR</em></h1>
+    <p>This console needs the capability token printed by
+       <code>rsntr serve --web</code>. Open the printed URL (token rides the
+       fragment), or paste the token here. Once connected this browser
+       stays signed in.</p>
+    <input type="text" id="tok-input" placeholder="capability token" spellcheck="false" autocomplete="off">
+    <div class="row"><button class="act" id="tok-go">connect</button></div>
+    <div class="status err" id="tok-status"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================================================================== */
+/* constants                                                           */
+/* ================================================================== */
+var MAX_FRAME_LEN = 256 * 1024;
+var NS = {
+  rsntr: "http://resonator.network/v3/rsntr#",
+  xsd:   "http://www.w3.org/2001/XMLSchema#",
+  rdf:   "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+  rdfs:  "http://www.w3.org/2000/01/rdf-schema#"
+};
+var R = NS.rsntr, RDF = NS.rdf, RDFS = NS.rdfs, XSD = NS.xsd;
+
+/* ================================================================== */
+/* frame codec: u32-LE length prefix + one UTF-8 Turtle document.      */
+/* Chunk boundaries are arbitrary; reassemble strictly by prefix.      */
+/* ================================================================== */
+function encodeFrame(doc) {
+  var body = new TextEncoder().encode(doc);
+  if (body.length > MAX_FRAME_LEN) throw new Error("frame over budget: " + body.length);
+  var out = new Uint8Array(4 + body.length);
+  new DataView(out.buffer).setUint32(0, body.length, true);
+  out.set(body, 4);
+  return out;
+}
+
+/* async generator over a ReadableStream body yielding Turtle docs */
+async function* readFrames(body) {
+  var reader = body.getReader();
+  var buf = new Uint8Array(0);
+  var dec = new TextDecoder("utf-8", { fatal: false });
+  try {
+    for (;;) {
+      var r = await reader.read();
+      if (r.value && r.value.length) {
+        var nb = new Uint8Array(buf.length + r.value.length);
+        nb.set(buf, 0);
+        nb.set(r.value, buf.length);
+        buf = nb;
+      }
+      for (;;) {
+        if (buf.length < 4) break;
+        var len = new DataView(buf.buffer, buf.byteOffset, 4).getUint32(0, true);
+        if (len > MAX_FRAME_LEN) throw new Error("frame over budget: " + len);
+        if (buf.length < 4 + len) break;
+        var doc = dec.decode(buf.subarray(4, 4 + len));
+        buf = buf.slice(4 + len);
+        if (doc.length) yield doc;
+      }
+      if (r.done) {
+        if (buf.length) throw new Error("truncated frame at end of stream");
+        return;
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch (e) { /* stream may be errored */ }
+  }
+}
+
+/* ================================================================== */
+/* turtle parser (subset sufficient for envelope frames)               */
+/* terms: {t:"iri"|"blank"|"lit", v, dt?, lang?}                       */
+/* ================================================================== */
+function parseTurtle(src) {
+  var i = 0, n = src.length, bn = 0;
+  var triples = [];
+  var prefixes = { rsntr: R, xsd: XSD, rdf: RDF, rdfs: RDFS, "": "" };
+
+  function err(m) { throw new Error("turtle: " + m + " near offset " + i + " (" + src.slice(Math.max(0, i - 20), i + 20).replace(/\n/g, " ") + ")"); }
+  function ws() {
+    for (;;) {
+      while (i < n && (src[i] === " " || src[i] === "\t" || src[i] === "\r" || src[i] === "\n")) i++;
+      if (i < n && src[i] === "#") { while (i < n && src[i] !== "\n") i++; continue; }
+      return;
+    }
+  }
+  function unesc(s) {
+    return s.replace(/\\U([0-9A-Fa-f]{8})|\\u([0-9A-Fa-f]{4})/g, function (m, u8, u4) {
+      return String.fromCodePoint(parseInt(u8 || u4, 16));
+    });
+  }
+  function iriRef() {
+    i++; var s = i;
+    while (i < n && src[i] !== ">") i++;
+    if (i >= n) err("unterminated IRI");
+    var v = unesc(src.slice(s, i)); i++;
+    return { t: "iri", v: v };
+  }
+  function pnameOrKeyword() {
+    var s = i;
+    while (i < n && /[A-Za-z0-9_\-\.%:]/.test(src[i])) i++;
+    var tok = src.slice(s, i);
+    while (tok.endsWith(".")) { tok = tok.slice(0, -1); i--; }
+    if (!tok.length) err("expected term");
+    return tok;
+  }
+  function pnameToIri(tok) {
+    var c = tok.indexOf(":");
+    if (c < 0) err("not a prefixed name: " + tok);
+    var p = tok.slice(0, c), l = tok.slice(c + 1);
+    if (!(p in prefixes)) err("unknown prefix " + p + ":");
+    var local = l.replace(/\\(.)/g, "$1");
+    try { local = decodeURIComponent(local); } catch (e) { /* keep literal percent */ }
+    return { t: "iri", v: prefixes[p] + local };
+  }
+  function stringLit(q) {
+    var triple = src.substr(i, 3) === q + q + q;
+    i += triple ? 3 : 1;
+    var out = "";
+    for (;;) {
+      if (i >= n) err("unterminated string");
+      var c = src[i];
+      if (c === "\\") {
+        var nx = src[i + 1];
+        if (nx === "u") { out += String.fromCharCode(parseInt(src.substr(i + 2, 4), 16)); i += 6; continue; }
+        if (nx === "U") { out += String.fromCodePoint(parseInt(src.substr(i + 2, 8), 16)); i += 10; continue; }
+        var map = { t: "\t", b: "\b", n: "\n", r: "\r", f: "\f", '"': '"', "'": "'", "\\": "\\" };
+        out += (nx in map) ? map[nx] : nx;
+        i += 2; continue;
+      }
+      if (c === q) {
+        if (!triple) { i++; break; }
+        if (src.substr(i, 3) === q + q + q) { i += 3; break; }
+      }
+      out += c; i++;
+    }
+    var lit = { t: "lit", v: out };
+    if (src[i] === "@") {
+      i++; var s2 = i;
+      while (i < n && /[A-Za-z0-9\-]/.test(src[i])) i++;
+      lit.lang = src.slice(s2, i);
+    } else if (src[i] === "^" && src[i + 1] === "^") {
+      i += 2; ws();
+      lit.dt = (src[i] === "<") ? iriRef().v : pnameToIri(pnameOrKeyword()).v;
+    }
+    return lit;
+  }
+  function numberLit() {
+    var m = /^[+-]?(?:\d+\.\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|\d+(?:[eE][+-]?\d+)?)/.exec(src.slice(i));
+    if (!m) err("bad number");
+    i += m[0].length;
+    var dt = /[eE]/.test(m[0]) ? XSD + "double" : (/\./.test(m[0]) ? XSD + "decimal" : XSD + "integer");
+    return { t: "lit", v: m[0], dt: dt };
+  }
+  function collection() {
+    i++; ws();
+    var items = [];
+    while (i < n && src[i] !== ")") { items.push(object()); ws(); }
+    if (i >= n) err("unterminated collection");
+    i++;
+    if (!items.length) return { t: "iri", v: RDF + "nil" };
+    var head = { t: "blank", v: "gen" + (bn++) }, cur = head;
+    for (var k = 0; k < items.length; k++) {
+      triples.push({ s: cur, p: { t: "iri", v: RDF + "first" }, o: items[k] });
+      var rest = (k === items.length - 1) ? { t: "iri", v: RDF + "nil" } : { t: "blank", v: "gen" + (bn++) };
+      triples.push({ s: cur, p: { t: "iri", v: RDF + "rest" }, o: rest });
+      cur = rest;
+    }
+    return head;
+  }
+  function blankPropList() {
+    i++; ws();
+    var node = { t: "blank", v: "gen" + (bn++) };
+    if (src[i] === "]") { i++; return node; }
+    predObjList(node);
+    ws();
+    if (src[i] !== "]") err("expected ]");
+    i++;
+    return node;
+  }
+  function subjectOrObjectTerm(isObject) {
+    ws();
+    var c = src[i];
+    if (c === "<") return iriRef();
+    if (c === "[") return blankPropList();
+    if (c === "(") return collection();
+    if (c === "_" && src[i + 1] === ":") {
+      i += 2; var s = i;
+      while (i < n && /[A-Za-z0-9_\-\.]/.test(src[i])) i++;
+      var lbl = src.slice(s, i);
+      while (lbl.endsWith(".")) { lbl = lbl.slice(0, -1); i--; }
+      return { t: "blank", v: "_" + lbl };
+    }
+    if (isObject) {
+      if (c === '"' || c === "'") return stringLit(c);
+      if (/[0-9+\-.]/.test(c)) return numberLit();
+      var save = i;
+      var tok = pnameOrKeyword();
+      if (tok === "true" || tok === "false") return { t: "lit", v: tok, dt: XSD + "boolean" };
+      i = save;
+    }
+    return pnameToIri(pnameOrKeyword());
+  }
+  function object() { return subjectOrObjectTerm(true); }
+  function predicate() {
+    ws();
+    if (src[i] === "a" && (i + 1 >= n || /[\s<#\[]/.test(src[i + 1]))) { i++; return { t: "iri", v: RDF + "type" }; }
+    if (src[i] === "<") return iriRef();
+    return pnameToIri(pnameOrKeyword());
+  }
+  function predObjList(s) {
+    for (;;) {
+      var p = predicate();
+      ws();
+      for (;;) {
+        var o = object();
+        triples.push({ s: s, p: p, o: o });
+        ws();
+        if (src[i] === ",") { i++; ws(); continue; }
+        break;
+      }
+      if (src[i] === ";") {
+        i++; ws();
+        while (src[i] === ";") { i++; ws(); }
+        if (src[i] === "." || src[i] === "]" || i >= n) return;
+        continue;
+      }
+      return;
+    }
+  }
+  function directive() {
+    /* at '@' or bare PREFIX/BASE */
+    if (src[i] === "@") {
+      i++;
+      var kw = pnameOrKeyword();
+      if (kw === "prefix") {
+        ws();
+        var ptok = pnameOrKeyword();
+        if (!ptok.endsWith(":")) err("bad @prefix");
+        ws();
+        if (src[i] !== "<") err("expected <iri> in @prefix");
+        prefixes[ptok.slice(0, -1)] = iriRef().v;
+        ws();
+        if (src[i] === ".") i++;
+        return true;
+      }
+      if (kw === "base") { ws(); if (src[i] === "<") iriRef(); ws(); if (src[i] === ".") i++; return true; }
+      err("unknown directive @" + kw);
+    }
+    var save = i;
+    var word = "";
+    while (i < n && /[A-Za-z]/.test(src[i])) { word += src[i]; i++; }
+    var up = word.toUpperCase();
+    /* bare-word forms only count when the directive shape follows;      */
+    /* otherwise "base:x" or "prefix:x" is an ordinary prefixed name.    */
+    if (up === "PREFIX" && src[i] !== ":") {
+      ws();
+      var ptok2 = pnameOrKeyword();
+      if (ptok2.endsWith(":")) {
+        ws();
+        if (src[i] !== "<") err("expected <iri> in PREFIX");
+        prefixes[ptok2.slice(0, -1)] = iriRef().v;
+        return true;
+      }
+      i = save;
+      return false;
+    }
+    if (up === "BASE" && src[i] !== ":") {
+      ws();
+      if (src[i] === "<") { iriRef(); return true; }
+      i = save;
+      return false;
+    }
+    i = save;
+    return false;
+  }
+
+  ws();
+  while (i < n) {
+    if (src[i] === "@" || /^(prefix|base)\b/i.test(src.slice(i, i + 7))) {
+      if (directive()) { ws(); continue; }
+    }
+    var subj = subjectOrObjectTerm(false);
+    ws();
+    if (src[i] !== "." || subj.t === "blank") {
+      /* a bare "[] ." has no predicates; otherwise a pol follows */
+      if (src[i] !== ".") predObjList(subj);
+    }
+    ws();
+    if (src[i] === ".") i++; else if (i < n) err("expected .");
+    ws();
+  }
+  return triples;
+}
+
+/* ---- graph helpers ------------------------------------------------ */
+function tkey(t) { return t.t + "|" + t.v + "|" + (t.dt || "") + "|" + (t.lang || ""); }
+function graphIndex(triples) {
+  var bys = new Map();
+  for (var k = 0; k < triples.length; k++) {
+    var key = tkey(triples[k].s);
+    if (!bys.has(key)) bys.set(key, []);
+    bys.get(key).push(triples[k]);
+  }
+  return { triples: triples, bys: bys };
+}
+function objsOf(g, s, p) {
+  var out = [], lst = g.bys.get(tkey(s)) || [];
+  for (var k = 0; k < lst.length; k++) if (lst[k].p.v === p) out.push(lst[k].o);
+  return out;
+}
+function obj1(g, s, p) { var o = objsOf(g, s, p); return o.length ? o[0] : null; }
+function litOf(g, s, p) { var o = obj1(g, s, p); return (o && o.t === "lit") ? o.v : null; }
+function listItems(g, head) {
+  var out = [], cur = head, seen = new Set();
+  while (cur && !(cur.t === "iri" && cur.v === RDF + "nil")) {
+    if (cur.t === "lit") break;
+    var k = tkey(cur);
+    if (seen.has(k)) break;
+    seen.add(k);
+    var f = obj1(g, cur, RDF + "first");
+    if (f === null) break;
+    out.push(f);
+    cur = obj1(g, cur, RDF + "rest");
+  }
+  return out;
+}
+function typedSubjects(g, clsIri) {
+  var out = [], seen = new Set();
+  for (var k = 0; k < g.triples.length; k++) {
+    var tr = g.triples[k];
+    if (tr.p.v === RDF + "type" && tr.o.t === "iri" && tr.o.v === clsIri) {
+      var key = tkey(tr.s);
+      if (!seen.has(key)) { seen.add(key); out.push(tr.s); }
+    }
+  }
+  return out;
+}
+/* every subject carrying an rdf:type in the rsntr namespace */
+function envelopeSubjects(g) {
+  var out = [], seen = new Set();
+  for (var k = 0; k < g.triples.length; k++) {
+    var tr = g.triples[k];
+    if (tr.p.v === RDF + "type" && tr.o.t === "iri" && tr.o.v.startsWith(R)) {
+      var key = tkey(tr.s);
+      if (!seen.has(key)) { seen.add(key); out.push({ s: tr.s, cls: tr.o.v.slice(R.length) }); }
+    }
+  }
+  return out;
+}
+
+/* ================================================================== */
+/* turtle building (requests)                                          */
+/* ================================================================== */
+function ttlStr(s) {
+  return '"' + String(s)
+    .replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t") + '"';
+}
+var ULID_CH = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+function ulid() {
+  var t = Date.now(), s = "";
+  for (var k = 0; k < 10; k++) { s = ULID_CH[t % 32] + s; t = Math.floor(t / 32); }
+  var r = new Uint8Array(16);
+  (typeof crypto !== "undefined" ? crypto : require("crypto").webcrypto).getRandomValues(r);
+  for (var j = 0; j < 16; j++) s += ULID_CH[r[j] & 31];
+  return s;
+}
+function reqDoc(cls, mod, signal, params) {
+  var d = "[] a rsntr:" + cls +
+    " ; rsntr:id " + ttlStr(ulid()) +
+    " ; rsntr:mod " + ttlStr(mod) +
+    " ; rsntr:signal " + ttlStr(signal);
+  if (params && params.length) d += " ; rsntr:params (" + params.join(" ") + ")";
+  return d + " .";
+}
+function entrainDoc(pointIri) {
+  return "[] a rsntr:Entrain ; rsntr:id " + ttlStr(ulid()) + " ; rsntr:point <" + pointIri + "> .";
+}
+
+/* ================================================================== */
+/* term display                                                        */
+/* ================================================================== */
+function shortIri(v) {
+  for (var p in NS) if (v.startsWith(NS[p])) return p + ":" + v.slice(NS[p].length);
+  return v;
+}
+function ntOfTerm(o) {
+  if (o.t === "iri") return "<" + o.v + ">";
+  if (o.t === "blank") return "_:" + o.v;
+  var s = ttlStr(o.v);
+  if (o.lang) return s + "@" + o.lang;
+  if (o.dt) return s + "^^<" + o.dt + ">";
+  return s;
+}
+function cellOfTerm(o) {
+  if (o === null || o === undefined) return { isNull: true, disp: "NULL", raw: "" };
+  if (o.t === "iri") return { disp: shortIri(o.v), raw: "<" + o.v + ">" };
+  if (o.t === "blank") return { disp: "_:" + o.v, raw: "_:" + o.v };
+  var note = o.lang ? "@" + o.lang : (o.dt && o.dt !== XSD + "string" ? shortIri(o.dt) : "");
+  return { disp: o.v, raw: ntOfTerm(o), note: note };
+}
+/* one N-Triples lexical cell string (sparql /api results) -> cell */
+function ntCell(sr) {
+  if (sr === null || sr === undefined) return { isNull: true, disp: "NULL", raw: "" };
+  var s = String(sr);
+  if (s.charAt(0) === "<" && s.endsWith(">")) return { disp: shortIri(s.slice(1, -1)), raw: s };
+  if (s.startsWith("_:")) return { disp: s, raw: s };
+  if (s.charAt(0) === '"') {
+    var i = 1, out = "";
+    while (i < s.length) {
+      var c = s[i];
+      if (c === "\\") {
+        var nx = s[i + 1];
+        if (nx === "u") { out += String.fromCharCode(parseInt(s.substr(i + 2, 4), 16)); i += 6; continue; }
+        if (nx === "U") { out += String.fromCodePoint(parseInt(s.substr(i + 2, 8), 16)); i += 10; continue; }
+        var map = { t: "\t", b: "\b", n: "\n", r: "\r", f: "\f", '"': '"', "\\": "\\" };
+        out += (nx in map) ? map[nx] : nx;
+        i += 2; continue;
+      }
+      if (c === '"') { i++; break; }
+      out += c; i++;
+    }
+    var rest = s.slice(i), note = "";
+    if (rest.startsWith("^^<") && rest.endsWith(">")) {
+      var dt = rest.slice(3, -1);
+      if (dt !== XSD + "string") note = shortIri(dt);
+    } else if (rest.startsWith("@")) note = rest;
+    return { disp: out, raw: s, note: note };
+  }
+  return { disp: s, raw: s };
+}
+
+/* ================================================================== */
+/* response stream collection                                          */
+/* ================================================================== */
+function intLit(g, s, p) { var v = litOf(g, s, p); return v === null ? null : parseInt(v, 10); }
+
+/* consume a /request-shaped frame stream into one outcome object */
+async function collectResponse(frames) {
+  var out = { columns: null, declTypes: null, rows: [], done: null, error: null,
+              denied: null, help: null, graphTtl: [], generic: [], projection: null };
+  for await (var doc of frames) {
+    var g = graphIndex(parseTurtle(doc));
+    var subjects = envelopeSubjects(g);
+    var isGraphFrame = false;
+    for (var k = 0; k < subjects.length; k++) {
+      var sub = subjects[k], s = sub.s;
+      switch (sub.cls) {
+        case "Result":
+          out.columns = listItems(g, obj1(g, s, R + "column")).map(function (t) { return t.v; });
+          var dt = obj1(g, s, R + "declType");
+          out.declTypes = dt ? listItems(g, dt).map(function (t) { return t.v; }) : null;
+          break;
+        case "Row": {
+          var row = { seq: intLit(g, s, R + "seq"), cells: {} };
+          var trs = g.bys.get(tkey(s)) || [];
+          for (var m = 0; m < trs.length; m++) {
+            var pv = trs[m].p.v;
+            if (pv.startsWith(R + "col_")) {
+              var name = pv.slice((R + "col_").length);
+              try { name = decodeURIComponent(name); } catch (e) { /* keep raw */ }
+              row.cells[name] = trs[m].o;
+            }
+          }
+          out.rows.push(row);
+          break;
+        }
+        case "Graph":
+          isGraphFrame = true;
+          break;
+        case "Done":
+          out.done = {
+            rowCount: intLit(g, s, R + "rowCount"),
+            affectedRows: intLit(g, s, R + "affectedRows"),
+            lastInsertRowid: intLit(g, s, R + "lastInsertRowid"),
+            truncated: litOf(g, s, R + "truncated") === "true"
+          };
+          break;
+        case "Denied": {
+          var reason = litOf(g, s, R + "reason");
+          if (reason === null) {
+            var decs = typedSubjects(g, R + "Decision");
+            if (decs.length) reason = litOf(g, decs[0], R + "reason");
+          }
+          out.denied = reason || "denied";
+          break;
+        }
+        case "Error":
+          out.error = { code: litOf(g, s, R + "code") || "error", reason: litOf(g, s, R + "reason") || "" };
+          break;
+        case "Help":
+          out.help = { text: litOf(g, s, R + "signal") || "",
+                       topics: objsOf(g, s, R + "topic").map(function (t) { return t.v; }) };
+          break;
+        case "Projection":
+          out.projection = { g: g, s: s };
+          break;
+        case "Decision":
+          break;
+        default:
+          out.generic.push({ cls: sub.cls, doc: doc });
+      }
+    }
+    if (isGraphFrame) out.graphTtl.push(doc);
+  }
+  out.rows.sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+  return out;
+}
+
+/* extract payload triples of Graph frames (header subjects dropped) */
+function graphPayloadTriples(graphDocs) {
+  var out = [];
+  for (var k = 0; k < graphDocs.length; k++) {
+    var g = graphIndex(parseTurtle(graphDocs[k]));
+    var heads = typedSubjects(g, R + "Graph").map(tkey);
+    for (var m = 0; m < g.triples.length; m++) {
+      var tr = g.triples[m];
+      if (heads.indexOf(tkey(tr.s)) >= 0) continue;
+      out.push(tr);
+    }
+  }
+  return out;
+}
+/* the same payload as displayable N-Triples text */
+function graphPayloadTtl(graphDocs) {
+  return graphPayloadTriples(graphDocs).map(function (tr) {
+    return ntOfTerm(tr.s) + " " + ntOfTerm(tr.p) + " " + ntOfTerm(tr.o) + " .";
+  }).join("\n");
+}
+
+/* ================================================================== */
+/* rdf lenses: deterministic subject-card rendering (observer.md 3)    */
+/* ================================================================== */
+/* group triples by subject, keeping first-seen order */
+function lensGroups(triples) {
+  var by = new Map();
+  for (var k = 0; k < triples.length; k++) {
+    var tr = triples[k], key = tkey(tr.s);
+    if (!by.has(key)) by.set(key, { term: tr.s, key: key, types: [], props: [] });
+    var grp = by.get(key);
+    if (tr.p.v === RDF + "type" && tr.o.t === "iri") grp.types.push(tr.o.v);
+    else grp.props.push({ p: tr.p, o: tr.o });
+  }
+  return Array.from(by.values());
+}
+/* pick the built-in lens for a subject's rdf:types */
+var LENS_POINT_TYPES = ["Excitable", "Radiant", "Sympathetic", "Point"];
+function lensFor(types) {
+  for (var k = 0; k < types.length; k++) {
+    if (!types[k].startsWith(R)) continue;
+    var local = types[k].slice(R.length);
+    if (local === "Message") return "message";
+    if (LENS_POINT_TYPES.indexOf(local) >= 0) return "point";
+  }
+  return "subject";
+}
+
+/* ================================================================== */
+/* identicons (pure): a deterministic 5x5 mirrored glyph per identity   */
+/* ================================================================== */
+function fnv1a(s) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h >>> 0;
+}
+/* seed -> inline SVG string, px square; 15 hash bits fill the left
+   half + middle column of a 5x5 grid, mirrored for symmetry */
+function identiconSvg(seed, px) {
+  var h = fnv1a(String(seed));
+  var hue = h % 360;
+  var fg = "hsl(" + hue + ", 45%, 55%)";
+  var bg = "hsl(" + hue + ", 25%, 92%)";
+  var cells = "";
+  for (var col = 0; col < 3; col++) {
+    for (var row = 0; row < 5; row++) {
+      if ((h >>> (col * 5 + row)) & 1) {
+        cells += '<rect x="' + col + '" y="' + row + '" width="1" height="1"/>';
+        if (col < 2) {
+          cells += '<rect x="' + (4 - col) + '" y="' + row + '" width="1" height="1"/>';
+        }
+      }
+    }
+  }
+  return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 5 5" ' +
+    'shape-rendering="crispEdges" role="img" aria-hidden="true">' +
+    '<rect width="5" height="5" fill="' + bg + '"/>' +
+    '<g fill="' + fg + '">' + cells + "</g></svg>";
+}
+
+/* ================================================================== */
+/* media header reader (observer.md 4)                                 */
+/* ================================================================== */
+function mediaWatchCmd(peer, source) {
+  return "rsntr watch " + (peer || "<peer>") + " " + source + " | ffplay -f mpegts -";
+}
+/* Reads framed envelopes off `body` until the rsntr:Media header; the
+   raw byte feed then follows. Returns { contentType, denied, error,
+   reader, rest } where `rest` is any raw bytes already buffered past
+   the header and `reader` continues the feed (null when the stream
+   ended first). */
+async function readMediaHeader(body) {
+  var reader = body.getReader();
+  var buf = new Uint8Array(0);
+  var dec = new TextDecoder("utf-8", { fatal: false });
+  var out = { contentType: null, denied: null, error: null, reader: null, rest: null };
+  for (;;) {
+    for (;;) {
+      if (buf.length < 4) break;
+      var len = new DataView(buf.buffer, buf.byteOffset, 4).getUint32(0, true);
+      if (len > MAX_FRAME_LEN) throw new Error("frame over budget: " + len);
+      if (buf.length < 4 + len) break;
+      var doc = dec.decode(buf.subarray(4, 4 + len));
+      buf = buf.slice(4 + len);
+      var g = graphIndex(parseTurtle(doc));
+      var subs = envelopeSubjects(g);
+      for (var k = 0; k < subs.length; k++) {
+        var sub = subs[k];
+        if (sub.cls === "Media") {
+          out.contentType = litOf(g, sub.s, R + "contentType");
+          out.reader = reader;
+          out.rest = buf.length ? buf : null;
+          return out;
+        }
+        if (sub.cls === "Denied") out.denied = litOf(g, sub.s, R + "reason") || "denied";
+        else if (sub.cls === "Error") {
+          out.error = { code: litOf(g, sub.s, R + "code") || "error",
+                        reason: litOf(g, sub.s, R + "reason") || "" };
+        }
+      }
+      if (out.denied !== null || out.error !== null) {
+        try { reader.cancel(); } catch (e) { /* stream may be done */ }
+        return out;
+      }
+    }
+    var r = await reader.read();
+    if (r.value && r.value.length) {
+      var nb = new Uint8Array(buf.length + r.value.length);
+      nb.set(buf, 0);
+      nb.set(r.value, buf.length);
+      buf = nb;
+    }
+    if (r.done) {
+      if (buf.length) throw new Error("truncated frame before the media header");
+      return out;
+    }
+  }
+}
+
+/* readMediaHeader's audio-duplex sibling: waits for the rsntr:AudioDuplex
+   header and additionally yields its id (which names /duplex/{id}) and
+   accepts (the upstream format). contentType may be null: a pure talk
+   sink emits no downstream bytes. */
+async function readDuplexHeader(body) {
+  var reader = body.getReader();
+  var buf = new Uint8Array(0);
+  var dec = new TextDecoder("utf-8", { fatal: false });
+  var out = { id: null, contentType: null, accepts: null, denied: null,
+              error: null, reader: null, rest: null };
+  for (;;) {
+    for (;;) {
+      if (buf.length < 4) break;
+      var len = new DataView(buf.buffer, buf.byteOffset, 4).getUint32(0, true);
+      if (len > MAX_FRAME_LEN) throw new Error("frame over budget: " + len);
+      if (buf.length < 4 + len) break;
+      var doc = dec.decode(buf.subarray(4, 4 + len));
+      buf = buf.slice(4 + len);
+      var g = graphIndex(parseTurtle(doc));
+      var subs = envelopeSubjects(g);
+      for (var k = 0; k < subs.length; k++) {
+        var sub = subs[k];
+        if (sub.cls === "AudioDuplex") {
+          out.id = litOf(g, sub.s, R + "id");
+          out.contentType = litOf(g, sub.s, R + "contentType");
+          out.accepts = litOf(g, sub.s, R + "accepts");
+          out.reader = reader;
+          out.rest = buf.length ? buf : null;
+          return out;
+        }
+        if (sub.cls === "Denied") out.denied = litOf(g, sub.s, R + "reason") || "denied";
+        else if (sub.cls === "Error") {
+          out.error = { code: litOf(g, sub.s, R + "code") || "error",
+                        reason: litOf(g, sub.s, R + "reason") || "" };
+        }
+      }
+      if (out.denied !== null || out.error !== null) {
+        try { reader.cancel(); } catch (e) { /* stream may be done */ }
+        return out;
+      }
+    }
+    var r = await reader.read();
+    if (r.value && r.value.length) {
+      var nb = new Uint8Array(buf.length + r.value.length);
+      nb.set(buf, 0);
+      nb.set(r.value, buf.length);
+      buf = nb;
+    }
+    if (r.done) {
+      if (buf.length) throw new Error("truncated frame before the audio-duplex header");
+      return out;
+    }
+  }
+}
+
+/* ================================================================== */
+/* everything below touches the DOM                                    */
+/* ================================================================== */
+var state = {
+  token: null,
+  meta: null,
+  tables: [],
+  cmp: { override: null, tabs: [], nextId: 1 },
+  ct: { loaded: false, contacts: [], tabs: [], nextId: 1, filter: "", recency: new Map(),
+        sel: null, embeds: [] },
+  view: null,
+  chat: { rooms: new Map(), peerNames: new Map() },
+  inbox: { running: false, ctrl: null, backoff: 1000, watermark: null },
+  notif: { muted: loadMuted(), unread: new Set(), audio: null },
+  logTtl: loadLogTtl(),
+  feed: null
+};
+
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function setStatus(id, msg, kind) {
+  var e = $(id);
+  e.textContent = msg || "";
+  e.className = "status" + (kind ? " " + kind : "");
+}
+function fmtJsonErr(j) {
+  if (j && j.denied !== undefined) return { text: "denied: " + j.denied, kind: "warn" };
+  if (j && j.error) return { text: "error [" + j.error.code + "] " + j.error.reason, kind: "err" };
+  return { text: "error: unexpected response", kind: "err" };
+}
+function outcomeStatus(res) {
+  if (res.error) return { text: "error [" + res.error.code + "] " + res.error.reason, kind: "err" };
+  if (res.denied) return { text: "denied: " + res.denied, kind: "warn" };
+  return null;
+}
+
+/* ---- auth --------------------------------------------------------- */
+/* The server issues a persistent HttpOnly rsntr_token cookie in
+   exchange for proof of the token (POST /api/session). Once the cookie
+   is installed this browser needs no fragment and no stored token; the
+   fragment + sessionStorage path is the bootstrap and the fallback for
+   cookie-blocked browsers. */
+function needToken(msg) {
+  $("overlay").classList.add("show");
+  if (msg) { $("tok-status").textContent = msg; }
+}
+function haveToken(t) {
+  state.token = t;
+  sessionStorage.setItem("rsntr_token", t);
+  $("overlay").classList.remove("show");
+}
+/* Proves the token to the server; the 204 carries the Set-Cookie. */
+async function installSession(t) {
+  try {
+    var res = await fetch("/api/session", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + t }
+    });
+    return res.ok;
+  } catch (e) { return false; }
+}
+/* Resolves true when authenticated: explicit token (fragment, then
+   sessionStorage), else the persistent cookie probed via /api/meta. */
+async function initAuth() {
+  var t = null;
+  if (location.hash.length > 1) {
+    t = location.hash.slice(1);
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  if (!t) t = sessionStorage.getItem("rsntr_token");
+  if (t) {
+    if (await installSession(t)) { haveToken(t); return true; }
+    sessionStorage.removeItem("rsntr_token");
+    return false;
+  }
+  try {
+    var res = await fetch("/api/meta");
+    if (res.ok) { $("overlay").classList.remove("show"); return true; }
+  } catch (e) { /* server unreachable; the overlay explains */ }
+  return false;
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  /* With no in-page token the HttpOnly cookie authenticates. */
+  if (state.token) {
+    opts.headers = Object.assign({}, opts.headers || {}, { "Authorization": "Bearer " + state.token });
+  }
+  var res = await fetch(path, opts);
+  if (res.status === 401) {
+    needToken("token rejected (401); paste a fresh one");
+    throw new Error("unauthorized");
+  }
+  return res;
+}
+async function apiJson(path, opts) {
+  var res = await api(path, opts);
+  return res.json();
+}
+
+/* POST one request frame; returns the collected outcome */
+async function postFrames(url, frameDocs, signal) {
+  var parts = frameDocs.map(encodeFrame);
+  var total = parts.reduce(function (a, p) { return a + p.length; }, 0);
+  var body = new Uint8Array(total), off = 0;
+  for (var k = 0; k < parts.length; k++) { body.set(parts[k], off); off += parts[k].length; }
+  var res = await api(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/rsntr-frames" },
+    body: body,
+    signal: signal
+  });
+  return res;
+}
+/* "" or null = the local node; otherwise a 64-hex endpoint id relayed over iroh */
+function peerSuffix(peer) {
+  return peer ? "?peer=" + encodeURIComponent(peer) : "";
+}
+async function runEnvelope(cls, mod, sig, params, peer) {
+  var res = await postFrames("/request" + peerSuffix(peer), [reqDoc(cls, mod, sig, params)]);
+  return collectResponse(readFrames(res.body));
+}
+
+/* ---- grid rendering ----------------------------------------------- */
+function renderGrid(container, columns, cellRows, opts) {
+  opts = opts || {};
+  var h = '<div class="gridwrap"><table class="grid"><thead><tr>';
+  for (var c = 0; c < columns.length; c++) h += "<th>" + esc(columns[c]) + "</th>";
+  h += "</tr></thead><tbody>";
+  for (var r = 0; r < cellRows.length; r++) {
+    var cls = opts.clickable ? ' class="clickable' + (opts.selIdx === r ? " sel" : "") + '" data-idx="' + r + '"' : "";
+    h += "<tr" + cls + ">";
+    for (var c2 = 0; c2 < columns.length; c2++) {
+      var cell = cellRows[r][c2] || { isNull: true, disp: "NULL", raw: "" };
+      if (cell.isNull) h += '<td><span class="null">NULL</span></td>';
+      else {
+        var body = opts.raw ? esc(cell.raw || cell.disp) : esc(cell.disp);
+        var note = (!opts.raw && cell.note) ? '<span class="note">' + esc(cell.note) + "</span>" : "";
+        h += '<td title="' + esc(cell.raw || "") + '">' + body + note + "</td>";
+      }
+    }
+    h += "</tr>";
+  }
+  h += "</tbody></table></div>";
+  container.innerHTML = h;
+}
+function jsonCell(v) {
+  if (v === null || v === undefined) return { isNull: true, disp: "NULL", raw: "" };
+  if (typeof v === "object") {
+    if (v.blob_hex !== undefined) {
+      var hx = v.blob_hex.length > 48 ? v.blob_hex.slice(0, 48) + "..." : v.blob_hex;
+      return { disp: "x'" + hx + "'", raw: "x'" + v.blob_hex + "'" };
+    }
+    if (v.blobref) return { disp: "blobref " + v.blobref.hash + " (" + v.blobref.bytes + " B)", raw: JSON.stringify(v) };
+    return { disp: JSON.stringify(v), raw: JSON.stringify(v) };
+  }
+  return { disp: String(v), raw: String(v) };
+}
+
+/* ---- rdf lens cards (DOM side) ------------------------------------ */
+function lensValueHtml(o) {
+  var c = cellOfTerm(o);
+  return '<span title="' + esc(c.raw || "") + '">' + esc(c.disp) + "</span>" +
+    (c.note ? '<span class="note">' + esc(c.note) + "</span>" : "");
+}
+function lensPropRows(props) {
+  var h = "";
+  for (var k = 0; k < props.length; k++) {
+    h += '<div class="pr"><span class="p">' + esc(shortIri(props[k].p.v)) +
+      '</span><span class="o">' + lensValueHtml(props[k].o) + "</span></div>";
+  }
+  return h;
+}
+function grpLit(grp, iri) {
+  for (var k = 0; k < grp.props.length; k++) {
+    if (grp.props[k].p.v === iri && grp.props[k].o.t === "lit") return grp.props[k].o.v;
+  }
+  return null;
+}
+function grpRest(grp, skip) {
+  return grp.props.filter(function (pr) { return skip.indexOf(pr.p.v) < 0; });
+}
+function renderLensCards(host, triples) {
+  var groups = lensGroups(triples);
+  var h = '<div class="lens">';
+  groups.forEach(function (grp) {
+    var lens = lensFor(grp.types);
+    var typeLbl = grp.types.map(shortIri).join(", ");
+    var subj = grp.term.t === "iri" ? shortIri(grp.term.v) : "_:" + grp.term.v;
+    if (lens === "message") {
+      var sender = grpLit(grp, R + "sender") || grpLit(grp, R + "from");
+      var at = grpLit(grp, R + "at");
+      var body = grpLit(grp, R + "body");
+      var room = null;
+      grp.props.forEach(function (pr) { if (pr.p.v === R + "room") room = pr.o; });
+      h += '<div class="card msgcard"><div class="hd"><span class="subj">' +
+        esc(sender !== null ? chatLabelFor(sender) : subj) +
+        (room ? " in " + esc(cellOfTerm(room).disp) : "") + "</span>" +
+        (at ? '<span class="note">' + esc(at) + "</span>" : "") +
+        '<span class="cls">message</span></div>' +
+        '<div class="body">' + esc(body === null ? "" : body) + "</div>" +
+        lensPropRows(grpRest(grp, [R + "sender", R + "from", R + "at", R + "body", R + "room", R + "id"])) +
+        "</div>";
+    } else if (lens === "point") {
+      var label = grpLit(grp, RDFS + "label") || subj;
+      var comment = grpLit(grp, RDFS + "comment");
+      h += '<div class="card"><div class="hd"><span class="subj">' + esc(label) +
+        '</span><span class="cls">' + esc(typeLbl) + "</span></div>" +
+        (comment ? '<div class="pr"><span class="o">' + esc(comment) + "</span></div>" : "") +
+        lensPropRows(grpRest(grp, [RDFS + "label", RDFS + "comment"])) +
+        "</div>";
+    } else {
+      h += '<div class="card"><div class="hd"><span class="subj" title="' +
+        esc(grp.term.t === "iri" ? grp.term.v : "") + '">' + esc(subj) + "</span>" +
+        (typeLbl ? '<span class="cls">' + esc(typeLbl) + "</span>" : "") + "</div>" +
+        lensPropRows(grp.props) + "</div>";
+    }
+  });
+  h += "</div>";
+  host.innerHTML = h || "";
+  if (!groups.length) host.innerHTML = '<div class="mini">empty graph</div>';
+}
+/* lens cards + a raw-Turtle toggle; the default view of any graph */
+function renderGraphOut(host, triples, ttl, downloadName) {
+  host.innerHTML = '<div class="row"><button class="ghost lens-raw">raw</button>' +
+    (downloadName ? '<button class="ghost lens-dl">download .ttl</button>' : "") +
+    '</div><div class="lens-out"></div>';
+  var out = host.querySelector(".lens-out");
+  var raw = false;
+  var render = function () {
+    if (raw) out.innerHTML = '<pre class="out">' + esc(ttl) + "</pre>";
+    else renderLensCards(out, triples);
+  };
+  host.querySelector(".lens-raw").addEventListener("click", function (ev) {
+    raw = !raw;
+    ev.target.classList.toggle("on", raw);
+    render();
+  });
+  if (downloadName) {
+    host.querySelector(".lens-dl").addEventListener("click", function () {
+      downloadBlob(new Blob([ttl + "\n"], { type: "text/turtle" }), downloadName);
+    });
+  }
+  render();
+}
+
+/* ---- views: one strip below the title bar ------------------------- */
+/* Everything is a closable tab: contact tabs (proj, chat) show their
+   pane inside panel-work; view tabs (contacts, tables, chats) show
+   their singleton panel. A projection tab hides the top bar (immersive)
+   so the app gets the whole tab area; the footer's go-back leads out. */
+function activateView(id) {
+  state.view = id;
+  var active = null;
+  state.ct.tabs.forEach(function (t) {
+    var on = t.id === id;
+    t.btn.classList.toggle("active", on);
+    if (t.pane) t.pane.classList.toggle("active", on);
+    if (on) active = t;
+    if (on && t.kind === "chat" && t.contact && t.contact.scope !== null) {
+      clearUnread(t.contact.scope);
+    }
+  });
+  var panelId = active ? (active.panel || "panel-work") : "panel-blank";
+  document.querySelectorAll(".panel").forEach(function (p) {
+    p.classList.toggle("active", p.id === panelId);
+  });
+  document.body.classList.toggle("immersive", !!active && active.kind === "proj");
+  if (panelId === "panel-contacts") ctPanelShown();
+  syncUrl();
+  if (panelId === "panel-chats") renderChatsScreen();
+}
+
+/* one singleton view per name; pressing the top-bar button again focuses
+   the existing tab */
+function openViewTab(name) {
+  var key = "view:" + name;
+  var existing = state.ct.tabs.find(function (t) { return t.key === key; });
+  if (existing) { activateView(existing.id); return; }
+  if (state.ct.tabs.length >= CT_MAX_TABS) ctClose(state.ct.tabs[0].id);
+  var id = state.ct.nextId++;
+  var btn = document.createElement("button");
+  btn.innerHTML = '<span class="snip">' + esc(name) + '</span><span class="x" title="close">x</span>';
+  btn.addEventListener("click", function (ev) {
+    if (ev.target.classList.contains("x")) ctClose(id);
+    else activateView(id);
+  });
+  $("ct-tabs").appendChild(btn);
+  state.ct.tabs.push({ id: id, key: key, kind: "view", panel: "panel-" + name,
+                       btn: btn, pane: null,
+                       cleanup: name === "contacts" ? ctDetailCleanup : null });
+  activateView(id);
+}
+
+/* back leads out of wherever you are: a mounted hologram back to the
+   menu, a deeper projection back up one level, anything else closes the
+   tab and lands on the previous one */
+function goBack() {
+  var t = state.ct.tabs.find(function (x) { return x.id === state.view; });
+  if (!t) return;
+  if (t.key === "view:contacts" && window.innerWidth <= 640 &&
+      $("panel-contacts").classList.contains("detail-open")) {
+    ctShowList();
+    return;
+  }
+  if (t.kind === "proj") {
+    if (t.holo) {
+      t.holo.teardown();
+      t.holo = null;
+      var out = t.pane.querySelector(".t-out");
+      if (out) out.innerHTML = "";
+      paneStatus(t, "", "");
+      return;
+    }
+    if (t.path && t.path.length) {
+      t.path.pop();
+      fetchProjection(t);
+      return;
+    }
+  }
+  ctClose(t.id);
+}
+
+function initTabs() {
+  $("chat-btn").addEventListener("click", function () { openViewTab("chats"); });
+  $("ct-btn").addEventListener("click", function () { openViewTab("contacts"); });
+  $("tbl-btn").addEventListener("click", function () { openViewTab("tables"); });
+  $("go-back").addEventListener("click", goBack);
+}
+
+/* ---- the chats screen: established conversations ------------------ */
+function renderChatsScreen() {
+  var ul = $("chats-list");
+  var scaffolded = chatScaffolded();
+  setStatus("chats-status",
+    scaffolded ? "" : "chat tables missing: run rsntr chat init <dir> for messaging",
+    scaffolded ? "" : "warn");
+  ul.innerHTML = "";
+  var rec = state.ct.recency || new Map();
+  var rows = state.ct.contacts.filter(function (c) {
+    if (c.kind === "all" || c.kind === "room") return true;
+    return c.kind === "peer" && c.scope && rec.has(c.scope);
+  });
+  rows.forEach(function (c) {
+    var li = document.createElement("li");
+    var last = c.scope !== null && rec.get(c.scope) ? String(rec.get(c.scope)) : "";
+    var when = last ? last.slice(0, 16).replace("T", " ") : "";
+    var dot = (c.scope && state.notif.unread.has(c.scope)) ? '<span class="dot" title="unread"></span>' : "";
+    li.innerHTML = dot + '<span class="who">' + esc(c.label) + "</span>" +
+      '<span class="kind">' + esc(c.kind === "all" ? "everything" : c.kind) + "</span>" +
+      '<span class="when">' + esc(when) + "</span>";
+    li.addEventListener("click", function () { openContactTab("chat", c); });
+    ul.appendChild(li);
+  });
+  if (!rows.length) {
+    ul.innerHTML = '<li><span class="mini">' +
+      (scaffolded ? "no chats yet; open a contact and say hello" : "chat is not scaffolded on this node") +
+      "</span></li>";
+  }
+}
+
+/* ---- contacts dropdown -------------------------------------------- */
+/* ---- deep links (web-api.md "Deep links") -------------------------- */
+/* /o/<peer>/proj[/<path>] and /o/<peer>/holo/<mod>: the server serves
+   the shell for any /o/* GET; this router reads the path and drives
+   the ordinary tab machinery. The fragment stays the token slot. */
+function parseRoute() {
+  var m = location.pathname.match(/^\/o\/([^/]+)\/(proj|holo)(?:\/(.+))?$/);
+  if (!m) return null;
+  try {
+    return { peer: decodeURIComponent(m[1]), view: m[2],
+             arg: m[3] ? decodeURIComponent(m[3]) : null };
+  } catch (e) { return null; }
+}
+function routeIsImmediate(r) {
+  return r.peer === "local" || /^[0-9a-f]{64}$/.test(r.peer);
+}
+/* the contact a route addresses; petnames resolve only once contacts
+   are loaded, hex ids synthesize (the notifyDesktop precedent) */
+function routeContact(peer) {
+  if (peer === "local") return { scope: "", kind: "local", label: "this node", host: null };
+  var known = state.ct.contacts.find(function (c) {
+    return c.scope === peer || (c.kind === "peer" && c.label === peer);
+  });
+  if (known) return known;
+  if (/^[0-9a-f]{64}$/.test(peer)) {
+    return { scope: peer, kind: "peer", label: chatLabelFor(peer), host: null };
+  }
+  return null;
+}
+function openRoute(r) {
+  var c = routeContact(r.peer);
+  if (!c || (r.view === "holo" && !r.arg)) {
+    openViewTab("contacts");
+    logEvent("route", "link does not resolve: " + location.pathname);
+    return;
+  }
+  openContactTab("proj", c);
+  var tab = state.ct.tabs.find(function (t) { return t.key === ctKey("proj", c); });
+  if (!tab) { openViewTab("contacts"); return; }
+  if (r.view === "holo") {
+    openHologramInto(tab, { kind: "hologram", mod: r.arg, signal: "hologram", label: r.arg });
+  } else if (r.arg) {
+    tab.path = [{ path: r.arg, label: r.arg.length > 28 ? "..." + r.arg.slice(-28) : r.arg }];
+    fetchProjection(tab);
+  }
+}
+/* the canonical URL of the active view; "/" for everything that has no
+   deep-link form */
+function routePathFor() {
+  var t = state.ct.tabs.find(function (x) { return x.id === state.view; });
+  if (!t || t.kind !== "proj" || !t.contact) return "/";
+  var peer = t.contact.kind === "local" ? "local" : t.contact.scope;
+  if (!peer) return "/";
+  var base = "/o/" + encodeURIComponent(peer);
+  if (t.holo && t.holoMod) return base + "/holo/" + encodeURIComponent(t.holoMod);
+  if (t.path && t.path.length) {
+    return base + "/proj/" + encodeURIComponent(t.path[t.path.length - 1].path);
+  }
+  return base + "/proj";
+}
+/* address bar always names what is on screen; replaceState keeps the
+   browser history stack out of it (reload/bookmark, not back-button) */
+function syncUrl() {
+  var p = routePathFor();
+  if (location.pathname !== p) history.replaceState(null, "", p);
+}
+function copyLinkTo(btn) {
+  var url = location.origin + routePathFor();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function () {
+      var old = btn.textContent;
+      btn.textContent = "copied";
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    }, function () { /* clipboard unavailable */ });
+  }
+}
+
+function initContacts() {
+  $("ct-search").addEventListener("input", function () {
+    state.ct.filter = $("ct-search").value.trim().toLowerCase();
+    renderContacts();
+  });
+}
+/* activateView hook: refresh the list. The initial load waits for
+   meta (chatScaffolded needs state.tables, the self-filter needs
+   node_id); start() chains it. */
+function ctPanelShown() {
+  if (!state.ct.loaded && state.meta) loadContacts();
+  else renderContacts();
+}
+
+/* ---- meta + footer ------------------------------------------------ */
+async function loadMeta() {
+  var j = await apiJson("/api/meta");
+  if (!j.ok) { var e = fmtJsonErr(j); setStatus("tbl-status", e.text, e.kind); return; }
+  state.meta = j;
+  state.tables = j.tables || [];
+  $("st-node").textContent = j.node_id ? j.node_id.slice(0, 16) + ".." : "--";
+  $("st-node").title = j.node_id || "";
+  $("st-mods").textContent = (j.mods || []).join(", ") || "--";
+  renderTableList();
+  renderCsvTables();
+}
+function isEditable(name) { return !(name.startsWith("_") || name.startsWith("rdf_")); }
+
+/* ---- feed --------------------------------------------------------- */
+function openFeed() {
+  if (state.feed) { state.feed.close(); state.feed = null; }
+  /* EventSource cannot set headers; the rsntr_token cookie authenticates it */
+  var es;
+  try { es = new EventSource("/feed"); }
+  catch (e) { $("st-feed").textContent = "unavailable"; return; }
+  state.feed = es;
+  var led = $("feed-led");
+  es.onopen = function () { led.className = "led on"; $("st-feed").textContent = "open"; };
+  es.onerror = function () { led.className = "led err"; $("st-feed").textContent = "reconnecting"; };
+  es.addEventListener("stream", function (ev) {
+    try {
+      var d = JSON.parse(ev.data);
+      logEvent("feed", "server stream announced: id " + d.id + " mod " + d.mod);
+    } catch (e) { logEvent("feed", "stream event: " + ev.data); }
+  });
+  es.addEventListener("closed", function (ev) {
+    try { logEvent("feed", "stream closed: " + JSON.parse(ev.data).id); } catch (e) { logEvent("feed", "closed: " + ev.data); }
+  });
+  es.addEventListener("envelope", function (ev) {
+    try {
+      var g = graphIndex(parseTurtle(ev.data));
+      var subs = envelopeSubjects(g);
+      var names = subs.map(function (x) { return x.cls; }).join(", ") || "envelope";
+      logEvent("feed", names + ": " + ev.data.replace(/\s+/g, " ").slice(0, 160), ev.data);
+    } catch (e) {
+      logEvent("feed", "envelope (unparsed): " + ev.data.slice(0, 160), ev.data);
+    }
+  });
+}
+/* One log line; `ttl` (optional) attaches the raw turtle of the frame,
+   collapsed behind a [+ttl] marker, expanded when "turtle: on". */
+function logEvent(src, text, ttl) {
+  var log = $("ev-log");
+  var d = document.createElement("div");
+  var t = new Date().toTimeString().slice(0, 8);
+  d.innerHTML = '<span class="t">' + t + '</span><span class="src">' + esc(src) + "</span>" + esc(text);
+  if (ttl) {
+    var btn = document.createElement("span");
+    btn.className = "ttl-btn";
+    var pre = document.createElement("pre");
+    pre.className = "ttl";
+    pre.textContent = ttl;
+    var open = state.logTtl;
+    var render = function () {
+      btn.textContent = open ? "[-ttl]" : "[+ttl]";
+      pre.style.display = open ? "" : "none";
+    };
+    btn.addEventListener("click", function () { open = !open; render(); });
+    render();
+    d.appendChild(btn);
+    d.appendChild(pre);
+  }
+  log.prepend(d);
+  while (log.childNodes.length > 200) log.removeChild(log.lastChild);
+}
+
+/* ---- unified composer --------------------------------------------- */
+/* One window for SQL, SPARQL, and Turtle. The language is guessed by
+   detectLang (chip shows the guess; clicking cycles an override) and every
+   run opens a closable result tab. */
+var CMP_LANGS = ["sql", "sparql", "rdf"];
+var CMP_MAX_TABS = 20;
+
+function detectLang(text) {
+  var lines = String(text).split("\n"), kept = [];
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i].trim();
+    if (!l || l.startsWith("#") || l.startsWith("--")) continue;
+    kept.push(l);
+  }
+  var t = kept.join("\n").trim();
+  if (!t) return "sql";
+  if (/^@(prefix|base)\b/i.test(t)) return "rdf";
+  var up = t.toUpperCase();
+  if (/^(PREFIX|BASE)\s/.test(up)) return "sparql";
+  if (/^(ASK|CONSTRUCT|DESCRIBE)\b/.test(up)) return "sparql";
+  if (/^(INSERT|DELETE)\s+(DATA|WHERE)\b/.test(up)) return "sparql";
+  if (/^SELECT\b/.test(up) && /\?[A-Za-z_]/.test(t) && t.indexOf("{") >= 0) return "sparql";
+  if (/^<[^>]*>\s/.test(t)) return "rdf";
+  if (/^[A-Za-z][\w-]*:[\w.-]+\s+(a\s|<|[A-Za-z][\w-]*:)/.test(t)) return "rdf";
+  return "sql";
+}
+function cmpLang() {
+  return state.cmp.override || detectLang($("cmp-text").value);
+}
+function updateLangChip() {
+  var lang = cmpLang();
+  $("cmp-lang").textContent = lang + (state.cmp.override ? "" : " (auto)");
+  $("cmp-lang").classList.toggle("on", !!state.cmp.override);
+  $("cmp-base-row").style.display = lang === "rdf" ? "" : "none";
+}
+function cycleLangOverride() {
+  var cur = state.cmp.override;
+  var next = cur === null ? CMP_LANGS[0]
+    : (CMP_LANGS.indexOf(cur) + 1 < CMP_LANGS.length ? CMP_LANGS[CMP_LANGS.indexOf(cur) + 1] : null);
+  state.cmp.override = next;
+  updateLangChip();
+}
+
+function cmpActivate(id) {
+  state.cmp.tabs.forEach(function (t) {
+    t.btn.classList.toggle("active", t.id === id);
+    t.pane.classList.toggle("active", t.id === id);
+  });
+}
+function cmpClose(id) {
+  var i = state.cmp.tabs.findIndex(function (t) { return t.id === id; });
+  if (i < 0) return;
+  var t = state.cmp.tabs[i];
+  var wasActive = t.pane.classList.contains("active");
+  t.btn.remove(); t.pane.remove();
+  state.cmp.tabs.splice(i, 1);
+  if (!state.cmp.tabs.length) $("cmp-tabs").style.display = "none";
+  else if (wasActive) cmpActivate(state.cmp.tabs[Math.min(i, state.cmp.tabs.length - 1)].id);
+}
+function newComposeTab(lang, text) {
+  if (state.cmp.tabs.length >= CMP_MAX_TABS) cmpClose(state.cmp.tabs[0].id);
+  var id = state.cmp.nextId++;
+  var snip = text.replace(/\s+/g, " ").trim().slice(0, 24) || "(empty)";
+  var btn = document.createElement("button");
+  btn.innerHTML = '<span class="lang">' + esc(lang) + '</span><span class="snip">' + esc(snip) +
+    '</span><span class="x" title="close">x</span>';
+  btn.title = text.slice(0, 400);
+  btn.addEventListener("click", function (ev) {
+    if (ev.target.classList.contains("x")) cmpClose(id);
+    else cmpActivate(id);
+  });
+  var pane = document.createElement("div");
+  pane.className = "tabpane";
+  pane.innerHTML = '<div class="status"></div><div class="body"></div>';
+  $("cmp-tabs").appendChild(btn);
+  $("cmp-tabs").style.display = "";
+  $("cmp-out").appendChild(pane);
+  var tab = { id: id, lang: lang, btn: btn, pane: pane,
+    status: pane.querySelector(".status"), body: pane.querySelector(".body") };
+  state.cmp.tabs.push(tab);
+  cmpActivate(id);
+  return tab;
+}
+function tabStatus(tab, msg, kind) {
+  tab.status.textContent = msg || "";
+  tab.status.className = "status" + (kind ? " " + kind : "");
+}
+
+async function runCompose() {
+  var text = $("cmp-text").value;
+  if (!text.trim()) return;
+  var lang = cmpLang();
+  setStatus("cmp-status", "");
+  var tab = newComposeTab(lang, text);
+  try {
+    if (lang === "sql") await runSqlInto(tab, text.trim());
+    else if (lang === "sparql") await runSparqlInto(tab, text.trim());
+    else await loadTurtleInto(tab, text, $("cmp-base").value.trim());
+  } catch (err) {
+    if (err.message !== "unauthorized") tabStatus(tab, "request failed: " + err.message, "err");
+  }
+}
+async function runSqlInto(tab, sql) {
+  tabStatus(tab, "running...");
+  var j = await apiJson("/api/sql", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sql: sql })
+  });
+  if (!j.ok) { var e = fmtJsonErr(j); tabStatus(tab, e.text, e.kind); return; }
+  if (j.columns && j.columns.length) {
+    var rows = (j.rows || []).map(function (r) { return r.map(jsonCell); });
+    renderGrid(tab.body, j.columns, rows);
+    tabStatus(tab, j.row_count + " row(s)" + (j.truncated ? " (truncated)" : ""), "ok");
+  } else {
+    tabStatus(tab, "ok; affected_rows " + j.affected_rows +
+      (j.last_insert_rowid !== null ? ", last_insert_rowid " + j.last_insert_rowid : ""), "ok");
+  }
+}
+async function runSparqlInto(tab, q) {
+  tabStatus(tab, "running...");
+  var j = await apiJson("/api/sparql", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: q })
+  });
+  if (!j.ok) { var e = fmtJsonErr(j); tabStatus(tab, e.text, e.kind); return; }
+  if (j.triples !== undefined) {
+    var ttl = j.triples.join("\n");
+    var trs = null;
+    try { trs = parseTurtle(ttl); } catch (e) { trs = null; }
+    if (trs !== null) {
+      renderGraphOut(tab.body, trs, ttl, "construct.ttl");
+    } else {
+      tab.body.innerHTML = '<div class="row"><button class="ghost cmp-dl">download .ttl</button></div>' +
+        '<pre class="out">' + esc(ttl) + "</pre>";
+      tab.body.querySelector(".cmp-dl").addEventListener("click", function () {
+        downloadBlob(new Blob([ttl + "\n"], { type: "text/turtle" }), "construct.ttl");
+      });
+    }
+    tabStatus(tab, j.triple_count + " triple(s)" + (j.truncated ? " (truncated)" : ""), "ok");
+  } else if (j.columns && j.columns.length) {
+    /* per-tab raw-terms toggle: the response lives on the tab, not globally */
+    tab.sparql = j; tab.raw = false;
+    tab.body.innerHTML = '<div class="row"><button class="ghost cmp-raw">raw terms</button></div>' +
+      '<div class="cmp-grid"></div>';
+    var grid = tab.body.querySelector(".cmp-grid");
+    var render = function () {
+      var rows = (tab.sparql.rows || []).map(function (r) { return r.map(ntCell); });
+      renderGrid(grid, tab.sparql.columns, rows, { raw: tab.raw });
+    };
+    tab.body.querySelector(".cmp-raw").addEventListener("click", function (ev) {
+      tab.raw = !tab.raw;
+      ev.target.classList.toggle("on", tab.raw);
+      render();
+    });
+    render();
+    tabStatus(tab, j.row_count + " row(s)" + (j.truncated ? " (truncated)" : ""), "ok");
+  } else {
+    tabStatus(tab, "update ok; affected_rows " + j.affected_rows, "ok");
+  }
+}
+async function loadTurtleInto(tab, ttl, base) {
+  tabStatus(tab, "loading...");
+  var url = "/api/turtle" + (base ? "?base=" + encodeURIComponent(base) : "");
+  var j = await apiJson(url, {
+    method: "POST", headers: { "Content-Type": "text/turtle" }, body: ttl
+  });
+  if (!j.ok) { var e = fmtJsonErr(j); tabStatus(tab, e.text, e.kind); return; }
+  tab.body.innerHTML = '<pre class="out">' + esc(ttl.trim().slice(0, 2000)) + "</pre>";
+  tabStatus(tab, j.triple_count + " triple(s) loaded into the store", "ok");
+}
+
+/* ---- tables: a launcher panel; every table opens as its own tab ---- */
+function renderTableList() {
+  var ul = $("tbl-list");
+  ul.innerHTML = "";
+  state.tables.forEach(function (t) {
+    var li = document.createElement("li");
+    var cmt = t.comment
+      ? '<span class="cmt">' + esc(t.comment) + "</span>"
+      : '<span class="cmt nodesc">no description yet - open and add one</span>';
+    li.innerHTML = "<span>" + esc(t.name) + cmt + "</span>" +
+      (isEditable(t.name) ? "" : '<span class="tag">ro</span>');
+    li.addEventListener("click", function () { openTableTab(t.name); });
+    ul.appendChild(li);
+  });
+}
+
+/* ---- table descriptions (_comments): every table carries one -------- */
+function tableComment(name) {
+  var t = state.tables.find(function (x) { return x.name === name; });
+  return t && t.comment ? t.comment : null;
+}
+function sqlQuote(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+async function saveTableComment(name, comment) {
+  var j = await apiJson("/api/sql", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sql: "INSERT OR REPLACE INTO _comments (name, comment) VALUES (" +
+        sqlQuote(name) + ", " + sqlQuote(comment) + ")"
+    })
+  });
+  if (!j.ok) throw new Error(fmtJsonErr(j).text);
+  await loadMeta();
+}
+/* the description line of a table tab; missing one demands the operator
+   write it before they forget what they were looking at */
+function renderTableDesc(tab) {
+  var host = tab.pane.querySelector(".t-desc");
+  var name = tab.tbl.name;
+  var c = tableComment(name);
+  if (c && !tab.editingDesc) {
+    host.innerHTML = '<span class="mini">' + esc(c) +
+      '</span> <button class="mini-act t-desc-edit">edit</button>';
+    host.querySelector(".t-desc-edit").addEventListener("click", function () {
+      tab.editingDesc = true;
+      renderTableDesc(tab);
+    });
+    return;
+  }
+  host.innerHTML =
+    (c ? "" : '<div class="desc-warn">description required: write what this table is for, so an operator understands what they are looking at</div>') +
+    '<div class="row"><input type="text" class="t-desc-input" placeholder="what is this table for?" value="' +
+    esc(c || "") + '"><button class="act t-desc-save">save</button></div>';
+  host.querySelector(".t-desc-save").addEventListener("click", function () {
+    var v = host.querySelector(".t-desc-input").value.trim();
+    if (!v) { paneStatus(tab, "a description is required", "warn"); return; }
+    saveTableComment(name, v).then(function () {
+      tab.editingDesc = false;
+      renderTableDesc(tab);
+      renderTableList();
+      paneStatus(tab, "description saved", "ok");
+    }, function (e) {
+      paneStatus(tab, "saving the description failed: " + e.message, "err");
+    });
+  });
+}
+/* one tab per table; clicking the same table again focuses its tab */
+function openTableTab(name) {
+  var key = "table:" + name;
+  var existing = state.ct.tabs.find(function (t) { return t.key === key; });
+  if (existing) { activateView(existing.id); return; }
+  if (state.ct.tabs.length >= CT_MAX_TABS) ctClose(state.ct.tabs[0].id);
+  var id = state.ct.nextId++;
+  var btn = document.createElement("button");
+  btn.innerHTML = '<span class="lang">table</span><span class="snip">' + esc(name) +
+    '</span><span class="x" title="close">x</span>';
+  btn.addEventListener("click", function (ev) {
+    if (ev.target.classList.contains("x")) ctClose(id);
+    else activateView(id);
+  });
+  var pane = document.createElement("div");
+  pane.className = "tabpane";
+  $("ct-tabs").appendChild(btn);
+  $("ct-out").appendChild(pane);
+  var tab = { id: id, key: key, kind: "table", btn: btn, pane: pane, cleanup: null };
+  state.ct.tabs.push(tab);
+  buildTableTab(tab, name);
+  activateView(id);
+}
+function buildTableTab(tab, name) {
+  tab.pane.innerHTML =
+    '<div class="row"><strong class="t-name"></strong><span class="mini t-ro"></span>' +
+    '<span class="pager t-pager" style="margin-left:auto"></span></div>' +
+    '<div class="t-desc"></div>' +
+    '<div class="status t-status"></div><div class="t-grid"></div><div class="t-editor"></div>';
+  tab.tbl = { name: name, offset: 0, limit: 100, columns: [], rows: [], rowids: [], total: 0, selIdx: -1 };
+  tab.pane.querySelector(".t-name").textContent = name;
+  tab.pane.querySelector(".t-ro").textContent = isEditable(name) ? "" : "(read-only in editor)";
+  renderTableDesc(tab);
+  loadTablePage(tab);
+}
+async function loadTablePage(tab) {
+  var t = tab.tbl;
+  paneStatus(tab, "loading...");
+  try {
+    var j = await apiJson("/api/table/" + encodeURIComponent(t.name) +
+      "?limit=" + t.limit + "&offset=" + t.offset);
+    if (!j.ok) { var e = fmtJsonErr(j); paneStatus(tab, e.text, e.kind); return; }
+    t.columns = j.columns; t.rows = j.rows; t.rowids = j.rowids; t.total = j.total;
+    renderTable(tab);
+    paneStatus(tab, "", "");
+  } catch (err) {
+    if (err.message !== "unauthorized") paneStatus(tab, "request failed: " + err.message, "err");
+  }
+}
+function renderTable(tab) {
+  var t = tab.tbl;
+  var cols = ["rowid"].concat(t.columns.map(function (c) { return c.name; }));
+  var rows = t.rows.map(function (r, i) {
+    return [jsonCell(t.rowids[i])].concat(r.map(jsonCell));
+  });
+  var grid = tab.pane.querySelector(".t-grid");
+  renderGrid(grid, cols, rows, { clickable: isEditable(t.name), selIdx: t.selIdx });
+  if (isEditable(t.name)) {
+    grid.querySelector("tbody").addEventListener("click", function (ev) {
+      var tr = ev.target.closest("tr[data-idx]");
+      if (!tr) return;
+      t.selIdx = parseInt(tr.dataset.idx, 10);
+      renderTable(tab);
+    });
+  }
+  var pager = tab.pane.querySelector(".t-pager");
+  var page = Math.floor(t.offset / t.limit) + 1;
+  var pages = Math.max(1, Math.ceil(t.total / t.limit));
+  pager.innerHTML = '<button class="ghost t-prev">&lt;</button>' +
+    "<span>" + page + "/" + pages + " (" + t.total + " rows)</span>" +
+    '<button class="ghost t-next">&gt;</button>';
+  var prev = pager.querySelector(".t-prev"), next = pager.querySelector(".t-next");
+  prev.disabled = t.offset === 0;
+  next.disabled = t.offset + t.limit >= t.total;
+  prev.addEventListener("click", function () {
+    t.offset = Math.max(0, t.offset - t.limit); t.selIdx = -1; loadTablePage(tab);
+  });
+  next.addEventListener("click", function () {
+    if (t.offset + t.limit < t.total) { t.offset += t.limit; t.selIdx = -1; loadTablePage(tab); }
+  });
+  renderEditor(tab);
+}
+function valueToInput(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "object") {
+    if (v.blob_hex !== undefined) return "x'" + v.blob_hex + "'";
+    return JSON.stringify(v);
+  }
+  if (v === "") return '""';
+  return String(v);
+}
+function inputToValue(txt, decl) {
+  if (txt === "") return null;
+  if (txt === '""') return "";
+  var m = /^x'([0-9a-fA-F]*)'$/.exec(txt);
+  if (m) return { blob_hex: m[1] };
+  var d = (decl || "").toUpperCase();
+  if (/INT/.test(d)) { var iv = Number(txt); if (Number.isInteger(iv)) return iv; }
+  else if (/REAL|FLOA|DOUB|NUM|DEC/.test(d)) { var fv = Number(txt); if (!Number.isNaN(fv)) return fv; }
+  return txt;
+}
+function renderEditor(tab) {
+  var t = tab.tbl, host = tab.pane.querySelector(".t-editor");
+  if (!isEditable(t.name)) { host.innerHTML = ""; return; }
+  var editing = t.selIdx >= 0 && t.rowids[t.selIdx] !== null && t.rowids[t.selIdx] !== undefined;
+  var vals = editing ? t.rows[t.selIdx] : null;
+  var h = "<fieldset><legend>" + (editing ? "edit row (rowid " + t.rowids[t.selIdx] + ")" : "add row") + "</legend>";
+  h += '<div class="mini">blank = NULL (add: column default), "" = empty string, x\'hex\' = blob</div>';
+  t.columns.forEach(function (c, i) {
+    h += '<label class="f"><span class="n">' + esc(c.name) +
+      (c.notnull ? '<span class="req">*</span>' : "") + "</span>" +
+      '<input type="text" data-col="' + esc(c.name) + '" data-decl="' + esc(c.decltype || "") + '" value="' +
+      esc(editing ? valueToInput(vals[i]) : "") + '">' +
+      '<span class="hint">' + esc(c.decltype || "") + (c.pk ? " pk" : "") + "</span></label>";
+  });
+  h += '<div class="row">';
+  if (editing) {
+    h += '<button class="act t-save">save</button>' +
+         '<button class="ghost danger t-del">delete row</button>' +
+         '<button class="ghost t-clear">deselect</button>';
+  } else {
+    h += '<button class="act t-add">insert row</button>';
+  }
+  h += "</div></fieldset>";
+  host.innerHTML = h;
+  function gather(includeNulls) {
+    var values = {};
+    host.querySelectorAll("input[data-col]").forEach(function (inp) {
+      var v = inputToValue(inp.value, inp.dataset.decl);
+      if (v === null && !includeNulls) return;
+      values[inp.dataset.col] = v;
+    });
+    return values;
+  }
+  if (editing) {
+    host.querySelector(".t-save").addEventListener("click", async function () {
+      try {
+        var j = await apiJson("/api/table/" + encodeURIComponent(t.name) + "/rows/" + t.rowids[t.selIdx], {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ values: gather(true) })
+        });
+        if (!j.ok) { var e = fmtJsonErr(j); paneStatus(tab, e.text, e.kind); return; }
+        paneStatus(tab, "updated; affected_rows " + j.affected_rows, "ok");
+        loadTablePage(tab);
+      } catch (err) { if (err.message !== "unauthorized") paneStatus(tab, err.message, "err"); }
+    });
+    host.querySelector(".t-del").addEventListener("click", async function () {
+      if (!confirm("delete rowid " + t.rowids[t.selIdx] + " from " + t.name + "?")) return;
+      try {
+        var j = await apiJson("/api/table/" + encodeURIComponent(t.name) + "/rows/" + t.rowids[t.selIdx], { method: "DELETE" });
+        if (!j.ok) { var e = fmtJsonErr(j); paneStatus(tab, e.text, e.kind); return; }
+        paneStatus(tab, "deleted; affected_rows " + j.affected_rows, "ok");
+        t.selIdx = -1;
+        loadTablePage(tab);
+      } catch (err) { if (err.message !== "unauthorized") paneStatus(tab, err.message, "err"); }
+    });
+    host.querySelector(".t-clear").addEventListener("click", function () { t.selIdx = -1; renderTable(tab); });
+  } else {
+    host.querySelector(".t-add").addEventListener("click", async function () {
+      try {
+        var j = await apiJson("/api/table/" + encodeURIComponent(t.name) + "/rows", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ values: gather(false) })
+        });
+        if (!j.ok) { var e = fmtJsonErr(j); paneStatus(tab, e.text, e.kind); return; }
+        paneStatus(tab, "inserted; rowid " + j.last_insert_rowid, "ok");
+        loadTablePage(tab);
+      } catch (err) { if (err.message !== "unauthorized") paneStatus(tab, err.message, "err"); }
+    });
+  }
+}
+
+/* ---- CSV panel ---------------------------------------------------- */
+function renderCsvTables() {
+  var sel = $("csv-exp-table");
+  sel.innerHTML = state.tables.map(function (t) {
+    return '<option value="' + esc(t.name) + '">' + esc(t.name) + "</option>";
+  }).join("");
+}
+function downloadBlob(blob, name) {
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+}
+async function exportCsv() {
+  var t = $("csv-exp-table").value;
+  if (!t) return;
+  setStatus("csv-exp-status", "exporting...");
+  try {
+    var res = await api("/api/csv/" + encodeURIComponent(t));
+    if (!res.ok) {
+      var j = await res.json().catch(function () { return null; });
+      var e = fmtJsonErr(j); setStatus("csv-exp-status", e.text, e.kind); return;
+    }
+    downloadBlob(await res.blob(), t + ".csv");
+    setStatus("csv-exp-status", "downloaded " + t + ".csv", "ok");
+  } catch (err) {
+    if (err.message !== "unauthorized") setStatus("csv-exp-status", err.message, "err");
+  }
+}
+async function importCsv() {
+  var t = $("csv-imp-table").value.trim();
+  var f = $("csv-imp-file").files[0];
+  var desc = $("csv-imp-desc").value.trim();
+  if (!t || !f) { setStatus("csv-imp-status", "pick a table name and a file", "warn"); return; }
+  /* creating a table mandates a description; appending inherits one */
+  var exists = state.tables.some(function (x) { return x.name === t; });
+  if (!exists && !desc) {
+    setStatus("csv-imp-status", "a new table needs a description: what is it for?", "warn");
+    return;
+  }
+  setStatus("csv-imp-status", "importing...");
+  try {
+    var j = await apiJson("/api/csv/" + encodeURIComponent(t), {
+      method: "POST", headers: { "Content-Type": "text/csv" }, body: f
+    });
+    if (!j.ok) { var e = fmtJsonErr(j); setStatus("csv-imp-status", e.text, e.kind); return; }
+    if (desc) {
+      try { await saveTableComment(t, desc); } catch (e) { /* import stands; note the miss */
+        setStatus("csv-imp-status", "imported, but the description failed to save: " + e.message, "warn");
+      }
+    }
+    setStatus("csv-imp-status", (j.created ? "created " : "appended to ") + j.table +
+      "; " + j.rows_inserted + " row(s) inserted", "ok");
+    loadMeta();
+  } catch (err) {
+    if (err.message !== "unauthorized") setStatus("csv-imp-status", err.message, "err");
+  }
+}
+
+/* ---- projection browser ------------------------------------------- */
+function parsePoint(g, term) {
+  var types = objsOf(g, term, RDF + "type")
+    .filter(function (o) { return o.t === "iri" && o.v.startsWith(R); })
+    .map(function (o) { return o.v.slice(R.length); });
+  var kind = "point";
+  if (types.indexOf("Excitable") >= 0) kind = "excitable";
+  else if (types.indexOf("Radiant") >= 0) kind = "radiant";
+  else if (types.indexOf("Sympathetic") >= 0) kind = "sympathetic";
+  else if (types.indexOf("Hologram") >= 0) kind = "hologram";
+  var pt = {
+    iri: term.t === "iri" ? term.v : null,
+    term: term, kind: kind,
+    label: litOf(g, term, RDFS + "label") || (term.t === "iri" ? term.v : "(unnamed)"),
+    comment: litOf(g, term, RDFS + "comment"),
+    mod: litOf(g, term, R + "mod"),
+    signal: litOf(g, term, R + "signal"),
+    template: litOf(g, term, R + "signalTemplate"),
+    projects: litOf(g, term, R + "projects"),
+    role: litOf(g, term, R + "role"),
+    fields: [], paramsOrder: null
+  };
+  var po = obj1(g, term, R + "paramsOrder");
+  if (po) pt.paramsOrder = listItems(g, po).map(function (t) { return t.v; });
+  var cp = obj1(g, term, R + "coupling");
+  if (cp) {
+    var fl = obj1(g, cp, R + "field");
+    if (fl) {
+      pt.fields = listItems(g, fl).map(function (fterm) {
+        var oneOf = obj1(g, fterm, R + "oneOf");
+        var dflt = obj1(g, fterm, R + "default");
+        return {
+          name: litOf(g, fterm, R + "name") || "?",
+          datatype: (obj1(g, fterm, R + "datatype") || {}).v || XSD + "string",
+          required: litOf(g, fterm, R + "required") === "true",
+          dflt: dflt ? dflt.v : null,
+          hint: litOf(g, fterm, R + "hint"),
+          oneOf: oneOf ? listItems(g, oneOf).map(function (t) { return t.v; }) : null
+        };
+      });
+    }
+  }
+  return pt;
+}
+/* ---- contacts workspace: chats and projections as closable tabs ---- */
+var CT_MAX_TABS = 12;
+
+function paneStatus(tab, msg, kind) {
+  var el = tab.pane.querySelector(".t-status");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.remove("err", "ok", "warn");
+  if (kind) el.classList.add(kind);
+}
+function ctLabelForContact(c) { return c.kind === "local" ? "local" : c.label; }
+
+async function loadContacts() {
+  state.ct.loaded = true;
+  var me = state.meta ? state.meta.node_id : null;
+  var contacts = [{ scope: "", kind: "local", label: "this node", host: null }];
+  try {
+    var scaffolded = chatScaffolded();
+    var qs = [chatSql("SELECT endpoint_id, name FROM _peers ORDER BY COALESCE(name, endpoint_id)")];
+    if (scaffolded) {
+      qs.push(chatSql("SELECT room_id, name, host FROM chat_rooms ORDER BY name"));
+      qs.push(chatSql("SELECT scope, MAX(received_at) FROM chat_messages GROUP BY scope"));
+    }
+    var results = await Promise.all(qs);
+    var peers = results[0].rows || [];
+    var rooms = scaffolded ? (results[1].rows || []) : [];
+    var scopes = scaffolded ? (results[2].rows || []) : [];
+    /* most recent first: last message time per scope orders the list */
+    var recency = new Map();
+    scopes.forEach(function (s) { if (s[0] !== null) recency.set(s[0], s[1] || ""); });
+    state.ct.recency = recency;
+    state.chat.rooms = new Map();
+    state.chat.peerNames = new Map();
+    var seen = new Set();
+    if (scaffolded) contacts.push({ scope: null, kind: "all", label: "(all messages)", host: null });
+    rooms.forEach(function (r) {
+      state.chat.rooms.set(r[0], { name: r[1], host: r[2] });
+      seen.add(r[0]);
+      contacts.push({ scope: r[0], kind: "room", label: r[1], host: r[2] });
+    });
+    peers.forEach(function (p) {
+      if (p[1]) state.chat.peerNames.set(p[0], p[1]);
+      /* the node's own ephemeral admission row is not a contact */
+      if (p[0] === me || seen.has(p[0])) return;
+      seen.add(p[0]);
+      contacts.push({ scope: p[0], kind: "peer", label: p[1] || chatLabelFor(p[0]), host: null });
+    });
+    scopes.forEach(function (s) {
+      var sc = s[0];
+      if (sc === null || sc === me || seen.has(sc)) return;
+      seen.add(sc);
+      contacts.push({ scope: sc, kind: sc.startsWith(CHAT_ROOM_PREFIX) ? "room" : "peer",
+                      label: chatLabelFor(sc), host: null });
+    });
+    var head = contacts.filter(function (c) { return c.kind === "local" || c.kind === "all"; });
+    var rest = contacts.filter(function (c) { return c.kind !== "local" && c.kind !== "all"; });
+    rest.sort(function (a, b) {
+      var ra = recency.get(a.scope) || "", rb = recency.get(b.scope) || "";
+      if (ra !== rb) return ra < rb ? 1 : -1;
+      return (a.label || "") < (b.label || "") ? -1 : 1;
+    });
+    state.ct.contacts = head.concat(rest);
+    renderContacts();
+    ctDetailInvalidate();
+    startInbox();
+    doorWatchAll();
+    setStatus("ct-status", scaffolded ? "" : "chat tables missing: run rsntr chat init <dir> for messaging",
+      scaffolded ? "" : "warn");
+  } catch (err) {
+    if (err.message !== "unauthorized") setStatus("ct-status", "contacts failed: " + err.message, "err");
+  }
+}
+/* The master list: identicon, name, second line (last message or the
+   kind), unread dot; clicking selects into the detail pane. Runs even
+   while the panel is hidden (clearUnread), so its DOM is static. */
+function renderContacts() {
+  var ul = $("ct-list");
+  ul.innerHTML = "";
+  var q = state.ct.filter || "";
+  var listed = state.ct.contacts.filter(function (c) {
+    if (!q) return true;
+    return (c.label || "").toLowerCase().indexOf(q) >= 0 ||
+           (c.scope || "").toLowerCase().indexOf(q) >= 0;
+  });
+  listed.forEach(function (c) {
+    var li = document.createElement("li");
+    var last = c.scope !== null && state.ct.recency.get(c.scope);
+    var second = last ? String(last).slice(0, 16).replace("T", " ")
+      : (c.kind === "all" ? "every scope" : c.kind === "local" ? "the local node" : c.kind);
+    var dot = (c.scope && state.notif.unread.has(c.scope)) ? '<span class="dot" title="unread"></span>' : "";
+    li.innerHTML = '<span class="ct-ava">' + identiconSvg(ctAvaSeed(c), 22) + "</span>" +
+      '<span class="who">' + esc(c.label) +
+      '<span class="tag">' + esc(second) + "</span></span>" + dot;
+    li.classList.toggle("sel", state.ct.sel === ctSelKey(c));
+    if (c.scope) li.title = c.scope;
+    li.addEventListener("click", function () { selectContact(c); });
+    ul.appendChild(li);
+  });
+  if (!listed.length) {
+    ul.innerHTML = '<li><span class="tag">' + (q ? "no matches" : "no contacts") + "</span></li>";
+  }
+  if ($("panel-chats").classList.contains("active")) renderChatsScreen();
+}
+
+function ctKey(kind, c) { return kind + ":" + (c.scope === null ? "@all" : c.scope); }
+function ctActivate(id) { activateView(id); }
+function ctClose(id) {
+  var i = state.ct.tabs.findIndex(function (t) { return t.id === id; });
+  if (i < 0) return;
+  var t = state.ct.tabs[i];
+  if (t.cleanup) t.cleanup();
+  var wasActive = state.view === id;
+  t.btn.remove();
+  if (t.pane) t.pane.remove();
+  state.ct.tabs.splice(i, 1);
+  if (wasActive) {
+    if (state.ct.tabs.length) {
+      activateView(state.ct.tabs[Math.min(i, state.ct.tabs.length - 1)].id);
+    } else if (t.key === "view:contacts") {
+      activateView(null);
+    } else {
+      openViewTab("contacts");
+    }
+  }
+}
+function openContactTab(kind, c) {
+  if (kind === "chat" && c.kind !== "all" && !chatScaffolded()) {
+    setStatus("ct-status", "chat tables missing: run rsntr chat init <dir>", "warn");
+    return;
+  }
+  var key = ctKey(kind, c);
+  var existing = state.ct.tabs.find(function (t) { return t.key === key; });
+  if (existing) { ctActivate(existing.id); return; }
+  if (state.ct.tabs.length >= CT_MAX_TABS) ctClose(state.ct.tabs[0].id);
+  var id = state.ct.nextId++;
+  var btn = document.createElement("button");
+  btn.innerHTML = '<span class="lang">' + esc(kind) + '</span><span class="snip">' +
+    esc(ctLabelForContact(c)) + '</span><span class="x" title="close">x</span>';
+  btn.addEventListener("click", function (ev) {
+    if (ev.target.classList.contains("x")) ctClose(id);
+    else ctActivate(id);
+  });
+  var pane = document.createElement("div");
+  pane.className = "tabpane";
+  $("ct-tabs").appendChild(btn);
+  $("ct-out").appendChild(pane);
+  var tab = { id: id, key: key, kind: kind, contact: c, btn: btn, pane: pane, cleanup: null };
+  state.ct.tabs.push(tab);
+  if (kind === "proj") buildProjTab(tab);
+  else buildChatTab(tab);
+  ctActivate(id);
+}
+
+/* ---- projection tabs ---------------------------------------------- */
+function prjPeerLabel(tab) { return tab.peer ? chatLabelFor(tab.peer) : "local"; }
+function buildProjTab(tab) {
+  tab.peer = tab.contact.kind === "local" ? "" : tab.contact.scope;
+  tab.path = []; tab.points = []; tab.entrained = new Map();
+  tab.pane.innerHTML =
+    '<div class="crumbs t-crumbs"></div>' +
+    '<div class="row"><button class="ghost t-reload">fetch projection</button>' +
+    '<button class="ghost t-permalink">copy link</button>' +
+    '<span class="mini t-info"></span></div>' +
+    '<div class="status t-status"></div>' +
+    '<ul class="menu t-menu"></ul><div class="t-form"></div><div class="t-out"></div>';
+  tab.cleanup = function () {
+    tab.entrained.forEach(function (l) { l.ctrl.abort(); });
+    if (tab.media) { tab.media.abort(); tab.media = null; }
+    if (tab.holo) { tab.holo.teardown(); tab.holo = null; }
+  };
+  tab.pane.querySelector(".t-reload").addEventListener("click", function () { fetchProjection(tab); });
+  tab.pane.querySelector(".t-permalink").addEventListener("click", function (ev) {
+    copyLinkTo(ev.target);
+  });
+  fetchProjection(tab);
+}
+async function fetchProjection(tab) {
+  var path = tab.path.length ? tab.path[tab.path.length - 1].path : "";
+  paneStatus(tab, "fetching projection of " + prjPeerLabel(tab) + "...");
+  if (tab.holo) { tab.holo.teardown(); tab.holo = null; }
+  tab.pane.querySelector(".t-menu").innerHTML = "";
+  tab.pane.querySelector(".t-form").innerHTML = "";
+  tab.pane.querySelector(".t-out").innerHTML = "";
+  try {
+    var res = await runEnvelope("Query", "projection", path, null, tab.peer);
+    var bad = outcomeStatus(res);
+    if (bad) { paneStatus(tab, bad.text, bad.kind); return; }
+    if (!res.projection) { paneStatus(tab, "no rsntr:Projection in response", "warn"); return; }
+    var g = res.projection.g;
+    var offers = obj1(g, res.projection.s, R + "offers");
+    tab.points = offers ? listItems(g, offers).map(function (t) { return parsePoint(g, t); }) : [];
+    renderProjection(tab);
+    paneStatus(tab, "", "");
+    syncUrl();
+  } catch (err) {
+    if (err.message !== "unauthorized") paneStatus(tab, "request failed: " + err.message, "err");
+  }
+}
+function renderCrumbs(tab) {
+  var el = tab.pane.querySelector(".t-crumbs");
+  var h = "<span>" + esc(prjPeerLabel(tab)) + "</span> :: " + '<a data-depth="-1">root</a>';
+  tab.path.forEach(function (seg, i) {
+    h += " / " + '<a data-depth="' + i + '">' + esc(seg.label) + "</a>";
+  });
+  el.innerHTML = h;
+  el.querySelectorAll("a").forEach(function (a) {
+    a.addEventListener("click", function () {
+      var d = parseInt(a.dataset.depth, 10);
+      tab.path = tab.path.slice(0, d + 1);
+      fetchProjection(tab);
+    });
+  });
+}
+function pointArgsNote(pt) {
+  if (pt.mod === "media") return "(open stream)";
+  if (pt.kind === "hologram") return "(open app)";
+  if (pt.kind === "sympathetic") return "(vibrates)";
+  if (pt.fields.length) {
+    return "(" + pt.fields.map(function (f) { return f.name + (f.required ? "" : "?"); }).join(", ") + ")";
+  }
+  return "";
+}
+function renderProjection(tab) {
+  renderCrumbs(tab);
+  var ul = tab.pane.querySelector(".t-menu");
+  ul.innerHTML = "";
+  tab.pane.querySelector(".t-info").textContent = tab.points.length + " point(s)";
+  tab.points.forEach(function (pt, i) {
+    var li = document.createElement("li");
+    if (pt.role === "destructive") li.classList.add("destructive");
+    var kind = pt.kind + (pt.projects !== null ? " >" : "");
+    var entrained = pt.iri && tab.entrained.has(pt.iri);
+    li.innerHTML = '<span class="num">[' + (i + 1) + ']</span>' +
+      '<span class="lbl">' + esc(pt.label) + "</span>" +
+      '<span class="args">' + esc(pointArgsNote(pt)) + "</span>" +
+      (entrained ? '<span class="args" style="color:var(--accent)">entrained</span>' : "") +
+      '<span class="kind">' + esc(kind) + "</span>";
+    if (pt.comment) li.title = pt.comment;
+    li.addEventListener("click", function () { activatePoint(tab, pt); });
+    ul.appendChild(li);
+  });
+  if (!tab.points.length) ul.innerHTML = '<li><span class="args">empty projection</span></li>';
+}
+function activatePoint(tab, pt) {
+  if (tab.holo) { tab.holo.teardown(); tab.holo = null; }
+  tab.pane.querySelector(".t-form").innerHTML = "";
+  tab.pane.querySelector(".t-out").innerHTML = "";
+  if (pt.projects !== null) {
+    tab.path.push({ path: pt.projects, label: pt.label });
+    fetchProjection(tab);
+    return;
+  }
+  if (pt.kind === "hologram") { openHologramInto(tab, pt); return; }
+  if (pt.kind === "sympathetic") { toggleEntrain(tab, pt); return; }
+  if (pt.kind === "point") { paneStatus(tab, "inert point: " + pt.label, "warn"); return; }
+  if (pt.fields.length) renderCouplingForm(tab, pt);
+  else invokePoint(tab, pt, {});
+}
+function renderCouplingForm(tab, pt) {
+  var h = "<fieldset><legend>" + esc(pt.label) + "</legend>";
+  pt.fields.forEach(function (f, i) {
+    var input;
+    var dt = f.datatype || "";
+    if (f.oneOf) {
+      input = '<select data-fi="' + i + '">' +
+        (f.required ? "" : '<option value="">(none)</option>') +
+        f.oneOf.map(function (v) {
+          return '<option' + (f.dflt === v ? " selected" : "") + ">" + esc(v) + "</option>";
+        }).join("") + "</select>";
+    } else if (dt === XSD + "boolean") {
+      input = '<select data-fi="' + i + '">' +
+        (f.required ? "" : '<option value="">(none)</option>') +
+        '<option' + (f.dflt === "true" ? " selected" : "") + ">true</option>" +
+        '<option' + (f.dflt === "false" ? " selected" : "") + ">false</option></select>";
+    } else {
+      var typ = /#(integer|int|long|short|byte|decimal|double|float|nonNegativeInteger|positiveInteger)$/.test(dt) ? "number" : "text";
+      input = '<input type="' + typ + '" data-fi="' + i + '" value="' + esc(f.dflt === null ? "" : f.dflt) + '"' +
+        (f.hint ? ' placeholder="' + esc(f.hint) + '"' : "") + ">";
+    }
+    h += '<label class="f"><span class="n">' + esc(f.name) +
+      (f.required ? '<span class="req">*</span>' : "") + "</span>" + input +
+      '<span class="hint">' + esc(shortIri(f.datatype)) + "</span></label>";
+  });
+  h += '<div class="row"><button class="act t-invoke">' +
+    (pt.kind === "radiant" ? "read" : "excite") + "</button></div></fieldset>";
+  var form = tab.pane.querySelector(".t-form");
+  form.innerHTML = h;
+  form.querySelector(".t-invoke").addEventListener("click", function () {
+    var vals = {};
+    var missing = null;
+    pt.fields.forEach(function (f, i) {
+      var e = form.querySelector('[data-fi="' + i + '"]');
+      var v = e.value;
+      if (v === "" && f.required && missing === null) missing = f.name;
+      vals[f.name] = v === "" ? null : v;
+    });
+    if (missing) { paneStatus(tab, "field required: " + missing, "warn"); return; }
+    invokePoint(tab, pt, vals);
+  });
+}
+function paramTermFor(val, dt) {
+  if (val === null) return "rsntr:null";
+  if (/#(integer|int|long|short|byte|nonNegativeInteger|positiveInteger)$/.test(dt) && /^[+-]?\d+$/.test(val)) return val;
+  if (/#(decimal|double|float)$/.test(dt) && /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(val)) return val;
+  if (dt === XSD + "boolean") return val === "true" ? "true" : "false";
+  return ttlStr(val);
+}
+async function invokePoint(tab, pt, vals) {
+  var cls = pt.kind === "radiant" ? "Query" : "Execute";
+  var mod = pt.mod, signal, params = null;
+  if (pt.paramsOrder && pt.signal !== null) {
+    signal = pt.signal;
+    params = pt.paramsOrder.map(function (name) {
+      var f = pt.fields.find(function (x) { return x.name === name; });
+      return paramTermFor(vals[name] !== undefined ? vals[name] : null, f ? f.datatype : XSD + "string");
+    });
+  } else if (pt.template !== null) {
+    /* template fallback: client-side substitution, no escaping guarantees */
+    signal = pt.template.replace(/\{([^}]+)\}/g, function (m, name) {
+      return vals[name] === null || vals[name] === undefined ? "" : vals[name];
+    });
+  } else {
+    signal = pt.signal || "";
+    if (pt.fields.length && pt.paramsOrder === null) {
+      params = pt.fields.map(function (f) { return paramTermFor(vals[f.name] !== undefined ? vals[f.name] : null, f.datatype); });
+    }
+  }
+  if (!mod) { paneStatus(tab, "point carries no rsntr:mod; cannot invoke", "warn"); return; }
+  /* a media point answers a header + raw bytes, not frames (observer.md 4) */
+  if (mod === "media") { openMediaInto(tab, pt, signal, params); return; }
+  paneStatus(tab, "invoking " + pt.label + " on " + prjPeerLabel(tab) + "...");
+  try {
+    var res = await runEnvelope(cls, mod, signal, params, tab.peer);
+    var bad = outcomeStatus(res);
+    if (bad) { paneStatus(tab, bad.text, bad.kind); return; }
+    var out = tab.pane.querySelector(".t-out");
+    if (res.columns) {
+      var rows = res.rows.map(function (row) {
+        return res.columns.map(function (c) { return cellOfTerm(row.cells[c]); });
+      });
+      renderGrid(out, res.columns, rows);
+    } else if (res.graphTtl.length) {
+      renderGraphOut(out, graphPayloadTriples(res.graphTtl), graphPayloadTtl(res.graphTtl), null);
+    } else if (res.help) {
+      out.innerHTML = '<pre class="out">' + esc(res.help.text) + "</pre>";
+    } else if (res.generic.length) {
+      /* rendering is response-driven (hologram-protocol.md 4): a stream
+         opening with rsntr:Hologram mounts whatever the point looked like */
+      var holo = hologramFromGeneric(res);
+      if (holo !== null) {
+        mountHologram(tab, out, tab.peer, mod, holo);
+      } else {
+        out.innerHTML = '<pre class="out">' + esc(res.generic.map(function (x) { return x.doc; }).join("\n\n")) + "</pre>";
+      }
+    }
+    var d = res.done || {};
+    var bits = [];
+    if (d.rowCount !== null && d.rowCount !== undefined) bits.push(d.rowCount + " row(s)");
+    if (d.affectedRows !== null && d.affectedRows !== undefined) bits.push("affected " + d.affectedRows);
+    if (d.lastInsertRowid !== null && d.lastInsertRowid !== undefined) bits.push("rowid " + d.lastInsertRowid);
+    if (d.truncated) bits.push("truncated");
+    paneStatus(tab, "done" + (bits.length ? ": " + bits.join(", ") : ""), "ok");
+  } catch (err) {
+    if (err.message !== "unauthorized") paneStatus(tab, "request failed: " + err.message, "err");
+  }
+}
+async function toggleEntrain(tab, pt) {
+  if (!pt.iri) { paneStatus(tab, "sympathetic point has no IRI", "warn"); return; }
+  var live = tab.entrained.get(pt.iri);
+  if (live) {
+    /* aborting the fetch is the damp */
+    live.ctrl.abort();
+    tab.entrained.delete(pt.iri);
+    logEvent("entrain", "damped " + pt.label);
+    renderProjection(tab);
+    return;
+  }
+  var ctrl = new AbortController();
+  tab.entrained.set(pt.iri, { ctrl: ctrl });
+  renderProjection(tab);
+  var peer = tab.peer;
+  var who = peer ? chatLabelFor(peer) + " / " : "";
+  logEvent("entrain", "entraining to " + who + pt.label + " ...");
+  try {
+    var res = await postFrames("/entrain" + peerSuffix(peer), [entrainDoc(pt.iri)], ctrl.signal);
+    for await (var doc of readFrames(res.body)) {
+      var g = graphIndex(parseTurtle(doc));
+      var subs = envelopeSubjects(g);
+      for (var k = 0; k < subs.length; k++) {
+        var sub = subs[k];
+        if (sub.cls === "Done") logEvent("entrain", "entrained: " + who + pt.label, doc);
+        else if (sub.cls === "Vibration") {
+          var seq = litOf(g, sub.s, R + "seq");
+          var at = litOf(g, sub.s, R + "at");
+          logEvent("vibration", who + pt.label + " seq " + (seq === null ? "?" : seq) + (at ? " at " + at : ""), doc);
+        } else if (sub.cls === "Denied") {
+          logEvent("entrain", "denied: " + (litOf(g, sub.s, R + "reason") || pt.label), doc);
+        } else if (sub.cls === "Error") {
+          logEvent("entrain", "error [" + (litOf(g, sub.s, R + "code") || "?") + "] " +
+            (litOf(g, sub.s, R + "reason") || ""), doc);
+        }
+      }
+    }
+    logEvent("entrain", "stream ended: " + pt.label);
+  } catch (err) {
+    if (err.name !== "AbortError" && err.message !== "unauthorized") {
+      logEvent("entrain", "stream error: " + err.message);
+    }
+  } finally {
+    tab.entrained.delete(pt.iri);
+    if (tab.pane.isConnected) renderProjection(tab);
+  }
+}
+
+/* ---- media viewer (observer.md 4) ----------------------------------- */
+async function openMediaInto(tab, pt, signal, params) {
+  if (tab.media) { tab.media.abort(); tab.media = null; }
+  var out = tab.pane.querySelector(".t-out");
+  out.innerHTML = '<div class="mediabox">' +
+    '<div class="row"><button class="ghost t-stop">stop</button>' +
+    '<span class="mini t-ct"></span></div>' +
+    '<div class="notice" style="display:none"></div></div>';
+  var box = out.querySelector(".mediabox");
+  var ctrl = new AbortController();
+  tab.media = ctrl;
+  box.querySelector(".t-stop").addEventListener("click", function () { ctrl.abort(); });
+  paneStatus(tab, "opening stream " + pt.label + " on " + prjPeerLabel(tab) + "...");
+  try {
+    var res = await postFrames("/request" + peerSuffix(tab.peer),
+      [reqDoc("Query", "media", signal, params)], ctrl.signal);
+    var hdr = await readMediaHeader(res.body);
+    if (hdr.denied !== null) { paneStatus(tab, "denied: " + hdr.denied, "warn"); return; }
+    if (hdr.error) { paneStatus(tab, "error [" + hdr.error.code + "] " + hdr.error.reason, "err"); return; }
+    if (hdr.contentType === null) { paneStatus(tab, "response carried no rsntr:Media header", "warn"); return; }
+    box.querySelector(".t-ct").textContent = hdr.contentType;
+    var MS = mseClass();
+    var mse = MS !== null && MS.isTypeSupported(hdr.contentType);
+    if (!mse) {
+      /* transmuxing (e.g. mpegts -> fMP4) is out of scope for v1 */
+      var cmd = mediaWatchCmd(tab.peer, signal);
+      var notice = box.querySelector(".notice");
+      notice.style.display = "";
+      notice.innerHTML = esc(hdr.contentType) +
+        " is not MSE-playable in this browser; watch it with <code>" + esc(cmd) +
+        '</code> <button class="ghost t-copy">copy</button>';
+      notice.querySelector(".t-copy").addEventListener("click", function () {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd);
+      });
+      ctrl.abort();
+      paneStatus(tab, "stream open, but not viewable here", "warn");
+      return;
+    }
+    var video = document.createElement("video");
+    video.controls = true;
+    video.autoplay = true;
+    video.muted = true; /* autoplay policy: muted streams may start unaided */
+    video.playsInline = true; /* iPhone: without it, no inline rendering */
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    box.appendChild(video);
+    paneStatus(tab, "streaming " + pt.label + " (" + hdr.contentType + ")", "ok");
+    await pumpMse(video, hdr.contentType, hdr.rest, hdr.reader);
+    paneStatus(tab, "media stream ended", "");
+  } catch (err) {
+    if (err.name === "AbortError") paneStatus(tab, "media stream stopped", "");
+    else if (err.message !== "unauthorized") paneStatus(tab, "media failed: " + err.message, "err");
+  } finally {
+    if (tab.media === ctrl) tab.media = null;
+  }
+}
+/* iPhones have no MediaSource: every iOS browser is WebKit, which
+   ships ManagedMediaSource (iOS 17.1+) instead. Same API for our use;
+   MMS additionally wants disableRemotePlayback and srcObject
+   attachment. Returns the constructor, or null when neither exists. */
+function mseClass() {
+  if (typeof MediaSource !== "undefined") return MediaSource;
+  if (typeof ManagedMediaSource !== "undefined") return ManagedMediaSource;
+  return null;
+}
+/* attach a (Managed)MediaSource to a video; returns the object URL to
+   revoke on sourceopen, or null when srcObject attachment was used */
+function attachMse(video, ms) {
+  if (typeof MediaSource === "undefined") {
+    video.disableRemotePlayback = true;
+    try { video.srcObject = ms; return null; } catch (e) { /* older WebKit */ }
+  }
+  var url = URL.createObjectURL(ms);
+  video.src = url;
+  return url;
+}
+/* feed raw bytes into one MSE SourceBuffer; resolves at end of stream */
+function pumpMse(video, contentType, firstBytes, reader) {
+  return new Promise(function (resolve, reject) {
+    var MS = mseClass();
+    if (MS === null) { reject(new Error("no MediaSource in this browser")); return; }
+    var ms = new MS();
+    var url = attachMse(video, ms);
+    ms.addEventListener("sourceopen", function () {
+      if (url) URL.revokeObjectURL(url);
+      var sb;
+      try { sb = ms.addSourceBuffer(contentType); }
+      catch (e) { reject(e); return; }
+      var queue = [], ended = false;
+      function feed() {
+        if (sb.updating) return;
+        if (queue.length) {
+          try { sb.appendBuffer(queue.shift()); }
+          catch (e) { reject(e); }
+        } else if (ended) {
+          try { if (ms.readyState === "open") ms.endOfStream(); }
+          catch (e) { /* already closed */ }
+          resolve();
+        }
+      }
+      sb.addEventListener("updateend", feed);
+      sb.addEventListener("error", function () { reject(new Error("SourceBuffer append failed")); });
+      (async function () {
+        try {
+          if (firstBytes && firstBytes.length) { queue.push(firstBytes); feed(); }
+          if (reader) {
+            for (;;) {
+              var r = await reader.read();
+              if (r.value && r.value.length) { queue.push(r.value); feed(); }
+              if (r.done) break;
+            }
+          }
+          ended = true;
+          feed();
+        } catch (e) { reject(e); }
+      })();
+    });
+  });
+}
+
+/* ---- hologram viewer (hologram-protocol.md) ------------------------- */
+/* A mod-authored document mounted in an opaque-origin sandboxed iframe;
+   the broker below pins the serving peer and modulation, so guest
+   content reaches exactly one mod on one peer and nothing else - never
+   the session token, never another modulation, never the network. */
+
+function b64bytes(b64) {
+  var bin = atob(b64), out = new Uint8Array(bin.length);
+  for (var k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
+  return out;
+}
+
+/* consume a hologram frame stream: header, chunks in seq order, Done */
+async function collectHologram(frames) {
+  var h = { contentType: null, size: null, name: null, html: null, denied: null, error: null };
+  var parts = [];
+  for await (var doc of frames) {
+    var g = graphIndex(parseTurtle(doc));
+    var subs = envelopeSubjects(g);
+    for (var k = 0; k < subs.length; k++) {
+      var sub = subs[k], s = sub.s;
+      if (sub.cls === "Hologram") {
+        h.contentType = litOf(g, s, R + "contentType");
+        h.size = intLit(g, s, R + "size");
+        h.name = litOf(g, s, R + "name");
+      } else if (sub.cls === "Chunk") {
+        var data = litOf(g, s, R + "data");
+        if (data !== null) parts.push(b64bytes(data));
+      } else if (sub.cls === "Denied") {
+        h.denied = litOf(g, s, R + "reason") || "denied";
+      } else if (sub.cls === "Error") {
+        h.error = { code: litOf(g, s, R + "code") || "error", reason: litOf(g, s, R + "reason") || "" };
+      }
+    }
+  }
+  if (h.denied || h.error || h.contentType === null) return h;
+  var total = parts.reduce(function (a, p) { return a + p.length; }, 0);
+  if (h.size !== null && total !== h.size) {
+    h.error = { code: "protocol-error", reason: "hologram truncated: got " + total + " of " + h.size + " bytes" };
+    return h;
+  }
+  var body = new Uint8Array(total), off = 0;
+  for (var m = 0; m < parts.length; m++) { body.set(parts[m], off); off += parts[m].length; }
+  h.html = new TextDecoder("utf-8").decode(body);
+  return h;
+}
+
+/* reassemble a hologram out of an already-collected response's generic
+   frames (the response-driven fallback path) */
+function hologramFromGeneric(res) {
+  if (!res.generic.some(function (x) { return x.cls === "Hologram"; })) return null;
+  var size = null, chunks = [];
+  for (var k = 0; k < res.generic.length; k++) {
+    var g = graphIndex(parseTurtle(res.generic[k].doc));
+    var subs = envelopeSubjects(g);
+    for (var m = 0; m < subs.length; m++) {
+      var sub = subs[m], s = sub.s;
+      if (sub.cls === "Hologram") size = intLit(g, s, R + "size");
+      else if (sub.cls === "Chunk") {
+        var data = litOf(g, s, R + "data");
+        if (data !== null) chunks.push({ seq: intLit(g, s, R + "seq") || 0, bytes: b64bytes(data) });
+      }
+    }
+  }
+  chunks.sort(function (a, b) { return a.seq - b.seq; });
+  var total = chunks.reduce(function (a, c) { return a + c.bytes.length; }, 0);
+  if (size !== null && total !== size) return null;
+  var body = new Uint8Array(total), off = 0;
+  for (var j = 0; j < chunks.length; j++) { body.set(chunks[j].bytes, off); off += chunks[j].bytes.length; }
+  return new TextDecoder("utf-8").decode(body);
+}
+
+/* JSON scalar from the guest -> one Turtle param term */
+function guestParamTerm(v) {
+  if (v === null || v === undefined) return "rsntr:null";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number" && isFinite(v)) {
+    return Number.isInteger(v) ? String(v) : String(v);
+  }
+  if (typeof v === "string") return ttlStr(v);
+  throw new Error("params must be JSON scalars");
+}
+
+async function openHologramInto(tab, pt) {
+  if (tab.holo) { tab.holo.teardown(); tab.holo = null; }
+  var out = tab.pane.querySelector(".t-out");
+  if (!pt.mod) { paneStatus(tab, "hologram point carries no rsntr:mod", "warn"); return; }
+  paneStatus(tab, "reconstructing hologram " + pt.label + " from " + prjPeerLabel(tab) + "...");
+  try {
+    var res = await postFrames("/request" + peerSuffix(tab.peer),
+      [reqDoc("Query", pt.mod, pt.signal || "hologram", null)]);
+    var h = await collectHologram(readFrames(res.body));
+    if (h.denied) { paneStatus(tab, "denied: " + h.denied, "warn"); return; }
+    if (h.error) { paneStatus(tab, "error [" + h.error.code + "] " + h.error.reason, "err"); return; }
+    if (h.html === null) { paneStatus(tab, "response carried no rsntr:Hologram header", "warn"); return; }
+    mountHologram(tab, out, tab.peer, pt.mod, h.html);
+    paneStatus(tab, "hologram mounted: " + pt.label, "ok");
+  } catch (err) {
+    if (err.message !== "unauthorized") paneStatus(tab, "hologram failed: " + err.message, "err");
+  }
+}
+
+/* mount + broker. The peer and mod pins come from this closure, never
+   from guest messages (hologram-protocol.md 5). */
+function mountHologram(tab, container, peer, mod, html) {
+  /* full-tab mode: while a hologram is mounted the projection menu
+     yields; go back (or close) restores it */
+  if (tab.pane) tab.pane.classList.add("holo-on");
+  container.innerHTML = '<div class="holobox">' +
+    '<div class="row"><button class="ghost t-close">close</button>' +
+    '<button class="ghost t-permalink">copy link</button>' +
+    '<span class="mini">' + esc(mod) + "@" + esc(peer ? peer.slice(0, 8) : "local") +
+    ", sandboxed</span></div></div>";
+  var box = container.querySelector(".holobox");
+  var iframe = document.createElement("iframe");
+  iframe.className = "holo-frame";
+  /* opaque origin, scripts only: no cookies, no storage, no origin,
+     never allow-same-origin */
+  iframe.setAttribute("sandbox", "allow-scripts");
+  var reqCtrls = new Set();
+  var entrains = new Map(); /* guest id -> {ctrl, acked} */
+  var medias = new Map();   /* guest id -> AbortController */
+  var duplexes = new Map(); /* guest id -> duplex session state */
+
+  function post(m) {
+    if (iframe.contentWindow) iframe.contentWindow.postMessage({ hg: 1, m: m }, "*");
+  }
+  function postErr(id, code, reason, denied) {
+    post({ t: "result", id: id, ok: false, denied: !!denied, error: { code: code, reason: reason || "" } });
+  }
+  function rowToGuest(row) {
+    return { seq: row.seq, cells: row.cells };
+  }
+
+  async function guestRequest(m) {
+    var cls = m.t === "query" ? "Query" : "Execute";
+    var terms;
+    try {
+      terms = (m.params || []).map(guestParamTerm);
+    } catch (e) { postErr(m.id, "protocol-error", e.message); return; }
+    var ctrl = new AbortController();
+    reqCtrls.add(ctrl);
+    try {
+      var res = await postFrames("/request" + peerSuffix(peer),
+        [reqDoc(cls, mod, String(m.signal || ""), terms.length ? terms : null)], ctrl.signal);
+      var out = await collectResponse(readFrames(res.body));
+      if (out.denied !== null) postErr(m.id, "auth-denied", out.denied, true);
+      else if (out.error) postErr(m.id, out.error.code, out.error.reason);
+      else post({ t: "result", id: m.id, ok: true, res: {
+        columns: out.columns,
+        rows: out.rows.map(rowToGuest),
+        done: out.done,
+        generic: out.generic,
+        graphTtl: out.graphTtl
+      } });
+    } catch (err) {
+      if (err.name === "AbortError") postErr(m.id, "protocol-error", "hologram unmounted");
+      else if (err.message === "unauthorized") postErr(m.id, "auth-denied", "web session expired", true);
+      else postErr(m.id, "protocol-error", err.message);
+    } finally {
+      reqCtrls.delete(ctrl);
+    }
+  }
+
+  async function guestEntrain(m) {
+    var point = String(m.point || "");
+    var live = { ctrl: new AbortController(), acked: false };
+    entrains.set(m.id, live);
+    try {
+      var res = await postFrames("/entrain" + peerSuffix(peer), [entrainDoc(point)], live.ctrl.signal);
+      for await (var doc of readFrames(res.body)) {
+        var g = graphIndex(parseTurtle(doc));
+        var subs = envelopeSubjects(g);
+        for (var k = 0; k < subs.length; k++) {
+          var sub = subs[k], s = sub.s;
+          if (sub.cls === "Done") {
+            if (!live.acked) { live.acked = true; post({ t: "entrained", id: m.id }); }
+            else post({ t: "damped", id: m.id });
+          } else if (sub.cls === "Vibration") {
+            post({ t: "vibration", id: m.id,
+                   seq: intLit(g, s, R + "seq"), at: litOf(g, s, R + "at") });
+          } else if (sub.cls === "Denied") {
+            post({ t: "damped", id: m.id, reason: "auth-denied: " + (litOf(g, s, R + "reason") || "") });
+          } else if (sub.cls === "Error") {
+            post({ t: "damped", id: m.id,
+                   reason: (litOf(g, s, R + "code") || "error") + ": " + (litOf(g, s, R + "reason") || "") });
+          }
+        }
+      }
+      if (live.acked) post({ t: "damped", id: m.id });
+    } catch (err) {
+      if (err.name !== "AbortError" && err.message !== "unauthorized") {
+        post({ t: "damped", id: m.id, reason: "protocol-error: " + err.message });
+      }
+    } finally {
+      entrains.delete(m.id);
+    }
+  }
+
+  /* the media lane (hologram-protocol.md 5/6): mod "media" on the pinned
+     peer, per-source policy gating server-side; raw bytes relayed to the
+     guest as transferable ArrayBuffers */
+  function postMediaChunk(id, bytes) {
+    var buf = (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength)
+      ? bytes.buffer : bytes.slice().buffer;
+    if (iframe.contentWindow) {
+      iframe.contentWindow.postMessage({ hg: 1, m: { t: "media-data", id: id, chunk: buf } }, "*", [buf]);
+    }
+  }
+  async function guestMedia(m) {
+    var ctrl = new AbortController();
+    medias.set(m.id, ctrl);
+    try {
+      var res = await postFrames("/request" + peerSuffix(peer),
+        [reqDoc("Query", "media", String(m.signal), null)], ctrl.signal);
+      var hdr = await readMediaHeader(res.body);
+      if (hdr.denied !== null) {
+        post({ t: "media-error", id: m.id, error: { code: "auth-denied", reason: hdr.denied } });
+        return;
+      }
+      if (hdr.error) { post({ t: "media-error", id: m.id, error: hdr.error }); return; }
+      if (hdr.contentType === null) {
+        post({ t: "media-error", id: m.id,
+               error: { code: "protocol-error", reason: "response carried no rsntr:Media header" } });
+        return;
+      }
+      post({ t: "media-header", id: m.id, contentType: hdr.contentType });
+      if (hdr.rest && hdr.rest.length) postMediaChunk(m.id, hdr.rest);
+      for (;;) {
+        var r = await hdr.reader.read();
+        if (r.value && r.value.length) postMediaChunk(m.id, r.value);
+        if (r.done) break;
+      }
+      post({ t: "media-end", id: m.id });
+    } catch (err) {
+      if (err.name === "AbortError") post({ t: "media-end", id: m.id });
+      else if (err.message === "unauthorized") {
+        post({ t: "media-error", id: m.id, error: { code: "auth-denied", reason: "web session expired" } });
+      } else {
+        post({ t: "media-error", id: m.id, error: { code: "protocol-error", reason: err.message } });
+      }
+    } finally {
+      medias.delete(m.id);
+    }
+  }
+
+  /* the audio-duplex lane (hologram-protocol.md 5/6): the microphone is
+     a BROKER capability - the opaque-origin guest cannot obtain mic
+     permission and never touches audio devices. The guest only starts
+     and stops a session; capture, encoding (big-endian L16 per the
+     header's accepts rate), and the serialized /duplex/{id} POSTs all
+     happen here, pinned to the serving peer. */
+  function postDuplexChunk(id, bytes) {
+    var buf = (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength)
+      ? bytes.buffer : bytes.slice().buffer;
+    if (iframe.contentWindow) {
+      iframe.contentWindow.postMessage({ hg: 1, m: { t: "duplex-data", id: id, chunk: buf } }, "*", [buf]);
+    }
+  }
+  var CAPTURE_WORKLET =
+    'class RsntrCapture extends AudioWorkletProcessor {\n' +
+    '  constructor(options) { super();\n' +
+    '    this.outRate = (options.processorOptions && options.processorOptions.outRate) || 8000;\n' +
+    '    this.phase = 0; this.prev = 0;\n' +
+    '    this.out = new Int16Array(Math.round(this.outRate / 5)); this.outLen = 0; }\n' +
+    '  process(inputs) {\n' +
+    '    var chans = inputs[0];\n' +
+    '    if (!chans || !chans[0]) return true;\n' +
+    '    var mono = chans[0];\n' +
+    '    if (chans.length > 1) {\n' +
+    '      mono = new Float32Array(chans[0].length);\n' +
+    '      for (var i = 0; i < mono.length; i++) {\n' +
+    '        var sum = 0;\n' +
+    '        for (var c = 0; c < chans.length; c++) sum += chans[c][i];\n' +
+    '        mono[i] = sum / chans.length;\n' +
+    '      }\n' +
+    '    }\n' +
+    '    var step = sampleRate / this.outRate;\n' +
+    '    while (this.phase < mono.length) {\n' +
+    '      var idx = Math.floor(this.phase), frac = this.phase - idx;\n' +
+    '      var a = idx === 0 ? this.prev : mono[idx - 1];\n' +
+    '      var b = mono[idx] !== undefined ? mono[idx] : a;\n' +
+    '      var s = a + (b - a) * frac;\n' +
+    '      if (s > 1) s = 1; else if (s < -1) s = -1;\n' +
+    '      this.out[this.outLen++] = s < 0 ? s * 32768 : s * 32767;\n' +
+    '      if (this.outLen === this.out.length) {\n' +
+    '        var full = this.out;\n' +
+    '        this.out = new Int16Array(full.length); this.outLen = 0;\n' +
+    '        this.port.postMessage(full.buffer, [full.buffer]);\n' +
+    '      }\n' +
+    '      this.phase += step;\n' +
+    '    }\n' +
+    '    this.phase -= mono.length;\n' +
+    '    this.prev = mono[mono.length - 1];\n' +
+    '    return true;\n' +
+    '  }\n' +
+    '}\n' +
+    'registerProcessor("rsntr-capture", RsntrCapture);\n';
+
+  async function startMic(dx, accepts, guestId) {
+    var rate = 8000;
+    var rm = /rate=(\d+)/.exec(accepts || "");
+    if (rm) rate = parseInt(rm[1], 10);
+    dx.tracks = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true
+    } });
+    dx.ac = new AudioContext();
+    if (dx.ac.state === "suspended") { try { await dx.ac.resume(); } catch (e) { /* gesture policy */ } }
+    var srcNode = dx.ac.createMediaStreamSource(dx.tracks);
+    var worklet = null;
+    if (dx.ac.audioWorklet) {
+      var url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "text/javascript" }));
+      try {
+        await dx.ac.audioWorklet.addModule(url);
+        worklet = new AudioWorkletNode(dx.ac, "rsntr-capture", { processorOptions: { outRate: rate } });
+      } catch (e) {
+        worklet = null;  /* fall back below rather than lose the call */
+      } finally { URL.revokeObjectURL(url); }
+    }
+    if (!worklet) {
+      /* Older engines (and any browser that refuses a Blob worklet)
+         still capture through the deprecated ScriptProcessor: a silent
+         call is a worse outcome than a deprecated node. */
+      var spn = dx.ac.createScriptProcessor(4096, 1, 1);
+      var phase = 0, prev = 0;
+      spn.onaudioprocess = function (ev) {
+        var input = ev.inputBuffer.getChannelData(0);
+        var step = dx.ac.sampleRate / rate;
+        var out = [];
+        while (phase < input.length) {
+          var idx = Math.floor(phase), frac = phase - idx;
+          var a = idx === 0 ? prev : input[idx - 1];
+          var b = input[idx] !== undefined ? input[idx] : a;
+          var v = a + (b - a) * frac;
+          if (v > 1) v = 1; else if (v < -1) v = -1;
+          out.push(v < 0 ? v * 32768 : v * 32767);
+          phase += step;
+        }
+        phase -= input.length;
+        prev = input[input.length - 1];
+        if (out.length) dx.node.port.onmessage({ data: new Int16Array(out).buffer });
+      };
+      dx.node = { port: { onmessage: null }, disconnect: function () { spn.disconnect(); } };
+      srcNode.connect(spn);
+      dx.capture = spn;
+      dx.fallback = true;
+    } else {
+      dx.node = worklet;
+      dx.capture = worklet;
+    }
+    dx.node.port.onmessage = function (ev) {
+      /* Int16Array buffer from the worklet -> big-endian L16 bytes
+         (audio/L16 is big-endian by RFC 3551; the receiving source
+         decodes s16be) */
+      var samples = new Int16Array(ev.data);
+      var be = new Uint8Array(samples.length * 2);
+      var view = new DataView(be.buffer);
+      var peak = 0;
+      for (var i = 0; i < samples.length; i++) {
+        view.setInt16(i * 2, samples[i], false);
+        var a = samples[i] < 0 ? -samples[i] : samples[i];
+        if (a > peak) peak = a;
+      }
+      if (peak > dx.peak) dx.peak = peak;
+      if (dx.queue.length >= 5) dx.queue.shift(); /* stay live, drop oldest */
+      dx.queue.push(be);
+      pumpUpstream(dx);
+    };
+    if (!dx.fallback) srcNode.connect(dx.node);
+    /* Every engine must actually pull the capture node. Chrome runs a
+       worklet with only an input connected; Safari and Firefox render
+       only what reaches the destination, and leave an unconnected node
+       silent - which looks exactly like a dead microphone. Routing
+       through a muted gain satisfies all of them and still produces no
+       local echo. */
+    dx.sink = dx.ac.createGain();
+    dx.sink.gain.value = 0;
+    dx.capture.connect(dx.sink);
+    dx.sink.connect(dx.ac.destination);
+    /* A microphone that is muted, blocked, or pointed at a dead device
+       still yields a stream of zeroes, which used to fail invisibly:
+       the call looked live while nothing was said. Report the level
+       once the mic has had time to speak so the app can say so. */
+    dx.levelTimer = setTimeout(function () {
+      post({ t: "duplex-level", id: guestId, peak: dx.peak });
+    }, 3000);
+  }
+
+  async function pumpUpstream(dx) {
+    if (dx.posting || !dx.sid || dx.finSent) return;
+    dx.posting = true;
+    try {
+      while (dx.queue.length && !dx.finSent) {
+        var parts = dx.queue.splice(0, dx.queue.length);
+        var total = 0;
+        for (var k = 0; k < parts.length; k++) total += parts[k].length;
+        var body = new Uint8Array(total), off = 0;
+        for (var j = 0; j < parts.length; j++) { body.set(parts[j], off); off += parts[j].length; }
+        /* the ordering contract: one POST in flight, awaited */
+        await api("/duplex/" + encodeURIComponent(dx.sid) , {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: body
+        });
+      }
+    } catch (e) { /* the exchange is ending; teardown reports it */ }
+    dx.posting = false;
+  }
+
+  function stopDuplex(dx) {
+    if (!dx || dx.stopped) return;
+    dx.stopped = true;
+    if (dx.levelTimer) { clearTimeout(dx.levelTimer); dx.levelTimer = null; }
+    if (dx.tracks) { dx.tracks.getTracks().forEach(function (t) { t.stop(); }); dx.tracks = null; }
+    if (dx.ac) { try { dx.ac.close(); } catch (e) { /* already closed */ } dx.ac = null; }
+    if (dx.sid && !dx.finSent) {
+      dx.finSent = true;
+      /* best-effort clean hangup, then abort the exchange */
+      api("/duplex/" + encodeURIComponent(dx.sid), {
+        method: "POST",
+        headers: { "Rsntr-Fin": "1" },
+        body: new Uint8Array(0)
+      }).catch(function () { /* session already gone */ }).finally(function () {
+        dx.ctrl.abort();
+      });
+    } else {
+      dx.ctrl.abort();
+    }
+  }
+
+  async function guestDuplex(m) {
+    var dx = { ctrl: new AbortController(), queue: [], posting: false,
+               sid: null, tracks: null, ac: null, finSent: false, stopped: false,
+               peak: 0, levelTimer: null, capture: null, sink: null };
+    duplexes.set(m.id, dx);
+    try {
+      var res = await postFrames("/request" + peerSuffix(peer),
+        [reqDoc("Query", "audio-duplex", String(m.signal), null)], dx.ctrl.signal);
+      var hdr = await readDuplexHeader(res.body);
+      if (hdr.denied !== null) {
+        post({ t: "duplex-error", id: m.id, error: { code: "auth-denied", reason: hdr.denied } });
+        return;
+      }
+      if (hdr.error) { post({ t: "duplex-error", id: m.id, error: hdr.error }); return; }
+      if (hdr.accepts === null) {
+        post({ t: "duplex-error", id: m.id,
+               error: { code: "protocol-error", reason: "response carried no rsntr:AudioDuplex header" } });
+        return;
+      }
+      dx.sid = hdr.id;
+      try {
+        await startMic(dx, hdr.accepts, m.id);
+      } catch (micErr) {
+        post({ t: "duplex-error", id: m.id,
+               error: { code: "engine-error", reason: "microphone: " + micErr.message } });
+        return;
+      }
+      post({ t: "duplex-open", id: m.id, contentType: hdr.contentType, accepts: hdr.accepts });
+      /* drain the downstream (relayed to the guest only when the source
+         emits; a pure talk sink just holds the body open) */
+      if (hdr.rest && hdr.rest.length && hdr.contentType) postDuplexChunk(m.id, hdr.rest);
+      for (;;) {
+        var r = await hdr.reader.read();
+        if (r.value && r.value.length && hdr.contentType) postDuplexChunk(m.id, r.value);
+        if (r.done) break;
+      }
+      post({ t: "duplex-ended", id: m.id });
+    } catch (err) {
+      if (err.name === "AbortError") post({ t: "duplex-ended", id: m.id });
+      else if (err.message === "unauthorized") {
+        post({ t: "duplex-error", id: m.id, error: { code: "auth-denied", reason: "web session expired" } });
+      } else {
+        post({ t: "duplex-error", id: m.id, error: { code: "protocol-error", reason: err.message } });
+      }
+    } finally {
+      stopDuplex(dx);
+      duplexes.delete(m.id);
+    }
+  }
+
+  function onMsg(e) {
+    if (e.source !== iframe.contentWindow) return;
+    var d = e.data;
+    if (!d || d.hg !== 1 || !d.m) return;
+    var m = d.m;
+    if (m.t === "ready") { post({ t: "init", peer: peer || "", mod: mod }); return; }
+    if (m.t === "query" || m.t === "execute") {
+      if (typeof m.id !== "number" || typeof m.signal !== "string") {
+        if (typeof m.id === "number") postErr(m.id, "protocol-error", "malformed request message");
+        return;
+      }
+      guestRequest(m);
+      return;
+    }
+    if (m.t === "entrain") {
+      if (typeof m.id !== "number" || typeof m.point !== "string") return;
+      guestEntrain(m);
+      return;
+    }
+    if (m.t === "damp") {
+      var live = entrains.get(m.id);
+      if (live) live.ctrl.abort();
+      return;
+    }
+    if (m.t === "media") {
+      if (typeof m.id !== "number" || typeof m.signal !== "string") return;
+      guestMedia(m);
+      return;
+    }
+    if (m.t === "media-stop") {
+      var mc = medias.get(m.id);
+      if (mc) mc.abort();
+      return;
+    }
+    if (m.t === "duplex") {
+      if (typeof m.id !== "number" || typeof m.signal !== "string") return;
+      guestDuplex(m);
+      return;
+    }
+    if (m.t === "duplex-stop") {
+      stopDuplex(duplexes.get(m.id));
+      return;
+    }
+    if (typeof m.id === "number") postErr(m.id, "protocol-error", "unknown message type");
+  }
+
+  window.addEventListener("message", onMsg);
+  iframe.srcdoc = html;
+  box.appendChild(iframe);
+
+  var holo = {
+    teardown: function () {
+      window.removeEventListener("message", onMsg);
+      reqCtrls.forEach(function (c) { c.abort(); });
+      entrains.forEach(function (l) { l.ctrl.abort(); });
+      medias.forEach(function (c) { c.abort(); });
+      duplexes.forEach(function (dx) { stopDuplex(dx); });
+      iframe.remove();
+      if (tab.pane) tab.pane.classList.remove("holo-on");
+      if (tab.holo === holo) tab.holo = null;
+      tab.holoMod = null;
+      syncUrl();
+    }
+  };
+  box.querySelector(".t-close").addEventListener("click", function () {
+    holo.teardown();
+    container.innerHTML = "";
+  });
+  box.querySelector(".t-permalink").addEventListener("click", function (ev) {
+    copyLinkTo(ev.target);
+  });
+  tab.holo = holo;
+  tab.holoMod = mod;
+  syncUrl();
+  return holo;
+}
+
+/* ---- chat panel ---------------------------------------------------- */
+/* Chat rides the four public verbs (chat-protocol.md): the send box is an
+   rsntr:Execute mod "chat" through POST /request, history is a re-read of
+   the urn:rsntr:chat:history Radiant (same signal, mod, params as the
+   scaffold point), live updates entrain urn:rsntr:chat-inbox. */
+var CHAT_INBOX_POINT = "urn:rsntr:chat-inbox";
+var CHAT_ROOM_PREFIX = "urn:rsntr:room:";
+var CHAT_BODY_MAX = 65536;
+/* the history Radiant's signal, verbatim from the rsntr chat init scaffold */
+var CHAT_HISTORY_SQL =
+  "SELECT id, scope, sender, at, body, blob_hash, blob_name" +
+  " FROM chat_messages" +
+  " WHERE (?1 IS NULL OR scope = ?1)" +
+  " ORDER BY received_at DESC, id DESC LIMIT ?2";
+
+/* one rsntr:Message as a self-contained Turtle signal (ttlStr escapes) */
+function chatMessageDoc(msgId, body, roomIri, atIso) {
+  var d = "[] a rsntr:Message ; rsntr:id " + ttlStr(msgId) +
+    " ; rsntr:at " + ttlStr(atIso) + "^^xsd:dateTime";
+  if (roomIri) d += " ; rsntr:room <" + roomIri + ">";
+  return d + " ; rsntr:body " + ttlStr(body) + " .";
+}
+/* the message ULID doubles as the request id on the direct hop */
+function chatExecuteDoc(msgId, messageTtl) {
+  return "[] a rsntr:Execute ; rsntr:id " + ttlStr(msgId) +
+    ' ; rsntr:mod "chat" ; rsntr:signal ' + ttlStr(messageTtl) + " .";
+}
+
+function chatScaffolded() {
+  return state.tables.some(function (t) { return t.name === "chat_messages"; });
+}
+async function chatSql(sql, params) {
+  var j = await apiJson("/api/sql", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params ? { sql: sql, params: params } : { sql: sql })
+  });
+  if (!j.ok) throw new Error(fmtJsonErr(j).text);
+  return j;
+}
+function chatLabelFor(idOrScope) {
+  if (idOrScope === null || idOrScope === undefined) return "?";
+  var r = state.chat.rooms.get(idOrScope);
+  if (r) return r.name;
+  var n = state.chat.peerNames.get(idOrScope);
+  if (n) return n;
+  return idOrScope.length > 16 ? idOrScope.slice(0, 12) + ".." : idOrScope;
+}
+
+/* ---- chat tabs ----------------------------------------------------- */
+function buildChatTab(tab) {
+  var c = tab.contact;
+  tab.pane.innerHTML =
+    '<div class="row"><strong class="t-scope"></strong><span class="mini t-note"></span></div>' +
+    '<div class="status t-status"></div>' +
+    '<div class="chatlog t-log"></div>' +
+    (c.kind === "all" ? "" :
+      '<div class="row"><textarea class="t-text" spellcheck="false" placeholder="message text"></textarea></div>' +
+      '<div class="row"><button class="act t-send">send</button>' +
+      '<span class="mini">ctrl+enter sends</span></div>');
+  var q = function (sel) { return tab.pane.querySelector(sel); };
+  q(".t-scope").textContent = c.kind === "all" ? "(all messages)" : c.label;
+  q(".t-note").textContent = c.scope === null ? "read-only view"
+    : (c.kind === "room" ? c.scope + (c.host ? " (host " + chatLabelFor(c.host) + ")" : " (host unknown)")
+       : c.scope);
+  if (c.kind !== "all") {
+    q(".t-send").addEventListener("click", function () { sendChat(tab); });
+    q(".t-text").addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendChat(tab);
+    });
+  }
+  q(".t-log").addEventListener("click", function (ev) {
+    var a = ev.target.closest(".att");
+    if (a) copyFetchCmd(tab, a.dataset.provider, a.dataset.hash, a.dataset.name);
+  });
+  loadChatHistory(tab);
+}
+
+/* re-read the history Radiant for the tab's scope */
+async function loadChatHistory(tab) {
+  var conv = tab.contact;
+  if (!chatScaffolded()) return;
+  paneStatus(tab, "reading history...");
+  try {
+    var params = [conv.scope === null ? "rsntr:null" : ttlStr(conv.scope), "200"];
+    var res = await runEnvelope("Query", "sql-sqlite", CHAT_HISTORY_SQL, params);
+    var bad = outcomeStatus(res);
+    if (bad) { paneStatus(tab, bad.text, bad.kind); return; }
+    /* a NULL cell is column omission on the wire */
+    function tv(row, name) { var t = row.cells[name]; return t === undefined ? null : t.v; }
+    var msgs = res.rows.map(function (row) {
+      return { id: tv(row, "id"), scope: tv(row, "scope"), sender: tv(row, "sender"),
+               at: tv(row, "at"), body: tv(row, "body"),
+               blob_hash: tv(row, "blob_hash"), blob_name: tv(row, "blob_name") };
+    });
+    msgs.reverse(); /* radiant returns newest first; render oldest first */
+    renderChatLog(tab, msgs);
+    paneStatus(tab, msgs.length + " message(s)" +
+      ((res.done && res.done.truncated) ? " (truncated)" : ""), "ok");
+  } catch (err) {
+    if (err.message !== "unauthorized") paneStatus(tab, "history failed: " + err.message, "err");
+  }
+}
+/* room message: fetch from the host; direct: from the author */
+function chatProviderFor(m) {
+  if (m.scope && m.scope.startsWith(CHAT_ROOM_PREFIX)) {
+    var r = state.chat.rooms.get(m.scope);
+    if (r && r.host) return r.host;
+  }
+  return m.sender;
+}
+function renderChatLog(tab, msgs) {
+  var me = state.meta ? state.meta.node_id : null;
+  var conv = tab.contact;
+  var log = tab.pane.querySelector(".t-log");
+  var h = "";
+  for (var k = 0; k < msgs.length; k++) {
+    var m = msgs[k];
+    var mine = me !== null && m.sender === me;
+    var who = mine ? "me" : chatLabelFor(m.sender);
+    var scopeTag = (conv && conv.scope === null && m.scope !== null)
+      ? "[" + chatLabelFor(m.scope) + "] " : "";
+    h += '<div class="msg' + (mine ? " me" : "") + '">' +
+      '<div class="meta">' + esc(scopeTag + who + (m.at ? " " + m.at : "")) + "</div>" +
+      '<div class="body">' + esc(m.body === null ? "" : m.body) + "</div>";
+    if (m.blob_hash) {
+      h += '<div><span class="att" data-hash="' + esc(m.blob_hash) +
+        '" data-name="' + esc(m.blob_name || "") +
+        '" data-provider="' + esc(chatProviderFor(m) || "") +
+        '" title="' + esc(m.blob_hash) + '">attachment: ' +
+        esc(m.blob_name || m.blob_hash.slice(0, 24) + "..") +
+        " (copy fetch command)</span></div>";
+    }
+    h += "</div>";
+  }
+  log.innerHTML = h || '<div class="mini">no messages</div>';
+  log.scrollTop = log.scrollHeight;
+}
+/* bytes never ride the envelope; the download affordance is the verified
+   iroh-blobs fetch, so hand the user the exact CLI command */
+function copyFetchCmd(tab, provider, hash, name) {
+  var out = name && /[^A-Za-z0-9._\-]/.test(name) ? "'" + name.replace(/'/g, "'\\''") + "'" : name;
+  var cmd = "rsntr fetch " + (provider || "<peer>") + " " + hash + (out ? " -o " + out : "");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(cmd).then(
+      function () { paneStatus(tab, "copied: " + cmd, "ok"); },
+      function () { paneStatus(tab, cmd, "warn"); });
+  } else {
+    paneStatus(tab, cmd, "warn");
+  }
+}
+
+async function sendChat(tab) {
+  var conv = tab.contact;
+  if (conv.scope === null) { paneStatus(tab, "read-only view", "warn"); return; }
+  if (!chatScaffolded()) { paneStatus(tab, "chat tables missing: run rsntr chat init <dir>", "warn"); return; }
+  var textEl = tab.pane.querySelector(".t-text");
+  var body = textEl.value;
+  if (!body.trim()) return;
+  if (new TextEncoder().encode(body).length > CHAT_BODY_MAX) {
+    paneStatus(tab, "body over " + CHAT_BODY_MAX + " bytes; anything bigger belongs in an attachment", "warn");
+    return;
+  }
+  var me = state.meta ? state.meta.node_id : null;
+  var target = conv.kind === "room" ? conv.host : conv.scope;
+  if (!target) { paneStatus(tab, "room host unknown; cannot address the send", "warn"); return; }
+  var id = ulid();
+  var at = new Date().toISOString().slice(0, 19);
+  var msgTtl = chatMessageDoc(id, body, conv.kind === "room" ? conv.scope : null, at);
+  /* self-hosted room: the local chat handler owns append + fan-out */
+  var localHost = me !== null && target === me;
+  paneStatus(tab, "sending...");
+  try {
+    if (!localHost) {
+      /* local append first, as chat send does; INSERT OR IGNORE keeps retries clean */
+      await chatSql(
+        "INSERT OR IGNORE INTO chat_messages (id, scope, sender, at, body, outgoing)" +
+        " VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+        [id, conv.scope, me, at, body]);
+    }
+    var url = "/request" + (localHost ? "" : "?peer=" + encodeURIComponent(target));
+    var httpRes = await postFrames(url, [chatExecuteDoc(id, msgTtl)]);
+    var res = await collectResponse(readFrames(httpRes.body));
+    if (httpRes.status === 502 && res.error && !localHost) {
+      /* peer unreachable: fall back to the offline path, one _outbox row */
+      await chatSql(
+        "INSERT OR IGNORE INTO _outbox (request_id, peer, mod, signal)" +
+        " VALUES (?1, ?2, 'chat', ?3)",
+        [id, target, msgTtl]);
+      paneStatus(tab, "peer unreachable; queued in _outbox for delivery", "warn");
+    } else {
+      var bad = outcomeStatus(res);
+      if (bad) { paneStatus(tab, bad.text, bad.kind); return; }
+      var n = res.done ? res.done.affectedRows : null;
+      paneStatus(tab, n === 0 ? "sent (recipient already had it)" : "sent", "ok");
+    }
+    textEl.value = "";
+    loadChatHistory(tab);
+  } catch (err) {
+    if (err.message !== "unauthorized") paneStatus(tab, "send failed: " + err.message, "err");
+  }
+}
+
+/* ---- global live inbox --------------------------------------------- */
+/* One persistent entrainment on the chat inbox Sympathetic point keeps
+   every open chat tab live; vibrations are ticks, so each one triggers a
+   watermark query for new rows plus a Radiant re-read per open tab. */
+var INBOX_BACKOFF_MIN = 1000, INBOX_BACKOFF_MAX = 30000;
+function nextBackoff(ms) { return Math.min(ms * 2, INBOX_BACKOFF_MAX); }
+function truncBody(s, n) {
+  s = String(s === null || s === undefined ? "" : s).replace(/\s+/g, " ").trim();
+  return s.length > n ? s.slice(0, n - 2) + ".." : s;
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function setInboxState(cls, txt) {
+  $("inbox-led").className = "led" + (cls ? " " + cls : "");
+  $("st-inbox").textContent = txt;
+}
+function refreshChatTabs() {
+  state.ct.tabs.forEach(function (t) { if (t.kind === "chat") loadChatHistory(t); });
+}
+
+/* rows newer than the rowid watermark, excluding this node's own sends */
+async function syncInbox() {
+  if (state.inbox.watermark === null) {
+    var j0 = await chatSql("SELECT COALESCE(MAX(rowid), 0) FROM chat_messages");
+    state.inbox.watermark = (j0.rows && j0.rows.length) ? j0.rows[0][0] : 0;
+    return [];
+  }
+  var me = state.meta ? state.meta.node_id : null;
+  var j = await chatSql(
+    "SELECT rowid, scope, sender, at, body FROM chat_messages WHERE rowid > ?1 ORDER BY rowid",
+    [state.inbox.watermark]);
+  var fresh = [];
+  (j.rows || []).forEach(function (r) {
+    if (r[0] > state.inbox.watermark) state.inbox.watermark = r[0];
+    if (r[2] === me) return;
+    fresh.push({ rowid: r[0], scope: r[1], sender: r[2], at: r[3], body: r[4] });
+  });
+  return fresh;
+}
+
+function startInbox() {
+  if (state.inbox.running || !chatScaffolded()) return;
+  state.inbox.running = true;
+  inboxLoop();
+}
+async function inboxLoop() {
+  for (;;) {
+    try {
+      setInboxState("", "connecting");
+      await inboxOnce();
+      logEvent("inbox", "stream ended; reconnecting");
+    } catch (err) {
+      if (err.message === "unauthorized") {
+        state.inbox.running = false;
+        setInboxState("err", "auth");
+        return;
+      }
+      logEvent("inbox", "stream error: " + err.message);
+    }
+    setInboxState("err", "retry in " + Math.round(state.inbox.backoff / 1000) + "s");
+    await sleep(state.inbox.backoff);
+    state.inbox.backoff = nextBackoff(state.inbox.backoff);
+  }
+}
+async function inboxOnce() {
+  var ctrl = new AbortController();
+  state.inbox.ctrl = ctrl;
+  try {
+    var res = await postFrames("/entrain", [entrainDoc(CHAT_INBOX_POINT)], ctrl.signal);
+    for await (var doc of readFrames(res.body)) {
+      var g = graphIndex(parseTurtle(doc));
+      var subs = envelopeSubjects(g);
+      for (var k = 0; k < subs.length; k++) {
+        var sub = subs[k];
+        if (sub.cls === "Done") {
+          state.inbox.backoff = INBOX_BACKOFF_MIN;
+          setInboxState("on", "live");
+          logEvent("inbox", "entrained to chat inbox", doc);
+          /* first connect seeds the watermark; reconnects catch up */
+          var caught = await syncInbox();
+          if (caught.length) { notifyIncoming(caught); refreshChatTabs(); }
+        } else if (sub.cls === "Vibration") {
+          var seq = litOf(g, sub.s, R + "seq");
+          logEvent("vibration", "chat inbox seq " + (seq === null ? "?" : seq), doc);
+          var fresh = await syncInbox();
+          notifyIncoming(fresh);
+          refreshChatTabs();
+        } else if (sub.cls === "Denied") {
+          throw new Error("entrain denied: " + (litOf(g, sub.s, R + "reason") || ""));
+        } else if (sub.cls === "Error") {
+          throw new Error("entrain error [" + (litOf(g, sub.s, R + "code") || "?") + "] " +
+            (litOf(g, sub.s, R + "reason") || ""));
+        }
+      }
+    }
+  } finally {
+    ctrl.abort();
+    state.inbox.ctrl = null;
+  }
+}
+
+/* ---- notification pipeline ----------------------------------------- */
+function loadMuted() {
+  try { return typeof localStorage !== "undefined" && localStorage.getItem("rsntr_mute") === "1"; }
+  catch (e) { return false; }
+}
+/* suppressed only while the page is visible+focused AND that chat is open */
+function chatTabActive(scope) {
+  if (document.visibilityState !== "visible" || !document.hasFocus()) return false;
+  if (!$("panel-work").classList.contains("active")) return false;
+  return state.ct.tabs.some(function (t) {
+    return t.kind === "chat" && t.contact.scope === scope && t.pane.classList.contains("active");
+  });
+}
+function clearUnread(scope) {
+  if (state.notif.unread.delete(scope)) renderContacts();
+}
+function clearActiveChatUnread() {
+  if (!$("panel-work").classList.contains("active")) return;
+  var t = state.ct.tabs.find(function (x) { return x.kind === "chat" && x.pane.classList.contains("active"); });
+  if (t && t.contact.scope !== null) clearUnread(t.contact.scope);
+}
+function notifyIncoming(fresh) {
+  if (!fresh.length) return;
+  var audible = false, unknown = false;
+  fresh.forEach(function (m) {
+    logEvent("chat", "message from " + chatLabelFor(m.sender) +
+      (m.scope && m.scope.startsWith(CHAT_ROOM_PREFIX) ? " in " + chatLabelFor(m.scope) : ""));
+    if (chatTabActive(m.scope)) return;
+    state.notif.unread.add(m.scope);
+    audible = true;
+    notifyDesktop(m);
+    if (!state.ct.contacts.some(function (c) { return c.scope === m.scope; })) unknown = true;
+  });
+  renderContacts();
+  if (audible) playChime();
+  if (unknown) loadContacts();
+}
+
+/* WebAudio two-tone chime; the context needs a user gesture to run */
+function ensureAudio() {
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!state.notif.audio) {
+    try { state.notif.audio = new AC(); } catch (e) { return null; }
+  }
+  if (state.notif.audio.state === "suspended") {
+    var p = state.notif.audio.resume();
+    if (p && p.catch) p.catch(function () { /* needs a gesture */ });
+  }
+  return state.notif.audio;
+}
+function playChime() {
+  if (state.notif.muted) return;
+  var ctx = ensureAudio();
+  if (!ctx || ctx.state !== "running") return;
+  var t0 = ctx.currentTime;
+  [[880, 0], [660, 0.09]].forEach(function (tone) {
+    var o = ctx.createOscillator(), gn = ctx.createGain();
+    o.type = "sine";
+    o.frequency.value = tone[0];
+    var s = t0 + tone[1];
+    gn.gain.setValueAtTime(0.0001, s);
+    gn.gain.linearRampToValueAtTime(0.18, s + 0.015);
+    gn.gain.exponentialRampToValueAtTime(0.0001, s + 0.16);
+    o.connect(gn);
+    gn.connect(ctx.destination);
+    o.start(s);
+    o.stop(s + 0.18);
+  });
+}
+function renderMuteBtn() {
+  var b = $("nt-mute");
+  b.textContent = "sound: " + (state.notif.muted ? "off" : "on");
+  b.classList.toggle("on", !state.notif.muted);
+}
+function toggleMute() {
+  state.notif.muted = !state.notif.muted;
+  try { localStorage.setItem("rsntr_mute", state.notif.muted ? "1" : "0"); } catch (e) { /* private mode */ }
+  renderMuteBtn();
+  if (!state.notif.muted) playChime(); /* audible preview; the click is the unlock gesture */
+}
+
+/* "turtle: on" expands the raw turtle on every new log line */
+function loadLogTtl() {
+  try { return typeof localStorage !== "undefined" && localStorage.getItem("rsntr_log_ttl") === "1"; }
+  catch (e) { return false; }
+}
+function renderTtlBtn() {
+  var b = $("ev-ttl");
+  b.textContent = "turtle: " + (state.logTtl ? "on" : "off");
+  b.classList.toggle("on", state.logTtl);
+}
+function toggleLogTtl() {
+  state.logTtl = !state.logTtl;
+  try { localStorage.setItem("rsntr_log_ttl", state.logTtl ? "1" : "0"); } catch (e) { /* private mode */ }
+  renderTtlBtn();
+}
+
+/* Notification API; tag per scope so bursts collapse to one card */
+function renderDeskBtn() {
+  $("nt-desk").style.display =
+    (typeof Notification !== "undefined" && Notification.permission === "default") ? "" : "none";
+}
+function requestDesktop() {
+  if (typeof Notification === "undefined") return;
+  Notification.requestPermission().then(renderDeskBtn, renderDeskBtn);
+}
+function notifyDesktop(m) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  var title = chatLabelFor(m.sender);
+  if (m.scope && m.scope.startsWith(CHAT_ROOM_PREFIX)) title += " in " + chatLabelFor(m.scope);
+  try {
+    var n = new Notification(title, { body: truncBody(m.body, 120), tag: "rsntr-chat-" + m.scope });
+    n.onclick = function () {
+      try { window.focus(); } catch (e) { /* best effort */ }
+      var c = state.ct.contacts.find(function (x) { return x.scope === m.scope; });
+      if (!c) c = { scope: m.scope, kind: m.scope.startsWith(CHAT_ROOM_PREFIX) ? "room" : "peer",
+                    label: chatLabelFor(m.scope),
+                    host: (state.chat.rooms.get(m.scope) || {}).host || null };
+      openContactTab("chat", c);
+      n.close();
+    };
+  } catch (e) { /* constructor throws where only service-worker notifications exist */ }
+}
+
+/* ---- the door watch: a peer's bell rings this console --------------- */
+/* Any peer may expose the well-known Sympathetic point urn:door:ringing
+   (a door station publishing its bell, M13). One entrainment per peer,
+   started once contacts are known; a peer without a door refuses the
+   point, which ends that watch quietly. The ring is console-wide on
+   purpose: a doorbell you only hear while the right panel happens to be
+   open is not a doorbell. */
+var DOOR_POINT = "urn:door:ringing";
+var DOOR_CALL_SQL =
+  "SELECT call_id, state FROM door_calls ORDER BY at DESC, call_id DESC LIMIT 1";
+
+function doorWatchAll() {
+  if (!state.door) state.door = { watching: {}, lastCall: {}, bar: null, timer: null };
+  (state.ct.contacts || []).forEach(function (c) {
+    if (c.kind !== "peer" || !c.scope || state.door.watching[c.scope]) return;
+    state.door.watching[c.scope] = true;
+    doorWatch(c);
+  });
+}
+
+async function doorWatch(contact) {
+  var peer = contact.scope;
+  try {
+    var res = await postFrames("/entrain" + peerSuffix(peer), [entrainDoc(DOOR_POINT)]);
+    for await (var doc of readFrames(res.body)) {
+      var g = graphIndex(parseTurtle(doc));
+      var subs = envelopeSubjects(g);
+      for (var k = 0; k < subs.length; k++) {
+        var cls = subs[k].cls;
+        if (cls === "Vibration") doorCheck(contact);
+        else if (cls === "Denied" || cls === "Error") {
+          /* no door here, or not ours to hear: stop watching quietly */
+          delete state.door.watching[peer];
+          return;
+        }
+      }
+    }
+  } catch (e) { /* the connection ended; re-arm below */ }
+  delete state.door.watching[peer];
+  setTimeout(function () {
+    var still = (state.ct.contacts || []).some(function (c) { return c.scope === peer; });
+    if (still && !state.door.watching[peer]) {
+      state.door.watching[peer] = true;
+      doorWatch(contact);
+    }
+  }, 15000);
+}
+
+async function doorCheck(contact) {
+  try {
+    var out = await runEnvelope("Query", "sql-sqlite", DOOR_CALL_SQL, null, contact.scope);
+    var row = (out.rows || [])[0];
+    if (!row) return;
+    var callId = row.cells["call_id"] ? row.cells["call_id"].v : null;
+    var st = row.cells["state"] ? row.cells["state"].v : null;
+    if (!callId) return;
+    if (st === "ringing") {
+      if (state.door.lastCall[contact.scope] === callId) return;
+      state.door.lastCall[contact.scope] = callId;
+      doorRing(contact);
+    } else {
+      /* answered or ended, here or on another console */
+      doorRingClear();
+    }
+  } catch (e) { /* no read grant on door_calls: nothing to show */ }
+}
+
+function doorRingClear() {
+  if (!state.door) return;
+  if (state.door.timer) { clearTimeout(state.door.timer); state.door.timer = null; }
+  if (state.door.bar) { state.door.bar.remove(); state.door.bar = null; }
+}
+
+function doorRing(contact) {
+  logEvent("door", "the door bell at " + ctLabelForContact(contact) + " is ringing");
+  playChime();
+  setTimeout(playChime, 900);
+  setTimeout(playChime, 1800);
+  if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+    try {
+      var n = new Notification("Someone is at the door", {
+        body: ctLabelForContact(contact),
+        tag: "rsntr-door-" + contact.scope
+      });
+      n.onclick = function () {
+        try { window.focus(); } catch (e) { /* best effort */ }
+        doorAnswer(contact);
+        n.close();
+      };
+    } catch (e) { /* notification constructor unavailable */ }
+  }
+  doorRingClear();
+  var bar = document.createElement("div");
+  bar.className = "doorbar";
+  bar.innerHTML = '<span>someone is at the door: ' + esc(ctLabelForContact(contact)) +
+    '</span><button class="d-answer">answer</button><button class="d-dismiss">dismiss</button>';
+  document.body.appendChild(bar);
+  state.door.bar = bar;
+  bar.querySelector(".d-dismiss").addEventListener("click", doorRingClear);
+  bar.querySelector(".d-answer").addEventListener("click", function () {
+    doorRingClear();
+    doorAnswer(contact);
+  });
+  state.door.timer = setTimeout(doorRingClear, 45000);
+}
+
+/* Answering opens that peer's projection and mounts its hologram, which
+   is where seeing, hearing, and talking to the door live. */
+function doorAnswer(contact) {
+  openContactTab("proj", contact);
+  var tab = state.ct.tabs.find(function (t) {
+    return t.kind === "proj" && t.contact && t.contact.scope === contact.scope;
+  });
+  if (!tab) return;
+  var tries = 0;
+  var wait = setInterval(function () {
+    tries++;
+    var pt = (tab.points || []).find(function (p) { return p.kind === "hologram"; });
+    if (pt) { clearInterval(wait); activatePoint(tab, pt); }
+    else if (tries > 40) clearInterval(wait);
+  }, 250);
+}
+
+/* ---- contacts detail: the profile pane (master-detail right side) --- */
+/* One selected contact at a time; peer details fetch /api/peer for the
+   local row + the peer's wire hello, and embed the ROOT projection via
+   the same pseudo-tab pattern the tab builders already support (a tab
+   object is just {kind, contact, pane, cleanup}). */
+
+function ctAvaSeed(c) {
+  if (c.kind === "local") return (state.meta && state.meta.node_id) || "local";
+  return c.scope === null ? "@all" : c.scope;
+}
+function ctSelKey(c) { return c.kind + ":" + (c.scope === null ? "@all" : c.scope); }
+
+/* tear down every embedded pseudo-tab and reset the pane */
+function ctDetailCleanup() {
+  state.ct.embeds.forEach(function (t) { if (t.cleanup) t.cleanup(); });
+  state.ct.embeds = [];
+  $("ct-detail").innerHTML = '<div class="mini ct-hint">select a contact</div>';
+}
+function ctShowList() {
+  $("panel-contacts").classList.remove("detail-open");
+  state.ct.sel = null;
+  ctDetailCleanup();
+  renderContacts();
+}
+/* contacts changed underneath the detail: drop it when the selected
+   contact vanished; otherwise leave the embeds alone (a rebuild would
+   damp entrainments for nothing) */
+function ctDetailInvalidate() {
+  if (!state.ct.sel) return;
+  var still = state.ct.contacts.some(function (c) { return ctSelKey(c) === state.ct.sel; });
+  if (!still) ctShowList();
+}
+
+function selectContact(c) {
+  ctDetailCleanup();
+  state.ct.sel = ctSelKey(c);
+  renderContacts();
+  $("panel-contacts").classList.add("detail-open");
+  if (c.kind === "peer") renderPeerDetail(c);
+  else if (c.kind === "local") renderLocalDetail(c);
+  else if (c.kind === "room") renderRoomDetail(c);
+  else renderAllDetail(c);
+}
+
+function ctBackRow() {
+  return '<div class="row ct-backrow"><button class="ghost ct-back">back to contacts</button></div>';
+}
+function ctWireBack(root) {
+  var b = root.querySelector(".ct-back");
+  if (b) b.addEventListener("click", ctShowList);
+}
+function ctCopyBtn(root, sel, text) {
+  var b = root.querySelector(sel);
+  if (!b) return;
+  b.addEventListener("click", function () {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        b.textContent = "copied";
+        setTimeout(function () { b.textContent = "copy"; }, 1200);
+      }, function () { /* clipboard unavailable */ });
+    }
+  });
+}
+
+/* header + sections shared by peer/local */
+function ctDetailScaffold(c, opts) {
+  var name = opts.name, sub = opts.sub || "";
+  return ctBackRow() +
+    '<div class="ct-head">' +
+      '<span class="ct-ava">' + identiconSvg(ctAvaSeed(c), 44) + "</span>" +
+      '<div class="ct-title">' +
+        '<div class="ct-name">' + esc(name) + (opts.editableName ? ' <span class="mini">rename</span>' : "") + "</div>" +
+        (sub ? '<div class="ct-id">' + esc(sub) + ' <button class="ghost ct-copy">copy</button></div>' : "") +
+        '<div class="ct-presence"><span class="led"></span><span class="ct-pres-txt">checking...</span></div>' +
+      "</div>" +
+    "</div>" +
+    '<div class="row ct-actions"></div>' +
+    '<div class="status ct-dstatus"></div>' +
+    '<dl class="ct-info"></dl>' +
+    '<div class="ct-sec ct-mods-sec" style="display:none">modulations</div>' +
+    '<div class="ct-chips"></div><div class="ct-modrun"></div>' +
+    '<div class="ct-sec">projection</div><div class="ct-embed"></div>';
+}
+function ctStatus(root, msg, kind) {
+  var el = root.querySelector(".ct-dstatus");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.className = "status ct-dstatus" + (kind ? " " + kind : "");
+}
+function ctInfoRow(dl, label, value, cls) {
+  var dt = document.createElement("dt");
+  dt.textContent = label;
+  var dd = document.createElement("dd");
+  if (cls) dd.className = cls;
+  dd.textContent = value;
+  dl.appendChild(dt);
+  dl.appendChild(dd);
+  return dd;
+}
+function ctActionBtn(row, label, primary, onClick) {
+  var b = document.createElement("button");
+  b.className = primary ? "act" : "ghost";
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  row.appendChild(b);
+  return b;
+}
+function ctPresence(root, cls, text, title) {
+  var led = root.querySelector(".ct-presence .led");
+  var txt = root.querySelector(".ct-pres-txt");
+  if (!led || !txt) return;
+  led.className = "led" + (cls ? " " + cls : "");
+  txt.textContent = text;
+  if (title) txt.title = title;
+}
+function ctLastSeenWording(lastSeen) {
+  return lastSeen ? "last seen " + String(lastSeen).slice(0, 16).replace("T", " ") : "never seen";
+}
+
+/* the root projection embedded in place: a pseudo tab drives the real
+   projection browser (drill-down, forms, holograms, entrainment) */
+function embedProjection(c, container) {
+  var tab = { id: "ctd-proj-" + (state.ct.nextId++), kind: "proj", contact: c,
+              btn: null, pane: container, cleanup: null };
+  state.ct.embeds.push(tab);
+  buildProjTab(tab);
+  return tab;
+}
+
+function renderPeerDetail(c) {
+  var root = $("ct-detail");
+  root.innerHTML = ctDetailScaffold(c, { name: c.label, sub: c.scope, editableName: true });
+  ctWireBack(root);
+  ctCopyBtn(root, ".ct-copy", c.scope);
+  root.querySelector(".ct-name").addEventListener("click", function () { ctPetnameEdit(c, root); });
+
+  var acts = root.querySelector(".ct-actions");
+  if (chatScaffolded()) {
+    ctActionBtn(acts, "chat", true, function () { openContactTab("chat", c); });
+  }
+  ctActionBtn(acts, "open projection tab", false, function () { openContactTab("proj", c); });
+
+  peerInfoFetch(c, root);
+  embedProjection(c, root.querySelector(".ct-embed"));
+}
+
+/* /api/peer: the _peers row + the peer's wire hello (mods, hint).
+   reachable is optimistic within the transport's 10s idle window; the
+   embedded projection fetch running in parallel is the honest probe. */
+async function peerInfoFetch(c, root) {
+  try {
+    var j = await apiJson("/api/peer/" + encodeURIComponent(c.scope));
+    if (state.ct.sel !== ctSelKey(c) || !root.isConnected) return;
+    if (!j.ok) {
+      ctPresence(root, "", ctLastSeenWording(null));
+      ctStatus(root, j.error && j.error.code === "not-found"
+        ? "not in _peers on this node" : "peer info failed", "warn");
+      return;
+    }
+    var p = j.peer || {}, live = j.live;
+    if (live && live.reachable) ctPresence(root, "on", "reachable");
+    else if (live) ctPresence(root, "err", "unreachable; " + ctLastSeenWording(p.last_seen), live.error || "");
+    else ctPresence(root, "", ctLastSeenWording(p.last_seen));
+
+    var dl = root.querySelector(".ct-info");
+    dl.innerHTML = "";
+    ctInfoRow(dl, "added", p.added_at || "-");
+    ctInfoRow(dl, "last seen", p.last_seen ? ctLastSeenWording(p.last_seen).replace("last seen ", "") : "never (presence beacons only)");
+    ctInfoRow(dl, "addresses", (p.addrs && p.addrs.length) ? p.addrs.join("  ") : "-");
+    var notes = ctInfoRow(dl, "notes", p.notes || "add a note", "editable");
+    notes.title = "click to edit";
+    notes.addEventListener("click", function () { ctNotesEdit(c, root, p.notes || ""); });
+    if (live && live.hint) {
+      ctInfoRow(dl, "hint", live.hint);
+    }
+    renderModChips(c, root, (live && live.mods) || []);
+  } catch (err) {
+    if (err.message !== "unauthorized" && root.isConnected) {
+      ctStatus(root, "peer info failed: " + err.message, "err");
+    }
+  }
+}
+
+/* one chip per advertised modulation; chat/projection route to their
+   surfaces, anything else opens the inline runner - the generic way to
+   talk to any mod a peer serves */
+function renderModChips(c, root, mods) {
+  var box = root.querySelector(".ct-chips");
+  if (!box || !mods.length) return;
+  root.querySelector(".ct-mods-sec").style.display = "";
+  box.innerHTML = "";
+  mods.forEach(function (m) {
+    var chip = document.createElement("button");
+    chip.className = "chip";
+    chip.textContent = m;
+    chip.addEventListener("click", function () {
+      if (m === "chat" && chatScaffolded()) { openContactTab("chat", c); return; }
+      if (m === "projection") {
+        var embed = root.querySelector(".ct-embed");
+        if (embed) embed.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      var run = root.querySelector(".ct-modrun");
+      var open = chip.classList.toggle("on");
+      box.querySelectorAll(".chip").forEach(function (x) { if (x !== chip) x.classList.remove("on"); });
+      if (open) modRunner(c, m, run);
+      else run.innerHTML = "";
+    });
+    box.appendChild(chip);
+  });
+}
+
+/* the inline mod runner: one signal, optional comma params, results
+   rendered with the same collectors the projection invoker uses */
+function modRunner(c, mod, host) {
+  host.innerHTML =
+    '<fieldset><legend>' + esc(mod) + "</legend>" +
+    '<div class="row">' +
+      '<select class="mr-kind" style="width:auto"><option>Query</option><option>Execute</option></select>' +
+      '<input type="text" class="mr-signal" style="flex:1" placeholder="signal (empty often means the default; try the help mod for guidance)">' +
+      '<button class="act mr-run">run</button>' +
+    "</div>" +
+    '<div class="row"><label class="mini" style="flex:1">params (comma separated, optional) ' +
+      '<input type="text" class="mr-params"></label></div>' +
+    '<div class="status mr-status"></div><div class="mr-out"></div></fieldset>';
+  var status = function (msg, kind) {
+    var el = host.querySelector(".mr-status");
+    el.textContent = msg || "";
+    el.className = "status mr-status" + (kind ? " " + kind : "");
+  };
+  var run = async function () {
+    var cls = host.querySelector(".mr-kind").value;
+    var signal = host.querySelector(".mr-signal").value;
+    var raw = host.querySelector(".mr-params").value.trim();
+    var params = raw === "" ? null : raw.split(",").map(function (p) {
+      var v = p.trim();
+      return /^[+-]?\d+(\.\d+)?$/.test(v) ? v : ttlStr(v);
+    });
+    var peer = c.kind === "local" ? "" : c.scope;
+    status("running " + mod + "...");
+    var out = host.querySelector(".mr-out");
+    out.innerHTML = "";
+    try {
+      var res = await runEnvelope(cls, mod, signal, params, peer);
+      var bad = outcomeStatus(res);
+      if (bad) { status(bad.text, bad.kind); return; }
+      if (res.columns) {
+        var rows = res.rows.map(function (row) {
+          return res.columns.map(function (col) { return cellOfTerm(row.cells[col]); });
+        });
+        renderGrid(out, res.columns, rows);
+      } else if (res.graphTtl.length) {
+        renderGraphOut(out, graphPayloadTriples(res.graphTtl), graphPayloadTtl(res.graphTtl), null);
+      } else if (res.help) {
+        out.innerHTML = '<pre class="out">' + esc(res.help.text) + "</pre>";
+      } else if (res.generic.length) {
+        var holo = hologramFromGeneric(res);
+        if (holo !== null) {
+          var tab = { id: "ctd-mod-" + (state.ct.nextId++), kind: "proj", contact: c,
+                      btn: null, pane: out, holo: null, cleanup: null };
+          state.ct.embeds.push(tab);
+          mountHologram(tab, out, peer, mod, holo);
+          tab.cleanup = function () { if (tab.holo) { tab.holo.teardown(); tab.holo = null; } };
+        } else {
+          out.innerHTML = '<pre class="out">' +
+            esc(res.generic.map(function (x) { return x.doc; }).join("\n\n")) + "</pre>";
+        }
+      }
+      var d = res.done || {};
+      var bits = [];
+      if (d.rowCount !== null && d.rowCount !== undefined) bits.push(d.rowCount + " row(s)");
+      if (d.affectedRows !== null && d.affectedRows !== undefined) bits.push("affected " + d.affectedRows);
+      status("done" + (bits.length ? ": " + bits.join(", ") : ""), "ok");
+    } catch (err) {
+      if (err.message !== "unauthorized") status("request failed: " + err.message, "err");
+    }
+  };
+  host.querySelector(".mr-run").addEventListener("click", run);
+  host.querySelector(".mr-signal").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") run();
+  });
+  host.querySelector(".mr-signal").focus();
+}
+
+function ctPetnameEdit(c, root) {
+  var el = root.querySelector(".ct-name");
+  var cur = c.label || "";
+  el.innerHTML = '<input type="text" class="ct-name-input" style="width:14rem">';
+  var inp = el.querySelector(".ct-name-input");
+  inp.value = cur;
+  inp.focus();
+  var commit = async function () {
+    var v = inp.value.trim();
+    el.textContent = v || c.label;
+    if (v === cur || c.kind !== "peer") return;
+    try {
+      await chatSql("UPDATE _peers SET name = ?1 WHERE endpoint_id = ?2",
+        [v === "" ? null : v, c.scope]);
+      await loadContacts();
+      var again = state.ct.contacts.find(function (x) { return ctSelKey(x) === state.ct.sel; });
+      if (again) el.innerHTML = esc(again.label) + ' <span class="mini">rename</span>';
+    } catch (err) {
+      ctStatus(root, "rename failed: " + err.message, "err");
+    }
+  };
+  inp.addEventListener("keydown", function (e) { if (e.key === "Enter") inp.blur(); });
+  inp.addEventListener("blur", commit);
+}
+function ctNotesEdit(c, root, cur) {
+  var v = prompt("notes for " + c.label, cur);
+  if (v === null) return;
+  chatSql("UPDATE _peers SET notes = ?1 WHERE endpoint_id = ?2",
+    [v.trim() === "" ? null : v.trim(), c.scope]).then(function () {
+      peerInfoFetch(c, root);
+    }, function (err) {
+      ctStatus(root, "saving notes failed: " + err.message, "err");
+    });
+}
+
+function renderLocalDetail(c) {
+  var root = $("ct-detail");
+  var id = (state.meta && state.meta.node_id) || "";
+  root.innerHTML = ctDetailScaffold(c, { name: "this node", sub: id });
+  ctWireBack(root);
+  ctCopyBtn(root, ".ct-copy", id);
+  ctPresence(root, "on", "serving");
+
+  var acts = root.querySelector(".ct-actions");
+  ctActionBtn(acts, "open projection tab", false, function () { openContactTab("proj", c); });
+  ctActionBtn(acts, "tables", false, function () { openViewTab("tables"); });
+
+  var dl = root.querySelector(".ct-info");
+  if (state.meta) {
+    ctInfoRow(dl, "envelope", state.meta.ver || "-");
+    ctInfoRow(dl, "tables", String((state.tables || []).length));
+  }
+  renderModChips(c, root, (state.meta && state.meta.mods) || []);
+  embedProjection(c, root.querySelector(".ct-embed"));
+}
+
+function renderRoomDetail(c) {
+  var root = $("ct-detail");
+  root.innerHTML = ctBackRow() +
+    '<div class="ct-head">' +
+      '<span class="ct-ava">' + identiconSvg(ctAvaSeed(c), 44) + "</span>" +
+      '<div class="ct-title">' +
+        '<div class="ct-name">' + esc(c.label) + "</div>" +
+        '<div class="ct-id">' + esc(c.scope) + "</div>" +
+        (c.host ? '<div class="mini">hosted by ' + esc(chatLabelFor(c.host)) + "</div>" : "") +
+      "</div></div>" +
+    '<div class="row ct-actions"></div><div class="status ct-dstatus"></div>';
+  ctWireBack(root);
+  ctActionBtn(root.querySelector(".ct-actions"), "chat", true, function () {
+    openContactTab("chat", c);
+  });
+}
+
+function renderAllDetail(c) {
+  var root = $("ct-detail");
+  root.innerHTML = ctBackRow() +
+    '<div class="ct-head">' +
+      '<span class="ct-ava">' + identiconSvg("@all", 44) + "</span>" +
+      '<div class="ct-title"><div class="ct-name">(all messages)</div>' +
+      '<div class="mini">a read-only view over every chat scope</div></div></div>' +
+    '<div class="row ct-actions"></div>';
+  ctWireBack(root);
+  ctActionBtn(root.querySelector(".ct-actions"), "open messages", true, function () {
+    openContactTab("chat", c);
+  });
+}
+
+/* ---- boot --------------------------------------------------------- */
+function boot() {
+  initTabs();
+  $("cmp-run").addEventListener("click", runCompose);
+  $("cmp-text").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runCompose();
+  });
+  $("cmp-text").addEventListener("input", updateLangChip);
+  $("cmp-lang").addEventListener("click", cycleLangOverride);
+  $("tbl-refresh").addEventListener("click", loadMeta);
+  $("csv-exp").addEventListener("click", exportCsv);
+  $("csv-imp").addEventListener("click", importCsv);
+  $("ct-refresh").addEventListener("click", function () {
+    loadMeta().then(loadContacts).catch(function () { loadContacts(); });
+  });
+  $("nt-mute").addEventListener("click", toggleMute);
+  /* the button lives inside the details summary; keep its click from
+     toggling the drawer */
+  $("ev-ttl").addEventListener("click", function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    toggleLogTtl();
+  });
+  $("nt-desk").addEventListener("click", requestDesktop);
+  initContacts();
+  renderMuteBtn();
+  renderTtlBtn();
+  renderDeskBtn();
+  /* autoplay policy: create/resume the AudioContext on the first gesture */
+  var unlock = function () { ensureAudio(); };
+  document.addEventListener("pointerdown", unlock, { once: true });
+  document.addEventListener("keydown", unlock, { once: true });
+  window.addEventListener("focus", clearActiveChatUnread);
+  $("tok-go").addEventListener("click", function () {
+    var t = $("tok-input").value.trim();
+    if (!t) return;
+    installSession(t).then(function (ok) {
+      if (ok) { haveToken(t); start(); }
+      else { needToken("token rejected; paste the one printed by rsntr serve"); }
+    });
+  });
+  $("tok-input").addEventListener("keydown", function (e) { if (e.key === "Enter") $("tok-go").click(); });
+  /* install-only service worker; absent on non-secure origins and in
+     WebViews, and nothing depends on it */
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(function () {});
+  }
+  /* the session POST must resolve before start(): the /feed EventSource
+     can only authenticate via the cookie */
+  initAuth().then(function (ok) {
+    if (ok) start();
+    else needToken();
+  });
+}
+function start() {
+  /* a deep link (/o/...) lands directly in its view; otherwise contacts
+     is the landing tab. Hex and local links open immediately; petnames
+     wait for the contact list (which needs meta first). */
+  var route = parseRoute();
+  if (route && routeIsImmediate(route)) openRoute(route);
+  else if (!route) openViewTab("contacts");
+  loadMeta().then(function () {
+    loadContacts().then(function () {
+      if (route && !routeIsImmediate(route)) openRoute(route);
+    });
+    startInbox();
+  }).catch(function (err) {
+    if (err.message !== "unauthorized") setStatus("tbl-status", "meta failed: " + err.message, "err");
+  });
+  openFeed();
+  updateLangChip();
+}
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+}
+/* exports for the node-based static test harness */
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { parseTurtle: parseTurtle, graphIndex: graphIndex, listItems: listItems,
+    typedSubjects: typedSubjects, envelopeSubjects: envelopeSubjects, objsOf: objsOf, obj1: obj1,
+    litOf: litOf, encodeFrame: encodeFrame, readFrames: readFrames, ttlStr: ttlStr, ulid: ulid,
+    reqDoc: reqDoc, entrainDoc: entrainDoc, ntCell: ntCell, cellOfTerm: cellOfTerm,
+    graphPayloadTtl: graphPayloadTtl, collectResponse: collectResponse, parsePoint: parsePoint,
+    chatMessageDoc: chatMessageDoc, chatExecuteDoc: chatExecuteDoc, detectLang: detectLang,
+    nextBackoff: nextBackoff, truncBody: truncBody, loadMuted: loadMuted,
+    graphPayloadTriples: graphPayloadTriples, lensGroups: lensGroups, lensFor: lensFor,
+    identiconSvg: identiconSvg, mediaWatchCmd: mediaWatchCmd, readMediaHeader: readMediaHeader };
+}
+</script>
+</body>
+</html>

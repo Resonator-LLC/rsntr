@@ -1,0 +1,164 @@
+# rsntr projection vocabulary - capability discovery for the resonator network
+# Status: accepted, 2026-07-29. Supersedes the v2 POC ontology
+# (research/rsntr-sqlite3/docs/rsntr-projection.ttl); v3 namespace throughout.
+# Normative prose: projection-protocol.md (same directory).
+# Shaped on the W3C WoT Thing Description affordance triad (property/action/event)
+# and a flat SHACL-lite input model; native terms, no imported vocabularies.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix rsntr: <http://resonator.network/v3/rsntr#> .
+
+# ---------------------------------------------------------------------------
+# The projection - observer-relative capability surface
+# ---------------------------------------------------------------------------
+
+rsntr:Projection a rdfs:Class ;
+    rdfs:label "Projection" ;
+    rdfs:comment "The capability surface a node projects toward one observer: an ordered collection of ResonancePoints. Observer-relative by definition - computed against the same _policy the authenticator enforces, so a point the caller cannot invoke does not appear. Returned by the 'projection' modulation, one Projection graph per frame." .
+
+rsntr:offers a rdf:Property ;
+    rdfs:label "offers" ;
+    rdfs:comment "rdf:List of ResonancePoint IRIs in presentation order." ;
+    rdfs:domain rsntr:Projection .
+
+# ---------------------------------------------------------------------------
+# Resonance points - the three affordance kinds
+# ---------------------------------------------------------------------------
+
+rsntr:ResonancePoint a rdfs:Class ;
+    rdfs:label "ResonancePoint" ;
+    rdfs:comment "One thing the observer can couple with. Superclass of Excitable, Radiant, and Sympathetic; used bare for pure navigation entries that only carry rsntr:projects. Point IRIs are minted by the serving node and stable across fetches so clients can bookmark them. Clients ignore unknown subclasses and render the rdfs:label as an inert entry." .
+
+rsntr:Excitable a rdfs:Class ;
+    rdfs:subClassOf rsntr:ResonancePoint ;
+    rdfs:label "Excitable" ;
+    rdfs:comment "A point the observer drives; invoking it has effects (an action). Carries the request it invokes: rsntr:mod + rsntr:signal (positional binding via paramsOrder), or rsntr:signalTemplate, or rsntr:fires for pipeline-hosted nodes." .
+
+rsntr:Radiant a rdfs:Class ;
+    rdfs:subClassOf rsntr:ResonancePoint ;
+    rdfs:label "Radiant" ;
+    rdfs:comment "A point that emits; the observer reads it (a property). Without a coupling it is a zero-argument read the client may execute, poll, or render inline." .
+
+rsntr:Sympathetic a rdfs:Class ;
+    rdfs:subClassOf rsntr:ResonancePoint ;
+    rdfs:label "Sympathetic" ;
+    rdfs:comment "A point the observer entrains to; it vibrates when something happens (an event). Sympathetic resonance: this vibrates when that vibrates. A peer subscribes with rsntr:Entrain (projection-protocol.md sec 5)." .
+
+rsntr:projects a rdf:Property ;
+    rdfs:label "projects" ;
+    rdfs:comment "Path of a deeper projection, fetched with modulation 'projection' and this string as rsntr:signal. Paths are opaque and discovered-only: a client echoes them verbatim, never constructs one; convention is the projecting point's own IRI. The machine-readable analog of a help topic; also the fractal move - drilling into a point projects a deeper surface." ;
+    rdfs:domain rsntr:ResonancePoint ;
+    rdfs:range xsd:string .
+
+rsntr:icon a rdf:Property ;
+    rdfs:label "icon" ;
+    rdfs:comment "Rendering hint: icon name resolved against the client's theme icon catalog. A client MAY ignore it." ;
+    rdfs:domain rsntr:ResonancePoint ;
+    rdfs:range xsd:string .
+
+rsntr:role a rdf:Property ;
+    rdfs:label "role" ;
+    rdfs:comment "Rendering hint: 'default' or 'destructive'." ;
+    rdfs:domain rsntr:ResonancePoint ;
+    rdfs:range xsd:string .
+
+# ---------------------------------------------------------------------------
+# Coupling - the input contract of a point (flat SHACL-lite)
+# ---------------------------------------------------------------------------
+
+rsntr:Coupling a rdfs:Class ;
+    rdfs:label "Coupling" ;
+    rdfs:comment "The input contract of a point: what the observer must supply to couple with it. A teletype renders its Fields as sequential prompts; a GUI renders a form. Absent coupling means zero-argument." .
+
+rsntr:coupling a rdf:Property ;
+    rdfs:label "coupling" ;
+    rdfs:comment "Links an Excitable or Radiant to its Coupling." ;
+    rdfs:domain rsntr:ResonancePoint ;
+    rdfs:range rsntr:Coupling .
+
+rsntr:Field a rdfs:Class ;
+    rdfs:label "Field" ;
+    rdfs:comment "One named input in a Coupling. Modeled on sh:PropertyShape (path/datatype/minCount/in) but deliberately flat and minimal." .
+
+rsntr:field a rdf:Property ;
+    rdfs:label "field" ;
+    rdfs:comment "rdf:List of Fields in prompt order." ;
+    rdfs:domain rsntr:Coupling .
+
+rsntr:name a rdf:Property ;
+    rdfs:label "name" ;
+    rdfs:comment "Binding name of a Field; referenced by paramsOrder and by {name} placeholders in signalTemplate and fires." ;
+    rdfs:domain rsntr:Field ;
+    rdfs:range xsd:string .
+
+rsntr:datatype a rdf:Property ;
+    rdfs:label "datatype" ;
+    rdfs:comment "Expected datatype of a Field's value, as an xsd datatype IRI (e.g. xsd:string, xsd:integer)." ;
+    rdfs:domain rsntr:Field ;
+    rdfs:range rdfs:Datatype .
+
+rsntr:required a rdf:Property ;
+    rdfs:label "required" ;
+    rdfs:comment "Whether the Field must be supplied. Default false. An optional field left empty takes an rsntr:null slot in positional params." ;
+    rdfs:domain rsntr:Field ;
+    rdfs:range xsd:boolean .
+
+rsntr:default a rdf:Property ;
+    rdfs:label "default" ;
+    rdfs:comment "Prefill value for a Field." ;
+    rdfs:domain rsntr:Field .
+
+rsntr:oneOf a rdf:Property ;
+    rdfs:label "oneOf" ;
+    rdfs:comment "rdf:List of the allowed values for a Field. A teletype renders a numbered choice; a GUI renders a picker." ;
+    rdfs:domain rsntr:Field .
+
+# ---------------------------------------------------------------------------
+# Invocation bindings
+# (rsntr:mod and rsntr:signal are reused verbatim from the envelope
+#  vocabulary: a point carries the request it invokes.)
+# ---------------------------------------------------------------------------
+
+rsntr:paramsOrder a rdf:Property ;
+    rdfs:label "paramsOrder" ;
+    rdfs:comment "rdf:List of Field names in the positional-parameter order of rsntr:signal. The preferred binding: the client builds rsntr:params from field values, no string interpolation." ;
+    rdfs:domain rsntr:ResonancePoint .
+
+rsntr:signalTemplate a rdf:Property ;
+    rdfs:label "signalTemplate" ;
+    rdfs:comment "Statement template with {name} placeholders substituted from Field values. Fallback binding for modulations without parameter support; the client owns modulation-appropriate escaping. Prefer rsntr:signal + rsntr:paramsOrder." ;
+    rdfs:domain rsntr:ResonancePoint ;
+    rdfs:range xsd:string .
+
+rsntr:fires a rdf:Property ;
+    rdfs:label "fires" ;
+    rdfs:comment "URN template to fire into the node's event pipeline, {name} placeholders bound from the coupling or client context. The binding for pipeline-hosted (radio-style) nodes; corresponds to the superseded v2 antenna:onActivate (which spells placeholders %VAR%)." ;
+    rdfs:domain rsntr:Excitable ;
+    rdfs:range xsd:string .
+
+# ---------------------------------------------------------------------------
+# Entrainment - connection-scoped subscription to Sympathetic points
+# ---------------------------------------------------------------------------
+
+rsntr:Entrain a rdfs:Class ;
+    rdfs:label "Entrain" ;
+    rdfs:comment "Request to begin resonating with a Sympathetic point: a weakly coupled oscillator locking onto another's rhythm for as long as the coupling holds; the coupling is the connection. Passes the authenticator like any request; answered with Done (entrained), Denied, or Error 'point-unknown'. Connection-scoped: ends when the stream or connection closes." .
+
+rsntr:Vibration a rdfs:Class ;
+    rdfs:label "Vibration" ;
+    rdfs:comment "One vibration from an entrained Sympathetic point. Correlation skeleton: rsntr:id (which entrainment), rsntr:point, rsntr:seq (delivery order from 0), rsntr:at. The frame may carry arbitrary domain triples as payload. Vibrations are ticks, not a log: bursts may coalesce and nothing replays on reconnect; history lives in a Radiant." .
+
+rsntr:Damp a rdfs:Class ;
+    rdfs:label "Damp" ;
+    rdfs:comment "In-band request to end an entrainment early; damping is the physics of ending resonance. The node confirms with a Done and closes the stream. Closing the entrain stream damps implicitly." .
+
+rsntr:point a rdf:Property ;
+    rdfs:label "point" ;
+    rdfs:comment "The Sympathetic point an Entrain, Vibration, or Damp concerns." ;
+    rdfs:range rsntr:Sympathetic .
+
+<urn:rsntr:projection-changed> a rsntr:Sympathetic ;
+    rdfs:label "projection changed" ;
+    rdfs:comment "Well-known Sympathetic point a node SHOULD expose: vibrates whenever the caller's projection changes (policy change, points added or removed). Entrainable by this IRI without a prior projection fetch; listed in the root projection's offers." .

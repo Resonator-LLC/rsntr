@@ -1,0 +1,34 @@
+[package]
+name = "resonator-ffi"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[lib]
+name = "resonator_ffi"
+# staticlib for the iOS xcframework, cdylib for Android (and for
+# uniffi-bindgen's library mode on the host), lib for the Rust tests.
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+default = []
+# The uniffi-bindgen CLI (mobile/build-*.sh); host tooling only.
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+# No mods (extism/wasmtime) and no web (axum) on mobile targets.
+rsntr = { path = "../cli", default-features = false }
+resonator-node = { path = "../node" }
+resonator-protocol = { path = "../protocol" }
+resonator-transport = { path = "../transport" }
+anyhow = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+ulid = { workspace = true }
+uniffi = { workspace = true }

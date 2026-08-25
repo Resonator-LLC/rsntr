@@ -1,0 +1,22 @@
+[package]
+name = "resonator-node"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+resonator-protocol = { path = "../protocol" }
+resonator-transport = { path = "../transport" }
+resonator-sparql = { path = "../sparql" }
+resonator-authenticator = { path = "../authenticator" }
+rusqlite = { workspace = true }
+oxrdf = { workspace = true }
+oxttl = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+ulid = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

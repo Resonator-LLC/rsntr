@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+"use strict";
+
+// Launcher for the rsntr binary.
+//
+// The real executable lives in a per-platform package (rsntr-linux-x64 and
+// friends) declared as an optionalDependency. npm installs only the one
+// matching the host's os/cpu fields, so a user pulls down ~18MB rather than
+// every platform's binary. This shim finds it and hands over control.
+
+const { spawnSync } = require("child_process");
+
+const PLATFORMS = {
+  "linux-x64": "rsntr-linux-x64",
+  "linux-arm64": "rsntr-linux-arm64",
+  "darwin-x64": "rsntr-darwin-x64",
+  "darwin-arm64": "rsntr-darwin-arm64",
+  "win32-x64": "rsntr-win32-x64",
+};
+
+const key = `${process.platform}-${process.arch}`;
+const pkg = PLATFORMS[key];
+
+if (!pkg) {
+  console.error(
+    `rsntr: no prebuilt binary for ${key}.\n` +
+      `Supported: ${Object.keys(PLATFORMS).join(", ")}.\n` +
+      `Build from source instead: https://github.com/Resonator-LLC/rsntr`
+  );
+  process.exit(1);
+}
+
+const exe = process.platform === "win32" ? "rsntr.exe" : "rsntr";
+
+let binary;
+try {
+  binary = require.resolve(`${pkg}/bin/${exe}`);
+} catch {
+  // Reached when the optional dependency was skipped: --no-optional, a
+  // lockfile from another platform, or an install that partially failed.
+  // Say which package is missing, because "command not found" would not.
+  console.error(
+    `rsntr: the ${pkg} package is missing.\n` +
+      `It is an optional dependency and something skipped it.\n` +
+      `Try: npm install ${pkg}\n` +
+      `Or install without --no-optional.`
+  );
+  process.exit(1);
+}
+
+// spawnSync keeps this process alive as the child's parent so the exit code
+// and terminal stay correct for a long-running `rsntr serve`.
+const result = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });
+
+if (result.error) {
+  console.error(`rsntr: failed to run ${binary}: ${result.error.message}`);
+  process.exit(1);
+}
+
+// Killed by a signal: reproduce that rather than reporting a clean exit,
+// so shells and supervisors see what actually happened.
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+}
+
+process.exit(result.status === null ? 1 : result.status);

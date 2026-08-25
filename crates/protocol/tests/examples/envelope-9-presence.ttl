@@ -1,0 +1,4 @@
+[] a rsntr:Presence ;
+   rsntr:at "2026-07-23T09:15:00"^^xsd:dateTime ;
+   rsntr:status "around" ;
+   rsntr:endpoint "e00c36119fb26262a12a5571f918966caf0b4cefe3c72ed046a1c1bbf1cd63d9" .

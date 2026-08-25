@@ -1,0 +1,24 @@
+[package]
+name = "resonator-surfaces"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+resonator-protocol = { path = "../protocol" }
+resonator-transport = { path = "../transport" }
+resonator-node = { path = "../node" }
+rusqlite = { workspace = true }
+iroh = { workspace = true }
+iroh-gossip = { workspace = true }
+n0-future = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+oxrdf = { workspace = true }
+resonator-authenticator = { path = "../authenticator" }

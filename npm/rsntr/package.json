@@ -1,0 +1,35 @@
+{
+  "name": "rsntr",
+  "version": "0.0.0",
+  "description": "Peer-to-peer SQL, SPARQL, and chat over iroh. The rsntr console tool, comfortable for LLM agents and shell pipelines.",
+  "keywords": [
+    "p2p",
+    "sqlite",
+    "sparql",
+    "rdf",
+    "iroh",
+    "cli"
+  ],
+  "homepage": "https://github.com/Resonator-LLC/rsntr",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Resonator-LLC/rsntr.git"
+  },
+  "license": "MIT OR Apache-2.0",
+  "bin": {
+    "rsntr": "bin/rsntr"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "optionalDependencies": {
+    "rsntr-linux-x64": "0.0.0",
+    "rsntr-linux-arm64": "0.0.0",
+    "rsntr-darwin-x64": "0.0.0",
+    "rsntr-darwin-arm64": "0.0.0",
+    "rsntr-win32-x64": "0.0.0"
+  }
+}

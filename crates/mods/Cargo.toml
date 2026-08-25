@@ -1,0 +1,24 @@
+[package]
+name = "resonator-mods"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+resonator-authenticator = { path = "../authenticator" }
+resonator-node = { path = "../node" }
+resonator-protocol = { path = "../protocol" }
+resonator-mod-pdk = { path = "../pdk" }
+extism = { workspace = true }
+oxrdf = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+resonator-transport = { path = "../transport" }
+base64 = { workspace = true }

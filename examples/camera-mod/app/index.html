@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cameras</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #101418; color: #d8dee6; }
+  header { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px;
+           border-bottom: 1px solid #2a3340; }
+  header h1 { font-size: 15px; margin: 0; color: #7fd4a8; }
+  header .status { margin-left: auto; color: #5c6b7a; font-size: 12px; }
+  header .status.err { color: #e08a8a; }
+  main { display: flex; min-height: calc(100vh - 42px); }
+  nav { width: 13em; border-right: 1px solid #2a3340; padding: 10px 0; }
+  nav button { display: block; width: 100%; text-align: left; background: none;
+               border: none; color: #8fa3b8; font: inherit; padding: 7px 14px;
+               cursor: pointer; }
+  nav button:hover { color: #d8dee6; }
+  nav button.on { color: #d8dee6; background: #1b2430; border-left: 3px solid #7fd4a8;
+                  padding-left: 11px; }
+  #stage { flex: 1; padding: 12px; }
+  #stage video { width: 100%; max-height: 78vh; background: #000;
+                 border: 1px solid #2a3340; border-radius: 4px; }
+  .hintbox { color: #5c6b7a; padding: 24px 8px; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .row button { background: #1b2430; color: #d8dee6; border: 1px solid #2f3b4a;
+                border-radius: 4px; font: inherit; padding: 3px 10px; cursor: pointer; }
+  .row button.live { background: #7a2a2a; border-color: #e08a8a; color: #ffd7d7; }
+  .mini { color: #5c6b7a; font-size: 12px; }
+  .ringbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+             display: flex; gap: 12px; align-items: center; justify-content: center;
+             background: #7a2a2a; color: #ffd7d7; padding: 10px 14px;
+             border-bottom: 1px solid #e08a8a; }
+  .ringbar button { background: #101418; color: #d8dee6; border: 1px solid #2f3b4a;
+                    border-radius: 4px; font: inherit; padding: 4px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>cameras</h1>
+  <span class="status" id="status">connecting...</span>
+</header>
+<main>
+  <nav id="list"></nav>
+  <div id="stage"><div class="hintbox">pick a camera</div></div>
+</main>
+<script>
+"use strict";
+
+/* ---- rsntr shim (hologram-protocol.md sec 6, with the media lane) ---- */
+
+var rsntr = (function () {
+  var nextId = 1, pending = {}, medias = {}, entrains = {}, duplexes = {}, initRes;
+  var init = new Promise(function (res) { initRes = res; });
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || d.hg !== 1 || !d.m) return;
+    var m = d.m;
+    if (m.t === "init") { initRes(m); return; }
+    if (m.t === "result") {
+      var p = pending[m.id];
+      delete pending[m.id];
+      if (p) { if (m.ok) p.res(m.res); else p.rej(m.error || { code: "protocol-error" }); }
+      return;
+    }
+    var mh = medias[m.id];
+    if (mh) {
+      if (m.t === "media-header" && mh.header) mh.header(m.contentType);
+      else if (m.t === "media-data" && mh.data) mh.data(m.chunk);
+      else if (m.t === "media-end") { delete medias[m.id]; if (mh.end) mh.end(null); }
+      else if (m.t === "media-error") { delete medias[m.id]; if (mh.end) mh.end(m.error); }
+      return;
+    }
+    var en = entrains[m.id];
+    if (en) {
+      if (m.t === "vibration" && en.on) en.on(m);
+      else if (m.t === "damped") { delete entrains[m.id]; if (en.end) en.end(m.reason); }
+      return;
+    }
+    var dx = duplexes[m.id];
+    if (dx) {
+      if (m.t === "duplex-open" && dx.open) dx.open(m.contentType, m.accepts);
+      else if (m.t === "duplex-level" && dx.level) dx.level(m.peak);
+      else if (m.t === "duplex-data" && dx.data) dx.data(m.chunk);
+      else if (m.t === "duplex-ended") { delete duplexes[m.id]; if (dx.end) dx.end(null); }
+      else if (m.t === "duplex-error") { delete duplexes[m.id]; if (dx.end) dx.end(m.error); }
+    }
+  });
+  function post(m) { parent.postMessage({ hg: 1, m: m }, "*"); }
+  function req(t, signal, params) {
+    return new Promise(function (res, rej) {
+      var id = nextId++;
+      pending[id] = { res: res, rej: rej };
+      post({ t: t, id: id, signal: signal, params: params || [] });
+    });
+  }
+  post({ t: "ready" });
+  return {
+    init: init,
+    query: function (s, p) { return req("query", s, p); },
+    execute: function (s, p) { return req("execute", s, p); },
+    media: function (signal, handlers) {
+      var id = nextId++;
+      medias[id] = handlers;
+      post({ t: "media", id: id, signal: signal });
+      return { stop: function () { post({ t: "media-stop", id: id }); } };
+    },
+    entrain: function (point, on, end) {
+      var id = nextId++;
+      entrains[id] = { on: on, end: end };
+      post({ t: "entrain", id: id, point: point });
+      return { damp: function () { post({ t: "damp", id: id }); } };
+    },
+    duplex: function (signal, handlers) {
+      var id = nextId++;
+      duplexes[id] = handlers;
+      post({ t: "duplex", id: id, signal: signal });
+      return { stop: function () { post({ t: "duplex-stop", id: id }); } };
+    },
+  };
+})();
+
+/* ---- helpers ---- */
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function V(row, name) { var c = row.cells[name]; return c ? c.v : null; }
+function d0(id) { return document.getElementById(id); }
+var statusEl = document.getElementById("status");
+function status(msg, err) {
+  statusEl.textContent = msg || "";
+  statusEl.className = "status" + (err ? " err" : "");
+}
+
+/* ---- MSE player fed by the media lane ---- */
+
+var live = null; /* {handle, ms, sb, video, queue, name} */
+
+function stopLive() {
+  if (!live) return;
+  var l = live;
+  live = null;
+  if (l.handle) l.handle.stop();
+  try { if (l.ms && l.ms.readyState === "open") l.ms.endOfStream(); } catch (e) { /* closing */ }
+  if (l.video) { l.video.pause(); l.video.removeAttribute("src"); l.video.load(); }
+}
+
+function drain(l) {
+  if (!l.sb || l.sb.updating || !l.queue.length) return;
+  if (l.ms.readyState !== "open") return;
+  /* trim history so a long watch stays bounded */
+  var b = l.sb.buffered;
+  if (b.length && l.video.currentTime - b.start(0) > 90) {
+    try { l.sb.remove(b.start(0), l.video.currentTime - 30); return; } catch (e) { /* retry later */ }
+  }
+  try { l.sb.appendBuffer(l.queue.shift()); } catch (e) { status("append failed: " + e.message, true); }
+}
+
+/* ---- the talk lane: mic to the door speaker via the broker ---- */
+
+var talk = null; /* {handle, source} */
+
+function stopTalk() {
+  if (!talk) return;
+  var t = talk;
+  talk = null;
+  if (t.handle) t.handle.stop();
+  renderTalkBtn();
+}
+
+function startTalk(source) {
+  if (talk) { stopTalk(); return; }
+  var t = { handle: null, source: source };
+  talk = t;
+  renderTalkBtn();
+  status("opening talk...");
+  t.handle = rsntr.duplex(source, {
+    open: function () {
+      if (talk !== t) return;
+      status("talking - listening for your microphone...");
+      renderTalkBtn();
+    },
+    level: function (peak) {
+      if (talk !== t) return;
+      /* a blocked, muted, or dead microphone still streams zeroes, so
+         the call looks live while nothing is said: say so plainly */
+      if (peak < 32) {
+        status("no sound from your microphone (check its permission and input device)", true);
+      } else {
+        status("talking - you are live");
+      }
+    },
+    end: function (err) {
+      if (talk === t) {
+        talk = null;
+        renderTalkBtn();
+      }
+      if (err) status("talk [" + err.code + "] " + (err.reason || ""), true);
+      else status("talk ended");
+    },
+  });
+}
+
+function renderTalkBtn() {
+  var b = document.getElementById("talkbtn");
+  if (!b) return;
+  b.textContent = talk ? "hang up" : "talk";
+  b.className = talk ? "live" : "";
+}
+
+function openCamera(name, label, talkSource) {
+  stopLive();
+  var stage = document.getElementById("stage");
+  stage.innerHTML = "<video autoplay playsinline controls></video>" +
+    '<div class="row"><button id="stop">stop</button>' +
+    (talkSource ? '<button id="talkbtn">talk</button>' : "") +
+    '<button id="mutebtn">mute</button>' +
+    '<span class="mini" id="ct"></span></div>';
+  var video = stage.querySelector("video");
+  /* Sound on by default: a door camera you cannot hear is half a call.
+     Browsers only autoplay muted, so if the unmuted start is refused we
+     fall back and say how to turn it on rather than failing silently. */
+  video.muted = false;
+  video.volume = 1;
+  var l = { handle: null, ms: null, sb: null, video: video, queue: [], name: name };
+  live = l;
+  var renderMute = function () {
+    var b = d0("mutebtn");
+    if (b) b.textContent = video.muted ? "unmute" : "mute";
+  };
+  video.addEventListener("loadeddata", function () {
+    var p = video.play();
+    if (p && p.catch) {
+      p.catch(function () {
+        video.muted = true;
+        renderMute();
+        video.play().catch(function () { /* the user can press play */ });
+        status("sound is off (the browser blocked it) - press unmute", true);
+      });
+    }
+  });
+  video.addEventListener("volumechange", renderMute);
+  status("opening " + label + "...");
+  document.getElementById("stop").onclick = function () {
+    stopTalk();
+    stopLive();
+    stage.innerHTML = '<div class="hintbox">pick a camera</div>';
+    status("");
+    renderList();
+  };
+  document.getElementById("mutebtn").onclick = function () {
+    video.muted = !video.muted;
+    if (!video.muted) video.play().catch(function () { /* already playing */ });
+    renderMute();
+  };
+  renderMute();
+  if (talkSource) {
+    document.getElementById("talkbtn").onclick = function () {
+      if (talk) stopTalk();
+      else startTalk(talkSource);
+    };
+    renderTalkBtn();
+  }
+  l.handle = rsntr.media(name, {
+    header: function (ct) {
+      if (live !== l) return;
+      document.getElementById("ct").textContent = ct;
+      /* iPhones have no MediaSource; WebKit there ships
+         ManagedMediaSource (iOS 17.1+), same API for our use but it
+         wants disableRemotePlayback and srcObject attachment */
+      var MS = (typeof MediaSource !== "undefined") ? MediaSource
+             : (typeof ManagedMediaSource !== "undefined") ? ManagedMediaSource : null;
+      if (MS === null || !MS.isTypeSupported(ct)) {
+        status(ct + " is not MSE-playable in this browser", true);
+        l.handle.stop();
+        return;
+      }
+      l.ms = new MS();
+      var msUrl = null;
+      if (typeof MediaSource === "undefined") {
+        video.disableRemotePlayback = true;
+        try { video.srcObject = l.ms; } catch (e) { msUrl = URL.createObjectURL(l.ms); video.src = msUrl; }
+      } else {
+        msUrl = URL.createObjectURL(l.ms);
+        video.src = msUrl;
+      }
+      l.ms.addEventListener("sourceopen", function () {
+        if (msUrl) URL.revokeObjectURL(msUrl);
+        if (live !== l) return;
+        try { l.sb = l.ms.addSourceBuffer(ct); }
+        catch (e) { status("source buffer: " + e.message, true); return; }
+        l.sb.addEventListener("updateend", function () { drain(l); });
+        drain(l);
+        status("live: " + label);
+      });
+    },
+    data: function (chunk) {
+      if (live !== l) return;
+      l.queue.push(chunk);
+      drain(l);
+    },
+    end: function (err) {
+      if (live !== l) return;
+      if (err) status("[" + err.code + "] " + (err.reason || ""), true);
+      else status("stream ended: " + label);
+    },
+  });
+  /* stay near the live edge after stalls */
+  video.addEventListener("progress", function () {
+    var b = video.buffered;
+    if (b.length && b.end(b.length - 1) - video.currentTime > 6) {
+      video.currentTime = b.end(b.length - 1) - 0.5;
+    }
+  });
+  renderList();
+}
+
+/* ---- camera list ---- */
+
+var cameras = [];
+function renderList() {
+  var nav = document.getElementById("list");
+  nav.innerHTML = "";
+  cameras.forEach(function (c) {
+    var b = document.createElement("button");
+    b.textContent = c.label + (c.talk ? " *" : "");
+    if (live && live.name === c.name) b.className = "on";
+    b.onclick = function () { openCamera(c.name, c.label, c.talk); };
+    nav.appendChild(b);
+  });
+  if (!cameras.length) nav.innerHTML = '<div class="hintbox">no cameras</div>';
+}
+
+/* ---- the door call: ring banner + answer ---- */
+
+var ring = { banner: null, timer: null, tone: null, ac: null, lastCall: null };
+
+function ringTone(onoff) {
+  if (!onoff) {
+    if (ring.tone) { clearInterval(ring.tone); ring.tone = null; }
+    return;
+  }
+  if (ring.tone) return;
+  try { if (!ring.ac) ring.ac = new AudioContext(); } catch (e) { return; }
+  if (ring.ac.state === "suspended") { ring.ac.resume().catch(function () {}); }
+  var beep = function () {
+    if (!ring.ac) return;
+    var t0 = ring.ac.currentTime;
+    [880, 660].forEach(function (f, i) {
+      var o = ring.ac.createOscillator(), g = ring.ac.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + i * 0.22);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + i * 0.22 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.22 + 0.2);
+      o.connect(g); g.connect(ring.ac.destination);
+      o.start(t0 + i * 0.22); o.stop(t0 + i * 0.22 + 0.22);
+    });
+  };
+  beep();
+  ring.tone = setInterval(beep, 1600);
+}
+
+function clearRing() {
+  ringTone(false);
+  if (ring.timer) { clearTimeout(ring.timer); ring.timer = null; }
+  if (ring.banner) { ring.banner.remove(); ring.banner = null; }
+}
+
+function showRing(callId) {
+  if (ring.banner) return;
+  var doorCam = null;
+  for (var i = 0; i < cameras.length; i++) {
+    if (cameras[i].talk) { doorCam = cameras[i]; break; }
+  }
+  var el = document.createElement("div");
+  el.className = "ringbar";
+  el.innerHTML = '<span>someone is at the door</span>' +
+    (doorCam ? '<button id="answer">answer</button>' : "") +
+    '<button id="dismiss">dismiss</button>';
+  document.body.appendChild(el);
+  ring.banner = el;
+  ringTone(true);
+  var dismiss = el.querySelector("#dismiss");
+  dismiss.onclick = clearRing;
+  var answer = el.querySelector("#answer");
+  if (answer && doorCam) {
+    answer.onclick = function () {
+      clearRing();
+      /* see + hear (the door media source carries its mic) + talk; the
+         talk source's own first act silences the panel ring and marks
+         the call answered on the node */
+      openCamera(doorCam.name, doorCam.label, doorCam.talk);
+      startTalk(doorCam.talk);
+    };
+  }
+  /* an unanswered ring times itself out */
+  ring.timer = setTimeout(clearRing, 30000);
+}
+
+function checkCalls() {
+  rsntr.query("calls").then(function (res) {
+    var row = (res.rows || [])[0];
+    if (!row) return;
+    var callId = String(V(row, "call_id"));
+    var state = String(V(row, "state"));
+    if (state === "ringing" && callId !== ring.lastCall) {
+      ring.lastCall = callId;
+      showRing(callId);
+    } else if (state !== "ringing") {
+      /* answered elsewhere (or ended): stop ringing here too */
+      clearRing();
+    }
+  }, function () { /* no call wiring on this node */ });
+}
+
+/* ---- boot ---- */
+
+rsntr.init.then(function () {
+  return rsntr.query("sources");
+}).then(function (res) {
+  cameras = (res.rows || []).map(function (r) {
+    return {
+      name: String(V(r, "name")),
+      label: String(V(r, "label") || V(r, "name")),
+      talk: V(r, "talk") ? String(V(r, "talk")) : null
+    };
+  });
+  renderList();
+  status(cameras.length + " camera(s)");
+  /* the bell: every door_calls change vibrates this point */
+  rsntr.entrain("urn:door:ringing", function () { checkCalls(); });
+  checkCalls();
+}, function (e) {
+  status("[" + e.code + "] " + (e.reason || ""), true);
+});
+</script>
+</body>
+</html>

@@ -236,4 +236,4 @@ No open questions remain in this doc. The settlement record:
 - Fan-out: per-connection streams only; vibrations never ride gossip, preserving per-observer policy filtering (section 5). Announce-and-pull is the recorded direction if fan-out pressure ever appears, out of protocol for now.
 - Decayed-lease entrainment and intra-projection pagination: confirmed future extensions, not v1. Until then, a projection that outgrows the frame budget splits into zoom levels.
 
-Vocabulary-adjacent questions that live elsewhere: the modulation tag scheme (strings vs IRIs, now covering `help` and `projection` too) and SHACL shapes for wire validation remain open items in the v3 plan.
+Vocabulary-adjacent questions that live elsewhere: the modulation tag scheme (strings vs IRIs, now covering `help` and `projection` too) and SHACL shapes for wire validation remain open items tracked in the v3 plan (PLAN.md).

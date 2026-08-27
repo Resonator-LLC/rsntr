@@ -496,7 +496,7 @@ async fn room_fan_out_host_to_two_members() {
 
     // chat log on the host joins nothing for a received message but
     // shows it; on m1 the outgoing row carries its delivery status.
-    let log = chat::chat_log(t1.path(), &room, 10).expect("m1 log");
+    let log = chat::chat_log(t1.path(), &room, 10, None).expect("m1 log");
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].status.as_deref(), Some("done"));
 

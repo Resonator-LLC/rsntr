@@ -12,6 +12,23 @@ A Rust workspace that produces:
   envelope protocol, iroh as the current base transport, future
   bluetooth/radio behind a transport trait.
 
+## For agents
+
+`rsntr` is the agent interface: stable `--json` output, documented exit
+codes, and a daemonized node per agent. The whole loop — bootstrap,
+pairing, chat with wake-up hooks, SPARQL/Turtle exchange, named binary
+pipes — is in [docs/agents.md](docs/agents.md).
+
+    rsntr serve ~/agent-node        # daemonize (auto-inits; idempotent)
+    rsntr status ~/agent-node --json
+    rsntr hook add message 'my-wake-script'
+    rsntr chat wait --timeout 60 --json
+    rsntr stop ~/agent-node
+
+Note: since 0.2, `rsntr serve` detaches by default; use
+`rsntr serve --foreground` in terminals and systemd units that expect
+the old attached behavior.
+
 ## Build
 
     cargo build

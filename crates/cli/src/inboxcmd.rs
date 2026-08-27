@@ -138,7 +138,9 @@ pub async fn inbox_answer_with(
             // colons: `chat:direct`, `mod:cameras`).
             for grant in grants {
                 let Some((table, action)) = grant.split_once('=') else {
-                    bail!("--grant {grant:?}: expected table=action (e.g. 'shop_products=read', '*=mod:cameras')");
+                    bail!(
+                        "--grant {grant:?}: expected table=action (e.g. 'shop_products=read', '*=mod:cameras')"
+                    );
                 };
                 channel::execute(
                     &ch,

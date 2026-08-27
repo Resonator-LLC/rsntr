@@ -1,7 +1,7 @@
 # Chat and File Transfer for the Resonator Network
 
-Status: normative for v3, 2026-07-29. Designed fresh (no POC source exists);
-implements decisions Q6 (rooms always have a host) and Q8
+Status: normative for v3, 2026-07-29. Designed fresh (no POC source exists,
+PLAN.md section 7); implements decisions Q6 (rooms always have a host) and Q8
 (chat state lives in user-space tables created by `rsntr chat init`).
 Normative companions: [rdf-envelope-protocol.md](rdf-envelope-protocol.md)
 (envelope, BlobRef, framing), [connection-protocol.md](connection-protocol.md)

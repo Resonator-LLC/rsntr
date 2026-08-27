@@ -50,9 +50,11 @@ enum Command {
         /// Directory to initialize (created if missing).
         dir: PathBuf,
     },
-    /// Run the serving node until ctrl-c; prints the live dialing ticket.
+    /// Start the serving node as a daemon (log in <dir>/rsntr.log) and
+    /// print its summary; --foreground runs it in the terminal instead.
+    /// An uninitialized directory is initialized first.
     Serve {
-        /// Node directory (from `rsntr init`).
+        /// Node directory (from `rsntr init`; created when missing).
         dir: PathBuf,
         /// Bind localhost only, no relays, no address lookup services.
         #[arg(long)]
@@ -71,6 +73,55 @@ enum Command {
         /// before serving; signed-in browsers must re-enter it.
         #[arg(long, requires = "web")]
         new_web_token: bool,
+        /// Run attached in this terminal until ctrl-c (the pre-0.2
+        /// default; systemd units and debugging).
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Stop the serving daemon of a node directory (SIGTERM, then
+    /// SIGKILL after 10s). Idempotent.
+    Stop {
+        /// Node directory.
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Report whether a node directory is being served, plus its
+    /// endpoint id, addresses, ticket, peer count, and pending inbox.
+    Status {
+        /// Node directory.
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Event hooks: commands the serving daemon runs when something new
+    /// arrives (a chat message, an inbox knock), JSON event on stdin.
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
+    /// Run SPARQL on this node (owner channel) or on a peer (--peer).
+    /// SELECT/ASK print rows; CONSTRUCT/DESCRIBE print triples; updates
+    /// (INSERT DATA etc.) ride an Execute.
+    Sparql(SparqlArgs),
+    /// Load or dump RDF as Turtle, locally or against a peer.
+    Turtle {
+        #[command(subcommand)]
+        command: TurtleCommand,
+    },
+    /// Named binary streams between nodes (duplex byte pipes over the
+    /// media machinery; gated by the `media` policy action).
+    #[cfg(unix)]
+    Pipe {
+        #[command(subcommand)]
+        command: PipeCommand,
+    },
+    /// Internal: the serving-side bridge command `pipe accept`
+    /// registers. Not for direct use.
+    #[cfg(unix)]
+    #[command(hide = true, name = "pipe-bridge")]
+    PipeBridge {
+        /// The accept process's unix socket.
+        #[arg(value_name = "SOCKET")]
+        bridge_socket: PathBuf,
     },
     /// Print this node's endpoint id.
     Id {
@@ -162,6 +213,163 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum HookCommand {
+    /// Register a hook: run <command> via `sh -c` on each <event>
+    /// ("message", "inbox", or "*"), one JSON event on stdin.
+    Add {
+        /// The event: message, inbox, or *.
+        event: String,
+        /// The command, run with `sh -c` by the serving daemon.
+        command: String,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// List registered hooks.
+    List {
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Remove a hook by id.
+    Rm {
+        id: i64,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Enable a hook by id.
+    Enable {
+        id: i64,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Disable a hook by id.
+    Disable {
+        id: i64,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Args)]
+struct SparqlArgs {
+    /// The SPARQL text (or use --file).
+    query: Option<String>,
+    /// Read the SPARQL text from a file.
+    #[arg(long, conflicts_with = "query")]
+    file: Option<PathBuf>,
+    /// Run against this peer (petname or 64-hex endpoint id) instead of
+    /// the own node; reads need `read` policy there, updates `write`.
+    #[arg(long)]
+    peer: Option<String>,
+    /// Client-side timeout hint in milliseconds.
+    #[arg(long)]
+    timeout_ms: Option<i64>,
+    /// Node directory.
+    #[arg(short, long, default_value = ".")]
+    dir: PathBuf,
+    /// Dial without relays or lookup services (requires stored addrs).
+    #[arg(long)]
+    offline: bool,
+}
+
+#[derive(Subcommand)]
+enum TurtleCommand {
+    /// Load a Turtle document into the RDF store, as chunked idempotent
+    /// INSERT DATA updates.
+    Load {
+        /// The Turtle file.
+        file: PathBuf,
+        /// Load into this peer's store (needs `write` policy there).
+        #[arg(long)]
+        peer: Option<String>,
+        /// INSERT DATA chunk budget in bytes of triple text.
+        #[arg(long, default_value_t = rsntr::rdfcmd::DEFAULT_CHUNK_BYTES)]
+        chunk_bytes: usize,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Dump the RDF store as triples (CONSTRUCT WHERE { ?s ?p ?o },
+    /// budgeted; big graphs report truncated).
+    Dump {
+        /// Dump this peer's store (needs `read` policy there).
+        #[arg(long)]
+        peer: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+}
+
+#[cfg(unix)]
+#[derive(Subcommand)]
+enum PipeCommand {
+    /// Register a pipe endpoint: <command> runs per connection, its
+    /// stdin is the caller's bytes, its stdout the reply stream.
+    Add {
+        /// Endpoint name, as dialed by `pipe open`.
+        name: String,
+        /// Command run with `sh -c` by the serving daemon.
+        command: String,
+        /// Watch-only endpoint (stdout feed, no caller bytes).
+        #[arg(long)]
+        one_way: bool,
+        /// Optional note.
+        #[arg(long)]
+        note: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// List registered pipe endpoints.
+    List {
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Remove a pipe endpoint.
+    Rm {
+        name: String,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Open a peer's pipe: stdin goes up the wire, the reply stream
+    /// comes out on stdout.
+    Open {
+        /// Target peer: a petname from `_peers` or a 64-hex endpoint id.
+        peer: String,
+        /// The pipe name (as registered on the peer).
+        name: String,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Wait for one incoming connection on <name> and bridge it to this
+    /// terminal's stdin/stdout (no pre-registered command needed).
+    Accept {
+        /// The pipe name callers will open.
+        name: String,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum ChatCommand {
     /// Scaffold chat in a node directory: tables, projection points,
     /// policy rows, mods entry. Idempotent.
@@ -174,8 +382,12 @@ enum ChatCommand {
     Send {
         /// A peer (petname or 64-hex endpoint id) or a room (name or IRI).
         target: String,
-        /// The message text.
-        text: String,
+        /// The message text (or use --body-file; big bodies auto-spill).
+        text: Option<String>,
+        /// Read the message body from a file, `-` for stdin — the path
+        /// past the OS's argument size cap for very large bodies.
+        #[arg(long, conflicts_with = "text")]
+        body_file: Option<PathBuf>,
         /// Attach a file: imported into the local blob store, sent as a
         /// BlobRef (bytes fetched out of band).
         #[arg(long)]
@@ -192,6 +404,31 @@ enum ChatCommand {
         /// Maximum messages to print.
         #[arg(long, default_value_t = 50)]
         limit: i64,
+        /// Only messages after this id (a message ULID) — the agent's
+        /// cursor for incremental reads.
+        #[arg(long)]
+        since: Option<String>,
+        /// Keep spilled big bodies as preview + blobref instead of
+        /// fetching and inlining the full text.
+        #[arg(long)]
+        no_inline: bool,
+        /// Node directory.
+        #[arg(short, long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Block until an incoming message arrives (for one target, or any
+    /// when omitted) or the timeout elapses: one JSON object out, exit 0
+    /// on message, 3 on timeout. Needs a serving daemon.
+    Wait {
+        /// A peer (petname or 64-hex endpoint id) or a room (name or
+        /// IRI); every scope when omitted.
+        target: Option<String>,
+        /// Give up after this many seconds.
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Keep spilled big bodies as preview + blobref.
+        #[arg(long)]
+        no_inline: bool,
         /// Node directory.
         #[arg(short, long, default_value = ".")]
         dir: PathBuf,
@@ -738,7 +975,49 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
             offline,
             web,
             new_web_token,
-        } => runtime()?.block_on(cmd_serve(dir, offline, web, new_web_token, json)),
+            foreground,
+        } => {
+            // Auto-init: one command bootstraps an agent node (the chat
+            // scaffold matches `rsntr init`).
+            if !store::db_path(&dir).exists() {
+                let id = store::init_dir(&dir)?;
+                if let Err(e) = rsntr::chat::chat_init_with(&dir, prefer) {
+                    eprintln!("warning: chat scaffold failed: {e:#}");
+                }
+                eprintln!("initialized {} (endpoint id {id})", dir.display());
+            }
+            if foreground {
+                runtime()?.block_on(cmd_serve(dir, offline, web, new_web_token, json))
+            } else {
+                #[cfg(unix)]
+                {
+                    runtime()?.block_on(cmd_serve_detached(dir, offline, web, new_web_token, json))
+                }
+                #[cfg(not(unix))]
+                {
+                    eprintln!("detached serving needs unix; running in the foreground");
+                    runtime()?.block_on(cmd_serve(dir, offline, web, new_web_token, json))
+                }
+            }
+        }
+        #[cfg(unix)]
+        Command::Stop { dir } => runtime()?.block_on(cmd_stop(dir, json)),
+        #[cfg(unix)]
+        Command::Status { dir } => runtime()?.block_on(cmd_status(dir, json)),
+        #[cfg(not(unix))]
+        Command::Stop { .. } | Command::Status { .. } => {
+            anyhow::bail!("this command needs unix (the control socket)")
+        }
+        Command::Hook { command } => runtime()?.block_on(cmd_hook(command, json, prefer)),
+        Command::Sparql(args) => runtime()?.block_on(cmd_sparql(args, json, prefer)),
+        Command::Turtle { command } => runtime()?.block_on(cmd_turtle(command, json, prefer)),
+        #[cfg(unix)]
+        Command::Pipe { command } => runtime()?.block_on(cmd_pipe(command, json, prefer)),
+        #[cfg(unix)]
+        Command::PipeBridge { bridge_socket } => {
+            runtime()?.block_on(rsntr::pipecmd::pipe_bridge(&bridge_socket))?;
+            Ok(EXIT_OK)
+        }
         Command::Csv { command } => runtime()?.block_on(cmd_csv(command, json, prefer)),
         Command::Sql { dir, stmt, file } => cmd_sql(dir, stmt, file, json, prefer),
         Command::Chat { command } => match command {
@@ -761,10 +1040,47 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
             ChatCommand::Send {
                 target,
                 text,
+                body_file,
                 file,
                 dir,
-            } => runtime()?.block_on(cmd_chat_send(dir, target, text, file, json, prefer)),
-            ChatCommand::Log { target, limit, dir } => cmd_chat_log(&dir, &target, limit, json),
+            } => {
+                let text = match (text, body_file) {
+                    (Some(t), None) => t,
+                    (None, Some(p)) if p.as_os_str() == "-" => {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        std::io::stdin()
+                            .read_to_string(&mut buf)
+                            .context("reading the body from stdin")?;
+                        buf
+                    }
+                    (None, Some(p)) => std::fs::read_to_string(&p)
+                        .with_context(|| format!("reading {}", p.display()))?,
+                    (None, None) => anyhow::bail!("give a message text or --body-file <path>"),
+                    (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
+                };
+                runtime()?.block_on(cmd_chat_send(dir, target, text, file, json, prefer))
+            }
+            ChatCommand::Log {
+                target,
+                limit,
+                since,
+                no_inline,
+                dir,
+            } => runtime()?.block_on(cmd_chat_log(
+                &dir,
+                &target,
+                limit,
+                since.as_deref(),
+                no_inline,
+                json,
+            )),
+            ChatCommand::Wait {
+                target,
+                timeout,
+                no_inline,
+                dir,
+            } => runtime()?.block_on(cmd_chat_wait(dir, target, timeout, no_inline, json)),
             ChatCommand::Watch { target, dir } => {
                 runtime()?.block_on(cmd_chat_watch(dir, target, json))
             }
@@ -985,6 +1301,26 @@ async fn cmd_serve(
     let ticket = running
         .ready_ticket(std::time::Duration::from_secs(3))
         .await;
+    // The daemon's own record: pid file and published ticket, read by
+    // `rsntr stop`/`status` and the detach parent; removed on graceful
+    // shutdown.
+    #[cfg(unix)]
+    {
+        std::fs::write(
+            rsntr::detach::pid_path(&dir),
+            format!("{}\n", std::process::id()),
+        )
+        .with_context(|| "writing the pid file")?;
+        let t = ticket.clone();
+        running
+            .node()
+            .db()
+            .call(move |conn| {
+                resonator_node::set_rsntr(conn, rsntr::detach::SERVING_TICKET_KEY, &t)
+            })
+            .await
+            .ok();
+    }
     if json {
         let mut out = json!({
             "ok": true,
@@ -1024,6 +1360,17 @@ async fn cmd_serve(
              the bearer token travels in cleartext (front it with a TLS proxy)"
         );
     }
+    // Ctrl-c or SIGTERM (`rsntr stop`) both shut down gracefully.
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => r?,
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
     tokio::signal::ctrl_c().await?;
     if !json {
         eprintln!("shutting down");
@@ -1031,8 +1378,386 @@ async fn cmd_serve(
     if let Some(ws) = web_server {
         ws.shutdown().await;
     }
+    #[cfg(unix)]
+    {
+        running
+            .node()
+            .db()
+            .call(|conn| {
+                conn.execute(
+                    "DELETE FROM _rsntr WHERE key = ?1",
+                    [rsntr::detach::SERVING_TICKET_KEY],
+                )
+            })
+            .await
+            .ok();
+        let _ = std::fs::remove_file(rsntr::detach::pid_path(&dir));
+    }
     running.shutdown().await;
     Ok(EXIT_OK)
+}
+
+#[cfg(unix)]
+async fn cmd_serve_detached(
+    dir: PathBuf,
+    offline: bool,
+    web: Option<SocketAddr>,
+    new_web_token: bool,
+    json: bool,
+) -> Result<i32> {
+    let report = rsntr::detach::serve_detached(&dir, offline, web, new_web_token).await?;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "ok": true,
+                "already_running": report.already_running,
+                "pid": report.pid,
+                "socket": report.socket.display().to_string(),
+                "endpoint_id": report.endpoint_id,
+                "ticket": report.ticket,
+                "log": rsntr::detach::log_path(&dir).display().to_string(),
+            })
+        );
+    } else if report.already_running {
+        println!(
+            "already serving {} (pid {})",
+            dir.display(),
+            report
+                .pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        );
+    } else {
+        println!(
+            "serving {} (pid {}, log {})",
+            dir.display(),
+            report.pid.unwrap_or(0),
+            rsntr::detach::log_path(&dir).display()
+        );
+        println!("endpoint id: {}", report.endpoint_id);
+        if let Some(t) = &report.ticket {
+            println!("ticket: {t}");
+        }
+        println!("stop it with: rsntr stop {}", dir.display());
+    }
+    Ok(EXIT_OK)
+}
+
+#[cfg(unix)]
+async fn cmd_stop(dir: PathBuf, json: bool) -> Result<i32> {
+    let report = rsntr::detach::stop(&dir).await?;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "ok": true,
+                "stopped": report.stopped,
+                "already_stopped": report.already_stopped,
+                "pid": report.pid,
+                "forced": report.forced,
+            })
+        );
+    } else if report.already_stopped {
+        println!("nothing is serving {}", dir.display());
+    } else {
+        println!(
+            "stopped pid {}{}",
+            report.pid.unwrap_or(0),
+            if report.forced { " (forced)" } else { "" }
+        );
+    }
+    Ok(EXIT_OK)
+}
+
+#[cfg(unix)]
+async fn cmd_status(dir: PathBuf, json: bool) -> Result<i32> {
+    let s = rsntr::detach::status(&dir).await?;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "ok": true,
+                "serving": s.serving,
+                "pid": s.pid,
+                "endpoint_id": s.endpoint_id,
+                "addrs": s.addrs,
+                "ticket": s.ticket,
+                "peers": s.peers,
+                "pending_inbox": s.pending_inbox,
+            })
+        );
+    } else {
+        println!(
+            "{}: {}",
+            dir.display(),
+            if s.serving {
+                format!(
+                    "serving (pid {})",
+                    s.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into())
+                )
+            } else {
+                "not serving".to_string()
+            }
+        );
+        println!("endpoint id: {}", s.endpoint_id);
+        if let Some(t) = &s.ticket {
+            println!("ticket: {t}");
+        }
+        println!("peers: {}, pending inbox: {}", s.peers, s.pending_inbox);
+    }
+    Ok(EXIT_OK)
+}
+
+async fn cmd_hook(command: HookCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    match command {
+        HookCommand::Add {
+            event,
+            command,
+            dir,
+        } => {
+            let id = rsntr::hooks::hook_add(&dir, prefer, &event, &command).await?;
+            if json {
+                println!(
+                    "{}",
+                    json!({ "ok": true, "id": id, "event": event, "command": command })
+                );
+            } else {
+                println!("hook {id} registered on {event}");
+            }
+            Ok(EXIT_OK)
+        }
+        HookCommand::List { dir } => {
+            let rows = rsntr::hooks::hook_list(&dir, prefer).await?;
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "hooks": rows.iter().map(|h| json!({
+                            "id": h.id,
+                            "event": h.event,
+                            "command": h.command,
+                            "enabled": h.enabled,
+                            "created_at": h.created_at,
+                        })).collect::<Vec<_>>(),
+                    })
+                );
+            } else {
+                for h in rows {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        h.id,
+                        h.event,
+                        if h.enabled { "enabled" } else { "disabled" },
+                        h.command,
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        HookCommand::Rm { id, dir } => {
+            if !rsntr::hooks::hook_rm(&dir, prefer, id).await? {
+                anyhow::bail!("no hook with id {id}");
+            }
+            if json {
+                println!("{}", json!({ "ok": true, "id": id, "removed": true }));
+            } else {
+                println!("hook {id} removed");
+            }
+            Ok(EXIT_OK)
+        }
+        HookCommand::Enable { id, dir } => cmd_hook_toggle(&dir, id, true, json, prefer).await,
+        HookCommand::Disable { id, dir } => cmd_hook_toggle(&dir, id, false, json, prefer).await,
+    }
+}
+
+async fn cmd_hook_toggle(
+    dir: &std::path::Path,
+    id: i64,
+    enabled: bool,
+    json: bool,
+    prefer: rsntr::Prefer,
+) -> Result<i32> {
+    if !rsntr::hooks::hook_set_enabled(dir, prefer, id, enabled).await? {
+        anyhow::bail!("no hook with id {id}");
+    }
+    if json {
+        println!("{}", json!({ "ok": true, "id": id, "enabled": enabled }));
+    } else {
+        println!("hook {id} {}", if enabled { "enabled" } else { "disabled" });
+    }
+    Ok(EXIT_OK)
+}
+
+async fn cmd_sparql(args: SparqlArgs, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    let text = match (args.query, args.file) {
+        (Some(q), None) => q,
+        (None, Some(f)) => {
+            std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))?
+        }
+        (None, None) => anyhow::bail!("give a SPARQL text or --file <path>"),
+        (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
+    };
+    let report = rsntr::rdfcmd::sparql_report(
+        &args.dir,
+        prefer,
+        args.peer.as_deref(),
+        &text,
+        args.offline,
+        args.timeout_ms,
+    )
+    .await?;
+    Ok(print_report(&report, json))
+}
+
+async fn cmd_turtle(command: TurtleCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    match command {
+        TurtleCommand::Load {
+            file,
+            peer,
+            chunk_bytes,
+            dir,
+            offline,
+        } => {
+            let text = std::fs::read_to_string(&file)
+                .with_context(|| format!("reading {}", file.display()))?;
+            match rsntr::rdfcmd::turtle_load(
+                &dir,
+                prefer,
+                peer.as_deref(),
+                &text,
+                offline,
+                chunk_bytes,
+            )
+            .await?
+            {
+                rsntr::rdfcmd::LoadOutcome::Loaded { triples, chunks } => {
+                    if json {
+                        println!(
+                            "{}",
+                            json!({ "ok": true, "triples": triples, "chunks": chunks })
+                        );
+                    } else {
+                        println!(
+                            "loaded {triples} triple(s) in {chunks} chunk(s){}",
+                            peer.map(|p| format!(" into {p}")).unwrap_or_default()
+                        );
+                    }
+                    Ok(EXIT_OK)
+                }
+                rsntr::rdfcmd::LoadOutcome::Refused(report) => Ok(print_report(&report, json)),
+            }
+        }
+        TurtleCommand::Dump { peer, dir, offline } => {
+            let report = rsntr::rdfcmd::turtle_dump(&dir, prefer, peer.as_deref(), offline).await?;
+            Ok(print_report(&report, json))
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn cmd_pipe(command: PipeCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    use rsntr::pipecmd;
+    match command {
+        PipeCommand::Add {
+            name,
+            command,
+            one_way,
+            note,
+            dir,
+        } => {
+            pipecmd::pipe_add(&dir, prefer, &name, &command, one_way, note.as_deref()).await?;
+            if json {
+                println!(
+                    "{}",
+                    json!({ "ok": true, "name": name, "one_way": one_way })
+                );
+            } else {
+                println!("pipe {name} registered");
+            }
+            Ok(EXIT_OK)
+        }
+        PipeCommand::List { dir } => {
+            let rows = pipecmd::pipe_list(&dir, prefer).await?;
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "pipes": rows.iter().map(|p| json!({
+                            "name": p.name,
+                            "command": p.command,
+                            "duplex": p.duplex,
+                            "note": p.note,
+                        })).collect::<Vec<_>>(),
+                    })
+                );
+            } else {
+                for p in rows {
+                    println!(
+                        "{}\t{}\t{}",
+                        p.name,
+                        if p.duplex { "duplex" } else { "one-way" },
+                        p.command,
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        PipeCommand::Rm { name, dir } => {
+            if !pipecmd::pipe_rm(&dir, prefer, &name).await? {
+                anyhow::bail!("no pipe named {name:?}");
+            }
+            if json {
+                println!("{}", json!({ "ok": true, "name": name, "removed": true }));
+            } else {
+                println!("pipe {name} removed");
+            }
+            Ok(EXIT_OK)
+        }
+        PipeCommand::Open {
+            peer,
+            name,
+            dir,
+            offline,
+        } => match client::run_duplex(&dir, &peer, &name, offline, None).await? {
+            client::TalkOutcome::Done => {
+                if json {
+                    eprintln!("{}", json!({ "ok": true }));
+                }
+                Ok(EXIT_OK)
+            }
+            client::TalkOutcome::Denied(d) => {
+                let reason = d.reason.unwrap_or_default();
+                if json {
+                    eprintln!(
+                        "{}",
+                        json!({ "ok": false, "error": { "code": "denied", "reason": reason } })
+                    );
+                } else {
+                    eprintln!("denied: {reason}");
+                }
+                Ok(EXIT_DENIED)
+            }
+            client::TalkOutcome::Failed(e) => {
+                let reason = e.reason.unwrap_or_default();
+                if json {
+                    eprintln!(
+                        "{}",
+                        json!({ "ok": false, "error": { "code": e.code, "reason": reason } })
+                    );
+                } else {
+                    eprintln!("error [{}] {reason}", e.code);
+                }
+                Ok(EXIT_ERROR)
+            }
+        },
+        PipeCommand::Accept { name, dir } => {
+            pipecmd::pipe_accept(&dir, prefer, &name).await?;
+            Ok(EXIT_OK)
+        }
+    }
 }
 
 /// Prints one csv-command pipeline failure and returns its exit code.
@@ -1081,9 +1806,33 @@ fn cmd_sql(
     };
     let outcome = rsntr::sqlcmd::run_sql(&dir, &source, prefer)?;
     if json {
-        println!(
-            "{}",
-            json!({ "ok": true, "statements": outcome.statements, "affected": outcome.affected })
+        let mut out = json!({
+            "ok": true,
+            "statements": outcome.statements,
+            "affected": outcome.affected,
+        });
+        if let Some((columns, rows, done)) = &outcome.rows {
+            out["columns"] = json!(columns);
+            out["rows"] = json!(
+                rows.iter()
+                    .map(|r| output::row_to_json(columns, r))
+                    .collect::<Vec<_>>()
+            );
+            out["row_count"] = json!(done.row_count);
+            out["truncated"] = json!(done.truncated);
+        }
+        println!("{out}");
+    } else if let Some((columns, rows, done)) = &outcome.rows {
+        if !columns.is_empty() {
+            println!("{}", columns.join("\t"));
+            for row in rows {
+                println!("{}", output::render_row(columns, row));
+            }
+        }
+        eprintln!(
+            "ok: {} row(s){}",
+            done.row_count.unwrap_or(rows.len() as i64),
+            if done.truncated { " (truncated)" } else { "" }
         );
     } else {
         println!(
@@ -1677,16 +2426,36 @@ async fn cmd_chat_send(
                     "hash": hash,
                     "bytes": bytes,
                 })),
+                "spilled": report.spilled,
             })
         );
     } else {
         println!("{}", report.message_id);
-        if let Some((hash, bytes)) = &report.blob {
+        if report.spilled {
+            eprintln!("body spilled to a text attachment (readers inline it back)");
+        } else if let Some((hash, bytes)) = &report.blob {
             eprintln!("attached {hash} ({bytes} bytes)");
         }
         eprintln!("queued to {}", report.queued_to.join(", "));
     }
     Ok(EXIT_OK)
+}
+
+/// One stderr hint per failed spill inline, naming the remedy (the
+/// sender's dial hints are usually the culprit).
+fn report_inline_failures(entries: &[rsntr::chat::LogEntry], failed: &[String]) {
+    for id in failed {
+        let sender = entries
+            .iter()
+            .find(|e| &e.id == id)
+            .map(|e| e.sender.clone())
+            .unwrap_or_default();
+        eprintln!(
+            "warning: could not fetch the full body of {id} from {sender}; \
+             showing the preview (refresh its dial hints with \
+             `rsntr peer add <name> <its current ticket>` and re-read)"
+        );
+    }
 }
 
 fn chat_entry_json(entry: &rsntr::chat::LogEntry) -> serde_json::Value {
@@ -1698,6 +2467,7 @@ fn chat_entry_json(entry: &rsntr::chat::LogEntry) -> serde_json::Value {
         "received_at": entry.received_at,
         "body": entry.body,
         "blob_hash": entry.blob_hash,
+        "blob_bytes": entry.blob_bytes,
         "blob_name": entry.blob_name,
         "outgoing": entry.outgoing,
         "status": entry.status,
@@ -1728,14 +2498,28 @@ fn chat_entry_line(entry: &rsntr::chat::LogEntry) -> String {
     format!("{} {who}{status}: {}{blob}", entry.at, entry.body)
 }
 
-fn cmd_chat_log(dir: &std::path::Path, target: &str, limit: i64, json: bool) -> Result<i32> {
-    let entries = rsntr::chat::chat_log(dir, target, limit)?;
+async fn cmd_chat_log(
+    dir: &std::path::Path,
+    target: &str,
+    limit: i64,
+    since: Option<&str>,
+    no_inline: bool,
+    json: bool,
+) -> Result<i32> {
+    let mut entries = rsntr::chat::chat_log(dir, target, limit, since)?;
+    let inline_failed = if no_inline {
+        Vec::new()
+    } else {
+        rsntr::chat::inline_spilled(dir, &mut entries).await
+    };
+    report_inline_failures(&entries, &inline_failed);
     if json {
         println!(
             "{}",
             json!({
                 "ok": true,
                 "messages": entries.iter().map(chat_entry_json).collect::<Vec<_>>(),
+                "inline_failed": inline_failed,
             })
         );
     } else {
@@ -1745,6 +2529,50 @@ fn cmd_chat_log(dir: &std::path::Path, target: &str, limit: i64, json: bool) -> 
         }
     }
     Ok(EXIT_OK)
+}
+
+async fn cmd_chat_wait(
+    dir: PathBuf,
+    target: Option<String>,
+    timeout: u64,
+    no_inline: bool,
+    json: bool,
+) -> Result<i32> {
+    let mut report = rsntr::chat::chat_wait(
+        &dir,
+        target.as_deref(),
+        std::time::Duration::from_secs(timeout),
+    )
+    .await?;
+    let inline_failed = if no_inline {
+        Vec::new()
+    } else {
+        rsntr::chat::inline_spilled(&dir, &mut report.messages).await
+    };
+    report_inline_failures(&report.messages, &inline_failed);
+    if json {
+        println!(
+            "{}",
+            json!({
+                "ok": true,
+                "timed_out": report.timed_out,
+                "messages": report.messages.iter().map(chat_entry_json).collect::<Vec<_>>(),
+                "next_since": report.next_since,
+                "inline_failed": inline_failed,
+            })
+        );
+    } else if report.timed_out {
+        eprintln!("nothing arrived within {timeout}s");
+    } else {
+        for entry in &report.messages {
+            println!("{}", chat_entry_line(entry));
+        }
+    }
+    Ok(if report.timed_out {
+        rsntr::EXIT_TIMEOUT
+    } else {
+        EXIT_OK
+    })
 }
 
 async fn cmd_chat_watch(dir: PathBuf, target: String, json: bool) -> Result<i32> {

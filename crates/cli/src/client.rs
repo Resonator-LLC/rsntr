@@ -612,6 +612,20 @@ pub enum TalkOutcome {
 /// sees EOF); the session ends when the downstream ends. The header is
 /// reported on stderr; stdout stays pure feed.
 pub async fn run_talk(dir: &Path, peer: &str, source: &str, offline: bool) -> Result<TalkOutcome> {
+    run_duplex(dir, peer, source, offline, Some("audio-duplex")).await
+}
+
+/// The generic duplex byte-stream client behind [`run_talk`] and `rsntr
+/// pipe open`: same wire choreography (an `audio-duplex` request; the
+/// content types are labels), with the stderr announcement optional so
+/// pipe sessions stay quiet.
+pub async fn run_duplex(
+    dir: &Path,
+    peer: &str,
+    source: &str,
+    offline: bool,
+    announce: Option<&str>,
+) -> Result<TalkOutcome> {
     let request = Request::new(RequestKind::Query, "audio-duplex", source);
     let envelope = request.to_envelope();
 
@@ -624,20 +638,22 @@ pub async fn run_talk(dir: &Path, peer: &str, source: &str, offline: bool) -> Re
         stream
             .send(&envelope)
             .await
-            .map_err(|e| anyhow::anyhow!("sending the audio-duplex request: {e}"))?;
-        // No finish: the write half carries the upstream audio.
+            .map_err(|e| anyhow::anyhow!("sending the duplex request: {e}"))?;
+        // No finish: the write half carries the upstream bytes.
 
         let header = stream
             .recv()
             .await
-            .map_err(|e| anyhow::anyhow!("receiving the audio-duplex header: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("receiving the duplex header: {e}"))?;
         match header {
             Some(EnvelopeObject::AudioDuplex(d)) => {
-                eprintln!(
-                    "audio-duplex open: accepts {} / downstream {}",
-                    d.accepts,
-                    d.content_type.as_deref().unwrap_or("(none)")
-                );
+                if let Some(label) = announce {
+                    eprintln!(
+                        "{label} open: accepts {} / downstream {}",
+                        d.accepts,
+                        d.content_type.as_deref().unwrap_or("(none)")
+                    );
+                }
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut stdin = tokio::io::stdin();
                 let mut stdout = tokio::io::stdout();

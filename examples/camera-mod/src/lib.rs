@@ -1,6 +1,6 @@
 //! The `cameras` mod: a camera wall served as a hologram.
 //!
-//! A pure-config hologram mod: it needs no database
+//! The pure-config companion to shop-mod: it needs no database
 //! capabilities at all. The `hologram` verb streams the embedded viewer
 //! app; the `sources` verb lists the cameras named in the mod's
 //! `_modulations.config` (key `cameras`, a JSON array of

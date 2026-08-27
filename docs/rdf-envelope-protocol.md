@@ -5,7 +5,7 @@ v2 POC doc (research/rsntr-sqlite3/docs/rdf-envelope-protocol.md); the POC
 remains the behavioral oracle, but this text is authoritative for v3.
 Companions: [projection-protocol.md](projection-protocol.md) (projection
 vocabulary and entrainment) and [browser-client-http2.md](browser-client-http2.md)
-(browser transport).
+(browser transport). Decision record: ../PLAN.md.
 
 Pinned facts carried from the research (2026-07): oxrdf 0.3.x, oxttl 0.2.x
 (push parser), iroh-gossip (4 KiB default max message), Jelly-RDF spec 1.1.3

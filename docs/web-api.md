@@ -7,7 +7,8 @@ its four open items (control feed format, URL scheme, in-stream record
 framing, auth/session). Normative companions:
 [rdf-envelope-protocol.md](rdf-envelope-protocol.md) (frames, classes, error
 codes), [connection-protocol.md](connection-protocol.md) (choreography),
-[projection-protocol.md](projection-protocol.md) (entrainment).
+[projection-protocol.md](projection-protocol.md) (entrainment). Decision
+record: ../PLAN.md (Q5).
 
 The server is an axum HTTP server started inside the node process by
 `rsntr serve --web [addr]` (default `127.0.0.1:2718`). It terminates iroh
@@ -724,7 +725,7 @@ Specified now, implemented later:
 - Media responses (`rsntr:Media` header + raw bytes) feeding MSE or
   WebCodecs: M10, on the `/request` shape already defined.
 - Chat streams over `/feed` + `/stream/{id}`: M7.
-- `.xlsx` export next to CSV: later nice-to-have.
+- `.xlsx` export next to CSV: later nice-to-have (PLAN.md Q7).
 
 Never on this API: `compact-postcard` (Turtle only in the browser path),
 accounts, CORS, tokens in query strings.

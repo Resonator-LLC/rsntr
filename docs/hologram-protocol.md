@@ -2,19 +2,18 @@
 
 Status: normative for v3, 2026-08-03 (M12). Discharges the deferral
 recorded in [observer.md](observer.md) section 5 and the reserved
-iframe + postMessage pattern. Normative companions:
+iframe + postMessage pattern of PLAN.md 6.3. Normative companions:
 [rdf-envelope-protocol.md](rdf-envelope-protocol.md) (envelope, framing,
 Generic frames), [projection-protocol.md](projection-protocol.md)
 (points, entrainment), [web-api.md](web-api.md) (browser transport).
-Ontology: [rsntr-hologram.ttl](rsntr-hologram.ttl). Reference mod:
-`examples/camera-mod`.
+Ontology: [rsntr-hologram.ttl](rsntr-hologram.ttl).
 
 ## 1. Why a hologram
 
 A projection tells the observer what a node can do; the observer owns the
 rendering. That division is right for data, and it stays. But some
-capabilities are experiences, not menus: a camera wall wants a live
-viewer, not sixteen numbered points. The hologram is the escape hatch that
+capabilities are experiences, not menus: a shop wants a catalog with a
+cart, not sixteen numbered points. The hologram is the escape hatch that
 keeps the protocol honest while allowing this: the serving mod ships its
 own interactive rendering as an HTML document, and the observer mounts it
 in a sealed web view whose every network act is wrapped in the resonator
@@ -65,7 +64,7 @@ modulation; the signal is the verb `hologram`:
 ```turtle
 [] a rsntr:Query ;
    rsntr:id "01K1H0GRAM00XMP00000000001" ;
-   rsntr:mod "cameras" ;
+   rsntr:mod "shop" ;
    rsntr:signal "hologram" .
 ```
 
@@ -276,7 +275,7 @@ one vocabulary:
   (chat-protocol.md section 3).
 - Opaque-origin sandbox plus postMessage broker, not service-worker
   interception and not same-origin hosting: the guest must never inherit
-  the console's origin, cookies, or token.
+  the console's origin, cookies, or token (PLAN.md Q14).
 - Peer and mod pinning happens in the broker, at mount time, from the
   fetch that produced the hologram; guest input is never consulted.
 - The wire contract, not a JS API, is normative: documents bring their

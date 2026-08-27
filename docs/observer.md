@@ -1,7 +1,8 @@
 # Observer v1
 
-Status: accepted 2026-07-30 (M10); zoomable surface RETIRED 2026-08-06.
-The observer is the browser of node projections; that role now lives in the console's contacts master-detail tab
+Status: accepted 2026-07-30 (M10); zoomable surface RETIRED 2026-08-06
+(PLAN.md Q16). The observer is the browser of node projections (PLAN.md
+Q11); that role now lives in the console's contacts master-detail tab
 (list of contacts, per-peer profile with identicon/presence/mod chips,
 and the peer's root projection embedded in the detail). Sections 1, 2
 and 5 below describe the retired zoomable surface and are kept as
@@ -116,7 +117,7 @@ id, and remote sources need one on the serving peer.
 ## 5. Deferred
 
 - Sandboxed mod-pushed UI hosting (iframe + postMessage): DONE in M12 as
-  the hologram (hologram-protocol.md); the reserved iframe pattern
+  the hologram (hologram-protocol.md); the PLAN.md 6.3 reserved pattern
   is implemented as the hologram broker in the projection tabs.
 - LLM-generated lenses, lenses as shareable RDF resources, per-lens
   catalogs.

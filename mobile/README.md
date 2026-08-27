@@ -4,7 +4,7 @@ uniffi bindings over `crates/ffi` (`resonator-ffi`): the mobile-appropriate
 core of a resonator node. No extism mods host and no web server are
 compiled in (`rsntr` is consumed with `default-features = false`); the
 pure-Rust SPARQL engine and bundled sqlite mean no C loadable extensions
-are needed, per a standing design constraint.
+are needed, per the design constraint recorded in PLAN.md sec 8.
 
 ## Layout
 

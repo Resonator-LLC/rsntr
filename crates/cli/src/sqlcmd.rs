@@ -1,24 +1,30 @@
 //! `rsntr sql`: run owner-channel SQL from an argument or a file.
 //!
 //! The generic scaffolding runner example mods document (e.g.
-//! examples/camera-mod/seed.sql): each statement rides the owner channel as
-//! an ordinary Execute, so DDL is permitted and everything lands in
-//! `_audit` like any owner write. Input is split on the statement
-//! separator, skipping semicolons inside string literals, quoted
-//! identifiers, and comments - a media type like
+//! examples/shop-mod/seed.sql): each statement rides the owner channel,
+//! writes as Executes (DDL permitted, everything lands in `_audit`) and
+//! reads as Queries whose rows come back in the report. Input is split
+//! on the statement separator, skipping semicolons inside string
+//! literals, quoted identifiers, and comments - a media type like
 //! `'audio/L16;rate=8000'` is one value, not three statements.
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
+use resonator_protocol::{Done, RequestKind, Row};
+
 use crate::channel::{self, OwnerChannel, Prefer};
+use crate::client::classify_sql;
 
 /// What a run applied, for the human and `--json` reports.
 #[derive(Debug)]
 pub struct SqlOutcome {
     pub statements: usize,
     pub affected: i64,
+    /// The last read statement's result, when any statement was a read:
+    /// `(columns, rows, done)` — the same shapes `rsntr query` reports.
+    pub rows: Option<(Vec<String>, Vec<Row>, Done)>,
 }
 
 /// Splits SQL on statement separators, ignoring semicolons inside
@@ -86,7 +92,9 @@ fn split_statements(source: &str) -> Vec<String> {
     out
 }
 
-/// Splits, then executes every statement over one owner channel.
+/// Splits, then runs every statement over one owner channel: reads as
+/// Queries (their rows reported; the last read wins), writes as
+/// Executes.
 pub fn run_sql(dir: &Path, source: &str, prefer: Prefer) -> Result<SqlOutcome> {
     let split = split_statements(source);
     let statements: Vec<&str> = split
@@ -98,20 +106,29 @@ pub fn run_sql(dir: &Path, source: &str, prefer: Prefer) -> Result<SqlOutcome> {
         bail!("no SQL statements in the input");
     }
     let count = statements.len();
-    let affected = channel::block_on(async move {
+    let (affected, rows) = channel::block_on(async move {
         let ch = OwnerChannel::open(dir, prefer).await?;
         let mut affected = 0i64;
+        let mut last_read = None;
         for stmt in &statements {
-            let done = channel::execute(&ch, stmt, vec![])
-                .await
-                .with_context(|| format!("statement failed: {}", first_line(stmt)))?;
-            affected += done.affected_rows.unwrap_or(0);
+            if classify_sql(stmt) == RequestKind::Query {
+                let read = channel::query_rows(&ch, stmt, vec![])
+                    .await
+                    .with_context(|| format!("statement failed: {}", first_line(stmt)))?;
+                last_read = Some(read);
+            } else {
+                let done = channel::execute(&ch, stmt, vec![])
+                    .await
+                    .with_context(|| format!("statement failed: {}", first_line(stmt)))?;
+                affected += done.affected_rows.unwrap_or(0);
+            }
         }
-        Ok::<i64, anyhow::Error>(affected)
+        Ok::<_, anyhow::Error>((affected, last_read))
     })??;
     Ok(SqlOutcome {
         statements: count,
         affected,
+        rows,
     })
 }
 

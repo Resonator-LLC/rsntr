@@ -450,7 +450,7 @@ async fn mod_add_and_enable_over_socket() {
 
 /// `rsntr sql --file` semantics: statements split on the semicolon,
 /// comment-only segments skipped, DDL permitted, everything audited as
-/// owner ops. The runner behind example-mod seeds (camera-mod's seed.sql).
+/// owner ops. The runner behind example-mod seeds (shop-mod's seed.sql).
 #[tokio::test(flavor = "multi_thread")]
 async fn sql_command_applies_a_seed_file() {
     let tmp = TempDir::new("och-sql");
@@ -490,6 +490,25 @@ INSERT OR IGNORE INTO seeds (name, note) VALUES ('rex', 'sun');
         .unwrap();
     assert_eq!(n, 2);
     drop(conn);
+
+    // A read statement returns its rows (the agent-facing SELECT path).
+    let outcome = tokio::task::spawn_blocking({
+        let dir = dir.clone();
+        move || {
+            rsntr::sqlcmd::run_sql(
+                &dir,
+                "SELECT name, note FROM seeds ORDER BY name",
+                Prefer::Auto,
+            )
+        }
+    })
+    .await
+    .expect("join")
+    .expect("select runs");
+    let (columns, rows, done) = outcome.rows.expect("a read reports rows");
+    assert_eq!(columns, vec!["name", "note"]);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(done.row_count, Some(2));
 
     // A failing statement reports which one.
     let err = tokio::task::spawn_blocking({

@@ -4,7 +4,7 @@ A camera wall served as a hologram (docs/hologram-protocol.md): the mod
 ships a viewer app that the observer mounts in a sealed iframe, and each
 stream rides the hologram broker's media lane - the node's builtin
 `media` modulation over iroh, relayed to the guest as transferable byte
-chunks and fed into MSE. A pure-config hologram mod: no
+chunks and fed into MSE. The pure-config companion to shop-mod: no
 database capabilities at all.
 
 Standalone cargo project (not a workspace member), `resonator-mod-pdk`

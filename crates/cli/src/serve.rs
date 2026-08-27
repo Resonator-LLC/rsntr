@@ -25,6 +25,8 @@ pub struct RunningNode {
     task: JoinHandle<()>,
     outbox: OutboxHandle,
     presence: Arc<Presence>,
+    /// The event-hook dispatcher (`rsntr hook`, crate::hooks).
+    hooks: JoinHandle<()>,
     /// The owner channel's control socket (docs/owner-channel.md sec
     /// 3.2); `None` when binding failed (serving continues without it).
     #[cfg(unix)]
@@ -104,6 +106,7 @@ impl RunningNode {
         }
         self.outbox.shutdown().await;
         self.presence.shutdown().await;
+        self.hooks.abort();
         self.task.abort();
         self.transport.shutdown().await;
     }
@@ -289,9 +292,18 @@ pub async fn start_node_with(
         Err(e) => tracing::warn!(error = %e, "mods host failed to load"),
     }
 
+    // The reserved `_hooks` table (rsntr hook; crate::hooks), so the
+    // observer below has something to watch from the first serve run.
+    node.db()
+        .call(|conn| conn.execute_batch(crate::hooks::HOOKS_DDL))
+        .await
+        .map_err(|e| anyhow::anyhow!("creating _hooks: {e}"))?
+        .map_err(|e| anyhow::anyhow!("creating _hooks: {e}"))?;
+
     // Outbox worker: sqlite has one update_hook per connection and the
     // node's vibration hook owns it, so the worker's wake is composed in
-    // as the node's table observer instead of a second hook.
+    // as the node's table observer instead of a second hook. The hook
+    // runner's wake composes into the same single observer slot.
     let outbox = OutboxWorker::spawn(
         node.db().clone(),
         transport.clone(),
@@ -303,9 +315,14 @@ pub async fn start_node_with(
     .await
     .map_err(|e| anyhow::anyhow!("starting the outbox worker: {e}"))?;
     let waker = outbox.waker();
+    let (hook_tx, hook_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let hooks = crate::hooks::HookRunner::spawn(dir.to_path_buf(), hook_rx);
     node.set_table_observer(move |table| {
         if table == "_outbox" {
             waker.wake();
+        }
+        if matches!(table, "chat_messages" | "_inbox" | "_hooks") {
+            let _ = hook_tx.send(table.to_string());
         }
     });
 
@@ -378,6 +395,7 @@ pub async fn start_node_with(
         task,
         outbox,
         presence,
+        hooks,
         #[cfg(unix)]
         owner_socket,
     })

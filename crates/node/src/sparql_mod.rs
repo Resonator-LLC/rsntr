@@ -6,7 +6,7 @@
 //! - `rsntr:Execute` + mod `sparql` carries SPARQL Update text (INSERT
 //!   DATA / DELETE DATA / DELETE WHERE), idempotent via `_applied`.
 //!
-//! Policy story (initial stance): the whole store is
+//! Policy story (PLAN.md section 11 initial stance): the whole store is
 //! gated by `_policy` rows on the `rdf_triples`/`rdf_terms` tables; a read
 //! needs `read` on them, an update needs `write`. Graph-level policy
 //! follows named-graph support.

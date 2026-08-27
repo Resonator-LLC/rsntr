@@ -27,6 +27,18 @@ use crate::store;
 /// The room IRI scheme (chat protocol sec 11).
 pub const ROOM_IRI_PREFIX: &str = "urn:rsntr:room:";
 
+/// The attachment name marking a body auto-spilled by `chat send` (the
+/// wire body is a preview; the full text is the blob). Readers
+/// ([`inline_spilled`]) fetch and inline it transparently.
+pub const SPILL_NAME: &str = "rsntr-spilled-body.txt";
+
+/// The preview kept in the wire body of a spilled message.
+const SPILL_PREVIEW_BYTES: usize = 1024;
+
+/// [`inline_spilled`] fetches at most this many bytes per message;
+/// bigger spills stay a preview plus BlobRef.
+pub const INLINE_MAX_BYTES: i64 = 4 * 1024 * 1024;
+
 fn chat_ready(conn: &Connection) -> Result<()> {
     let n: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages'",
@@ -154,14 +166,26 @@ pub fn chat_init_with(dir: &Path, prefer: Prefer) -> Result<PeerId> {
         // Table descriptions (the console mandates them; scaffolds
         // therefore ship them).
         for (table, comment) in [
-            ("chat_messages", "chat history: every message sent or received, by scope (peer or room)"),
-            ("chat_rooms", "chat rooms this node knows: room IRI, display name, hosting peer"),
-            ("chat_members", "room membership as known locally: who is in which room"),
+            (
+                "chat_messages",
+                "chat history: every message sent or received, by scope (peer or room)",
+            ),
+            (
+                "chat_rooms",
+                "chat rooms this node knows: room IRI, display name, hosting peer",
+            ),
+            (
+                "chat_members",
+                "room membership as known locally: who is in which room",
+            ),
         ] {
             channel::execute(
                 &ch,
                 "INSERT OR IGNORE INTO _comments (name, comment) VALUES (?1, ?2)",
-                vec![Value::Text(table.to_string()), Value::Text(comment.to_string())],
+                vec![
+                    Value::Text(table.to_string()),
+                    Value::Text(comment.to_string()),
+                ],
             )
             .await?;
         }
@@ -307,6 +331,10 @@ pub struct SendReport {
     pub blob: Option<(String, u64)>,
     /// Peers a delivery was enqueued to (fan-out when hosting a room).
     pub queued_to: Vec<String>,
+    /// The body exceeded [`BODY_MAX_BYTES`] and went out as a text-blob
+    /// attachment with a preview body; local history keeps the full
+    /// text.
+    pub spilled: bool,
 }
 
 /// Streaming BLAKE3 of a file, no blob store and no lock: the hash the
@@ -343,19 +371,40 @@ pub async fn chat_send_with(
     text: &str,
     file: Option<&Path>,
 ) -> Result<SendReport> {
-    if text.len() > BODY_MAX_BYTES {
-        bail!(
-            "message body is {} bytes; the ceiling is {BODY_MAX_BYTES} \
-             (anything bigger belongs in an attachment)",
-            text.len()
-        );
-    }
-
     let self_id = store::node_id(dir)?.to_string();
     let target = {
         let conn = store::open_db(dir)?;
         chat_ready(&conn)?;
         resolve_target(&conn, target)?
+    };
+
+    // Auto-spill: a body over the wire ceiling goes out as a text-blob
+    // attachment with a preview body; local history keeps the full text.
+    let mut spill_tmp: Option<std::path::PathBuf> = None;
+    let (wire_body, attach_path, attach_name, attach_type) = if text.len() > BODY_MAX_BYTES {
+        if file.is_some() {
+            bail!(
+                "the body is {} bytes (ceiling {BODY_MAX_BYTES}) and an attachment is \
+                 already given; put the big text in the --file instead",
+                text.len()
+            );
+        }
+        let tmp = dir.join(format!(".rsntr-spill-{}.txt", Ulid::new()));
+        std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
+        spill_tmp = Some(tmp.clone());
+        (
+            spill_preview(text),
+            Some(tmp),
+            Some(SPILL_NAME.to_string()),
+            Some("text/plain".to_string()),
+        )
+    } else {
+        (
+            text.to_string(),
+            file.map(Path::to_path_buf),
+            file.and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())),
+            file.map(guess_content_type),
+        )
     };
 
     let ch = OwnerChannel::open(dir, prefer).await?;
@@ -365,7 +414,7 @@ pub async fn chat_send_with(
     // to the node (the owner-channel-only path parameter below); in
     // process the lock is free and the CLI imports directly, as before.
     let mut import_path: Option<std::path::PathBuf> = None;
-    let attachment = match file {
+    let attachment = match &attach_path {
         None => None,
         Some(path) if ch.is_socket() => {
             let (hash, bytes) = hash_file_blake3(path)?;
@@ -376,8 +425,8 @@ pub async fn chat_send_with(
             Some(BlobAttachment {
                 hash: format!("blake3:{hash}"),
                 bytes: Some(bytes as i64),
-                name: path.file_name().map(|n| n.to_string_lossy().into_owned()),
-                content_type: Some(guess_content_type(path)),
+                name: attach_name.clone(),
+                content_type: attach_type.clone(),
             })
         }
         Some(path) => {
@@ -387,8 +436,8 @@ pub async fn chat_send_with(
             Some(BlobAttachment {
                 hash: format!("blake3:{hash}"),
                 bytes: Some(bytes as i64),
-                name: path.file_name().map(|n| n.to_string_lossy().into_owned()),
-                content_type: Some(guess_content_type(path)),
+                name: attach_name.clone(),
+                content_type: attach_type.clone(),
             })
         }
     };
@@ -443,7 +492,7 @@ pub async fn chat_send_with(
         let msg = ChatMessage {
             id: Some(message_id.clone()),
             at: Some(at.clone()),
-            body: text.to_string(),
+            body: wire_body.clone(),
             attachment: attachment.clone(),
             ..ChatMessage::default()
         };
@@ -475,7 +524,7 @@ pub async fn chat_send_with(
             let msg = ChatMessage {
                 id: Some(message_id.clone()),
                 at: Some(at.clone()),
-                body: text.to_string(),
+                body: wire_body.clone(),
                 attachment: attachment.clone(),
                 ..ChatMessage::default()
             };
@@ -505,7 +554,7 @@ pub async fn chat_send_with(
                     from: Some(self_id.clone()),
                     room: Some(room_id.clone()),
                     at: Some(at.clone()),
-                    body: text.to_string(),
+                    body: wire_body.clone(),
                     attachment: attachment.clone(),
                     room_name: Some(name.clone()),
                 };
@@ -538,7 +587,7 @@ pub async fn chat_send_with(
                     id: Some(message_id.clone()),
                     room: Some(room_id.clone()),
                     at: Some(at.clone()),
-                    body: text.to_string(),
+                    body: wire_body.clone(),
                     attachment: attachment.clone(),
                     ..ChatMessage::default()
                 };
@@ -558,12 +607,31 @@ pub async fn chat_send_with(
         }
     }
 
+    let spilled = spill_tmp.is_some();
+    if let Some(tmp) = spill_tmp {
+        let _ = std::fs::remove_file(tmp);
+    }
     Ok(SendReport {
         message_id,
         scope,
         blob: attachment.map(|b| (b.hash, b.bytes.unwrap_or(0) as u64)),
         queued_to,
+        spilled,
     })
+}
+
+/// The preview body of a spilled message: a prefix on a char boundary
+/// plus a marker (readers with the blob inline the full text back).
+fn spill_preview(text: &str) -> String {
+    let mut end = SPILL_PREVIEW_BYTES.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{} … [{} bytes; full text in the attachment]",
+        &text[..end],
+        text.len()
+    )
 }
 
 /// One `chat log` line.
@@ -576,6 +644,7 @@ pub struct LogEntry {
     pub received_at: String,
     pub body: String,
     pub blob_hash: Option<String>,
+    pub blob_bytes: Option<i64>,
     pub blob_name: Option<String>,
     pub outgoing: bool,
     /// `_outbox.status` of own outgoing messages
@@ -584,20 +653,27 @@ pub struct LogEntry {
 }
 
 /// `rsntr chat log <target>`: a local read of `chat_messages` for that
-/// scope, newest first, joined with delivery status.
-pub fn chat_log(dir: &Path, target: &str, limit: i64) -> Result<Vec<LogEntry>> {
+/// scope, newest first, joined with delivery status. `since` (a message
+/// ULID; they are totally ordered) restricts to strictly newer messages
+/// — the agent's cursor.
+pub fn chat_log(
+    dir: &Path,
+    target: &str,
+    limit: i64,
+    since: Option<&str>,
+) -> Result<Vec<LogEntry>> {
     let conn = store::open_db(dir)?;
     chat_ready(&conn)?;
     let scope = resolve_target(&conn, target)?.scope();
     let mut stmt = conn.prepare(
         "SELECT m.id, m.scope, m.sender, m.at, m.received_at, m.body, \
-                m.blob_hash, m.blob_name, m.outgoing, o.status \
+                m.blob_hash, m.blob_bytes, m.blob_name, m.outgoing, o.status \
          FROM chat_messages m LEFT JOIN _outbox o ON o.request_id = m.id \
-         WHERE m.scope = ?1 \
+         WHERE m.scope = ?1 AND (?3 IS NULL OR m.id > ?3) \
          ORDER BY m.received_at DESC, m.id DESC LIMIT ?2",
     )?;
     let rows = stmt
-        .query_map((scope, limit), |r| {
+        .query_map((scope, limit, since), |r| {
             Ok(LogEntry {
                 id: r.get(0)?,
                 scope: r.get(1)?,
@@ -606,9 +682,10 @@ pub fn chat_log(dir: &Path, target: &str, limit: i64) -> Result<Vec<LogEntry>> {
                 received_at: r.get(4)?,
                 body: r.get(5)?,
                 blob_hash: r.get(6)?,
-                blob_name: r.get(7)?,
-                outgoing: r.get::<_, i64>(8)? != 0,
-                status: r.get(9)?,
+                blob_bytes: r.get(7)?,
+                blob_name: r.get(8)?,
+                outgoing: r.get::<_, i64>(9)? != 0,
+                status: r.get(10)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -620,8 +697,9 @@ pub fn chat_log(dir: &Path, target: &str, limit: i64) -> Result<Vec<LogEntry>> {
 pub enum WatchEvent {
     /// Entrained to the local inbox point.
     Entrained,
-    /// A new message in the watched scope.
-    Message(LogEntry),
+    /// A new message in the watched scope (boxed: a LogEntry dwarfs the
+    /// signalling variants).
+    Message(Box<LogEntry>),
     /// The damp was confirmed; the watch is over.
     Damped,
     Denied(String),
@@ -733,10 +811,10 @@ pub async fn chat_watch(
                             }
                         }
                         Ev::Vibration(_) => {
-                            let (new_cursor, entries) = read_since(&dir, cursor, &scope)?;
+                            let (new_cursor, entries) = read_since(&dir, cursor, Some(&scope))?;
                             cursor = new_cursor;
                             for entry in entries {
-                                if tx.send(WatchEvent::Message(entry)).await.is_err() {
+                                if tx.send(WatchEvent::Message(Box::new(entry))).await.is_err() {
                                     return Ok(());
                                 }
                             }
@@ -794,12 +872,13 @@ pub async fn chat_watch(
     result
 }
 
-/// Rows past `cursor` (by rowid) for `scope`; returns the advanced
-/// cursor over all rows seen, matching or not.
-fn read_since(dir: &Path, cursor: i64, scope: &str) -> Result<(i64, Vec<LogEntry>)> {
+/// Rows past `cursor` (by rowid), filtered to `scope` when given;
+/// returns the advanced cursor over all rows seen, matching or not.
+fn read_since(dir: &Path, cursor: i64, scope: Option<&str>) -> Result<(i64, Vec<LogEntry>)> {
     let conn = store::open_db(dir)?;
     let mut stmt = conn.prepare(
-        "SELECT rowid, id, scope, sender, at, received_at, body, blob_hash, blob_name, outgoing \
+        "SELECT rowid, id, scope, sender, at, received_at, body, \
+                blob_hash, blob_bytes, blob_name, outgoing \
          FROM chat_messages WHERE rowid > ?1 ORDER BY rowid",
     )?;
     let mut new_cursor = cursor;
@@ -815,8 +894,9 @@ fn read_since(dir: &Path, cursor: i64, scope: &str) -> Result<(i64, Vec<LogEntry
                 received_at: r.get(5)?,
                 body: r.get(6)?,
                 blob_hash: r.get(7)?,
-                blob_name: r.get(8)?,
-                outgoing: r.get::<_, i64>(9)? != 0,
+                blob_bytes: r.get(8)?,
+                blob_name: r.get(9)?,
+                outgoing: r.get::<_, i64>(10)? != 0,
                 status: None,
             },
         ))
@@ -824,11 +904,237 @@ fn read_since(dir: &Path, cursor: i64, scope: &str) -> Result<(i64, Vec<LogEntry
     for row in rows {
         let (rowid, entry) = row?;
         new_cursor = new_cursor.max(rowid);
-        if entry.scope == scope {
+        if scope.is_none_or(|s| entry.scope == s) {
             out.push(entry);
         }
     }
     Ok((new_cursor, out))
+}
+
+/// What `rsntr chat wait` returned.
+#[derive(Debug)]
+pub struct WaitReport {
+    /// The window elapsed with nothing arriving.
+    pub timed_out: bool,
+    /// The incoming messages that ended the wait (oldest first).
+    pub messages: Vec<LogEntry>,
+    /// The highest message ULID seen — the `--since` cursor for the
+    /// next read.
+    pub next_since: Option<String>,
+}
+
+/// `rsntr chat wait [<target>] --timeout <secs>`: block until an
+/// incoming message arrives (in `target`'s scope, or any scope when
+/// omitted) or the window elapses. The agent's bounded-wait primitive:
+/// one JSON object out, exit 0 on message, 3 on timeout.
+///
+/// Rides the same loopback entrainment as [`chat_watch`], so it needs a
+/// serving daemon. Own sends never end the wait.
+pub async fn chat_wait(
+    dir: &Path,
+    target: Option<&str>,
+    timeout: std::time::Duration,
+) -> Result<WaitReport> {
+    let conn = store::open_db(dir)?;
+    chat_ready(&conn)?;
+    let scope = match target {
+        Some(t) => Some(resolve_target(&conn, t)?.scope()),
+        None => None,
+    };
+    let self_id = store::node_id(dir)?;
+    let addrs: Vec<std::net::SocketAddr> = resonator_node::get_rsntr(&conn, "serving_addrs")
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .map(|texts| texts.iter().filter_map(|t| t.parse().ok()).collect())
+        .unwrap_or_default();
+    if addrs.is_empty() {
+        bail!(
+            "no serving node found for {}; start one with `rsntr serve {}`",
+            dir.display(),
+            dir.display()
+        );
+    }
+    let mut cursor: i64 = conn
+        .query_row(
+            "SELECT COALESCE(max(rowid), 0) FROM chat_messages",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let hello = store::hello_from_db(&conn);
+
+    let config = IrohConfig {
+        hello,
+        secret_key: None,
+        offline: true,
+        relays: Vec::new(),
+        gossip: false,
+        blobs: None,
+    };
+    let (transport, _incoming) = IrohTransport::bind(config)
+        .await
+        .map_err(|e| anyhow::anyhow!("binding the wait endpoint: {e}"))?;
+    transport.add_peer_addrs(self_id, addrs);
+
+    let watch_hex = transport.peer_id().to_string();
+    conn.execute(
+        "INSERT OR IGNORE INTO _peers (endpoint_id, name, added_at, notes) \
+         VALUES (?1, '_watch', datetime('now'), ?2)",
+        (&watch_hex, WATCH_NOTE),
+    )?;
+    ensure_policy(&conn, &watch_hex, "chat_messages", "read", WATCH_NOTE)?;
+    ensure_policy(&conn, &watch_hex, "chat_messages", "entrain", WATCH_NOTE)?;
+    drop(conn);
+
+    let entrain_id = Ulid::new().to_string();
+    let deadline = tokio::time::Instant::now() + timeout;
+    let result = async {
+        let (mut stream, _hello) = transport.open(self_id).await.map_err(|e| {
+            anyhow::anyhow!(
+                "no node is serving {} (self-dial failed: {e})",
+                dir.display()
+            )
+        })?;
+        stream
+            .send(&EnvelopeObject::Entrain(resonator_protocol::Entrain {
+                id: entrain_id.clone(),
+                point: CHAT_INBOX_POINT.to_string(),
+            }))
+            .await
+            .map_err(|e| anyhow::anyhow!("sending the entrain request: {e}"))?;
+
+        let mut reader = resonator_protocol::EntrainmentReader::new(&entrain_id, CHAT_INBOX_POINT);
+        // Reads rows past the cursor and keeps the incoming ones; the
+        // catch-up after Entrained covers what landed during setup.
+        let take_new = |cursor: &mut i64| -> Result<Vec<LogEntry>> {
+            let (new_cursor, entries) = read_since(dir, *cursor, scope.as_deref())?;
+            *cursor = new_cursor;
+            Ok(entries.into_iter().filter(|e| !e.outgoing).collect())
+        };
+        loop {
+            tokio::select! {
+                frame = stream.recv() => {
+                    let Some(frame) = frame
+                        .map_err(|e| anyhow::anyhow!("receiving from the wait stream: {e}"))?
+                    else {
+                        bail!("the serving node closed the wait stream");
+                    };
+                    use resonator_protocol::EntrainmentEvent as Ev;
+                    match reader.accept(frame).context("entrainment choreography")? {
+                        Ev::Entrained | Ev::Vibration(_) => {
+                            let messages = take_new(&mut cursor)?;
+                            if !messages.is_empty() {
+                                let next_since = messages.iter().map(|e| e.id.clone()).max();
+                                // Closing the connection damps the
+                                // entrainment; no in-band Damp needed.
+                                return Ok(WaitReport {
+                                    timed_out: false,
+                                    messages,
+                                    next_since,
+                                });
+                            }
+                        }
+                        Ev::Damped => bail!("the serving node damped the wait"),
+                        Ev::Denied(d) => bail!(
+                            "denied: {}",
+                            d.reason.unwrap_or_else(|| "(no reason given)".into())
+                        ),
+                        Ev::Error(e) => bail!("{}: {}", e.code, e.reason.unwrap_or_default()),
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Ok(WaitReport {
+                        timed_out: true,
+                        messages: Vec::new(),
+                        next_since: None,
+                    });
+                }
+            }
+        }
+    }
+    .await;
+    transport.shutdown().await;
+    if let Ok(conn) = store::open_db(dir) {
+        let _ = conn.execute("DELETE FROM _peers WHERE endpoint_id = ?1", [&watch_hex]);
+        let _ = conn.execute(
+            "DELETE FROM _policy WHERE peer_or_group = ?1 AND note = ?2",
+            (&watch_hex, WATCH_NOTE),
+        );
+    }
+    result
+}
+
+/// True when this entry is an incoming auto-spilled body still waiting
+/// to be inlined.
+pub fn is_spilled(entry: &LogEntry) -> bool {
+    !entry.outgoing && entry.blob_hash.is_some() && entry.blob_name.as_deref() == Some(SPILL_NAME)
+}
+
+/// Fetches and inlines spilled bodies from their senders, persisting the
+/// full text into `chat_messages` (so each spill fetches once; the
+/// cleared `blob_name` marks it inlined). Failures and bodies over
+/// [`INLINE_MAX_BYTES`] keep their preview and are reported by message
+/// id in the returned list.
+pub async fn inline_spilled(dir: &Path, entries: &mut [LogEntry]) -> Vec<String> {
+    let mut skipped = Vec::new();
+    for entry in entries.iter_mut() {
+        if !is_spilled(entry) {
+            continue;
+        }
+        if entry.blob_bytes.is_some_and(|b| b > INLINE_MAX_BYTES) {
+            skipped.push(entry.id.clone());
+            continue;
+        }
+        let Some(hash) = entry.blob_hash.clone() else {
+            continue;
+        };
+        // Stored dial hints first (cheap, LAN/offline friendly), then
+        // the discovery/relay path (which still layers the stored hints
+        // under it); one more round after a pause covers transient
+        // holepunching state.
+        let mut fetched = Err(anyhow::anyhow!("unfetched"));
+        'rounds: for round in 0..2 {
+            if round > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            for (offline, secs) in [(true, 10), (false, 15)] {
+                fetched = crate::client::run_fetch(
+                    dir,
+                    &entry.sender,
+                    &hash,
+                    None,
+                    offline,
+                    std::time::Duration::from_secs(secs),
+                )
+                .await;
+                if matches!(fetched, Ok(crate::client::FetchOutcome::Bytes(_))) {
+                    break 'rounds;
+                }
+            }
+        }
+        match fetched {
+            Ok(crate::client::FetchOutcome::Bytes(bytes)) => match String::from_utf8(bytes) {
+                Ok(text) => {
+                    if let Ok(conn) = store::open_db(dir) {
+                        let _ = conn.execute(
+                            "UPDATE chat_messages SET body = ?1, blob_name = NULL WHERE id = ?2",
+                            (&text, &entry.id),
+                        );
+                    }
+                    entry.body = text;
+                    entry.blob_name = None;
+                }
+                Err(_) => {
+                    tracing::warn!(id = %entry.id, "spilled body is not utf-8; keeping the preview");
+                    skipped.push(entry.id.clone());
+                }
+            },
+            Ok(_) | Err(_) => {
+                tracing::warn!(id = %entry.id, "fetching the spilled body failed; keeping the preview");
+                skipped.push(entry.id.clone());
+            }
+        }
+    }
+    skipped
 }
 
 /// `rsntr chat room create <name>`: mint the room IRI; this node hosts.

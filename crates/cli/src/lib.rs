@@ -25,12 +25,18 @@ pub mod chat;
 pub mod client;
 #[cfg(feature = "web")]
 pub mod csvcmd;
+#[cfg(unix)]
+pub mod detach;
+pub mod hooks;
 pub mod inboxcmd;
 #[cfg(feature = "mods")]
 pub mod modcmd;
 pub mod output;
 #[cfg(unix)]
 pub mod owner_socket;
+#[cfg(unix)]
+pub mod pipecmd;
+pub mod rdfcmd;
 pub mod serve;
 pub mod sqlcmd;
 pub mod store;
@@ -38,8 +44,8 @@ pub mod teletype;
 
 pub use channel::{OwnerChannel, Prefer};
 pub use chat::{
-    LogEntry, SendReport, Target, WatchEvent, chat_init, chat_log, chat_send, chat_watch,
-    resolve_target, room_add, room_create, room_join,
+    LogEntry, SendReport, Target, WaitReport, WatchEvent, chat_init, chat_log, chat_send,
+    chat_wait, chat_watch, inline_spilled, resolve_target, room_add, room_create, room_join,
 };
 pub use client::{
     EntrainItem, FetchOutcome, MediaChunk, ProjectionOutcome, QueryOutcome, QueryReport,

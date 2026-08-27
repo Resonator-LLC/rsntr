@@ -353,6 +353,12 @@ pub async fn start_node_with(
         }
     };
 
+    // The vibration/update hook must exist before start_node returns:
+    // run() installs it too, but only after its task gets scheduled — a
+    // commit in that window would vibrate nothing and fire no hooks.
+    node.install_vibration_hook()
+        .await
+        .map_err(|e| anyhow::anyhow!("installing the vibration hook: {e}"))?;
     let task = tokio::spawn(node.clone().run(incoming));
 
     // Presence gossip on the same endpoint and identity (the transport's

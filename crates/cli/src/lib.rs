@@ -27,6 +27,7 @@ pub mod client;
 pub mod csvcmd;
 #[cfg(unix)]
 pub mod detach;
+pub mod guide;
 pub mod hooks;
 pub mod inboxcmd;
 #[cfg(feature = "mods")]
@@ -71,7 +72,8 @@ pub const EXIT_TIMEOUT: i32 = 3;
 
 /// One line documenting the exit codes, shown in `--help`.
 pub const EXIT_CODES_HELP: &str = "Exit codes: 0 ok, 1 error, 2 denied, 3 timeout. \
-     --json emits stable machine-readable JSON on stdout.";
+     --json emits stable machine-readable JSON on stdout. \
+     The full operating manual is built in: `rsntr guide [topic]`.";
 
 /// Test-only scratch directory helper shared by unit and integration
 /// tests (no tempfile dependency).

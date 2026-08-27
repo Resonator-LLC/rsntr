@@ -15,8 +15,8 @@ Six packages are published per release:
 | package | contents |
 |---|---|
 | `rsntr` | the launcher shim, ~14KB |
-| `rsntr-linux-x64` | static musl binary, x86_64 |
-| `rsntr-linux-arm64` | static musl binary, aarch64 |
+| `rsntr-linux-x64` | glibc 2.35+ binary, x86_64 |
+| `rsntr-linux-arm64` | glibc 2.35+ binary, aarch64 |
 | `rsntr-darwin-x64` | Mach-O x86_64 |
 | `rsntr-darwin-arm64` | Mach-O arm64 |
 | `rsntr-win32-x64` | PE32+ x86-64 |
@@ -26,8 +26,11 @@ package whose fields do not match the host, so the root package can list all
 five as `optionalDependencies` and each user downloads exactly one (~18MB)
 rather than all five (~90MB).
 
-The Linux binaries are static musl builds, so one artifact per architecture
-serves glibc and musl hosts alike -- no separate `-gnu` packages.
+The Linux binaries are glibc builds with a 2.35 floor (Ubuntu 22.04,
+Debian 12, and newer). Static musl builds would be nicer, but musl's
+4-aligned `cmsghdr` trips a cmsg alignment assert in the QUIC UDP layer
+on the first received packet; until that is fixed upstream, musl-only
+hosts (Alpine) are not served.
 
 ## Why the binaries are bundled
 

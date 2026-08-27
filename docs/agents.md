@@ -1,5 +1,9 @@
 # rsntr for agents
 
+This manual is compiled into the binary: `rsntr guide` prints it whole,
+`rsntr guide <topic>` one section (lifecycle, pairing, chat, hooks,
+rdf, pipes, security) — no docs checkout or network needed.
+
 The `rsntr` console tool is the agent interface to resonator: every
 command emits exactly one stable JSON object on stdout under the global
 `--json` flag, and the exit codes are a documented contract:

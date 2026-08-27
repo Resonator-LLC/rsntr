@@ -65,11 +65,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+          # gnu, not musl: musl's cmsghdr is 4-aligned and noq-udp's cmsg
+          # decode asserts payload alignment (timespec is 8), so a musl
+          # build aborts on the first received packet (seen in the 0.2.0
+          # binaries). Built on 22.04 for a glibc 2.35 floor.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             archive: tar.gz
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-14
             target: aarch64-apple-darwin
@@ -100,23 +104,12 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup target add ${{ matrix.target }}
 
-      # rusqlite is built bundled (C source) and needs a musl-targeting C
-      # compiler; the linker override matches what cargo looks for.
-      - name: Install musl toolchain
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools musl-dev
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
       - name: Build
         shell: bash
-        env:
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          CC_aarch64_unknown_linux_musl: musl-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: cargo build --release --target ${{ matrix.target }} -p rsntr --bin rsntr
 
       - name: Package

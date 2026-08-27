@@ -210,6 +210,13 @@ enum Command {
     /// Fetch a blob by BLAKE3 hash from a peer over iroh-blobs, verified
     /// streaming; bytes to -o <path> or stdout.
     Fetch(FetchArgs),
+    /// The built-in operating manual: node lifecycle, pairing, chat,
+    /// hooks, RDF, pipes — everything an agent or human needs, offline.
+    Guide {
+        /// A topic (e.g. lifecycle, pairing, chat, hooks, rdf, pipes,
+        /// security, intro); the whole manual when omitted.
+        topic: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1088,6 +1095,7 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
         },
         Command::Inbox { command } => runtime()?.block_on(cmd_inbox(command, json, prefer)),
         Command::Fetch(args) => runtime()?.block_on(cmd_fetch(args, json)),
+        Command::Guide { topic } => cmd_guide(topic.as_deref(), json),
         Command::Knock(args) => runtime()?.block_on(cmd_knock(args, json)),
         Command::Query(args) => runtime()?.block_on(cmd_query(args, json)),
         Command::Help(args) => runtime()?.block_on(cmd_help(args, json)),
@@ -1255,6 +1263,50 @@ fn cmd_mod(command: ModCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32
                 println!("{}", d.help_text);
             }
             Ok(EXIT_OK)
+        }
+    }
+}
+
+fn cmd_guide(topic: Option<&str>, json: bool) -> Result<i32> {
+    let text = match topic {
+        None => Some(rsntr::guide::GUIDE.to_string()),
+        Some(t) => rsntr::guide::lookup(t),
+    };
+    match text {
+        Some(text) => {
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "topic": topic,
+                        "text": text,
+                        "topics": rsntr::guide::topics(),
+                    })
+                );
+            } else {
+                print!("{text}");
+            }
+            Ok(EXIT_OK)
+        }
+        None => {
+            let topics = rsntr::guide::topics();
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": false,
+                        "error": { "code": "topic-unknown", "reason": topic },
+                        "topics": topics,
+                    })
+                );
+            } else {
+                eprintln!("no topic matches {:?}; one of:", topic.unwrap_or_default());
+                for t in topics {
+                    eprintln!("  {t}");
+                }
+            }
+            Ok(EXIT_ERROR)
         }
     }
 }

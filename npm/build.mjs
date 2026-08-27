@@ -25,10 +25,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = "Resonator-LLC/rsntr";
 
 // node platform-arch -> the rust target that serves it. The Linux binaries
-// are static musl builds, so one artifact covers glibc and musl hosts alike.
+// are glibc builds (2.35 floor, built on ubuntu-22.04): musl's 4-aligned
+// cmsghdr trips noq-udp's cmsg alignment assert on the first received
+// packet, so static musl builds abort on any real network traffic.
 const TARGETS = [
-  { key: "linux-x64", os: "linux", cpu: "x64", target: "x86_64-unknown-linux-musl", archive: "tar.gz" },
-  { key: "linux-arm64", os: "linux", cpu: "arm64", target: "aarch64-unknown-linux-musl", archive: "tar.gz" },
+  { key: "linux-x64", os: "linux", cpu: "x64", target: "x86_64-unknown-linux-gnu", archive: "tar.gz" },
+  { key: "linux-arm64", os: "linux", cpu: "arm64", target: "aarch64-unknown-linux-gnu", archive: "tar.gz" },
   { key: "darwin-x64", os: "darwin", cpu: "x64", target: "x86_64-apple-darwin", archive: "tar.gz" },
   { key: "darwin-arm64", os: "darwin", cpu: "arm64", target: "aarch64-apple-darwin", archive: "tar.gz" },
   { key: "win32-x64", os: "win32", cpu: "x64", target: "x86_64-pc-windows-msvc", archive: "zip" },

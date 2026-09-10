@@ -15,6 +15,62 @@ exactly what a policy row says. This workspace produces:
   envelope protocol, iroh as the current base transport, future
   bluetooth/radio behind a transport trait.
 
+## What you can do with it
+
+A node is a database with an identity and a dialable address, so the same
+machinery carries rows, files, and live byte streams. Everything below is denied
+until a policy row says otherwise, and revoked by deleting that row.
+
+**Pair two devices.** One prints a ticket, the other admits it. No account, no
+broker, no port forwarding.
+
+    rsntr serve ~/node                      # prints a live ticket
+    rsntr peer add station <ticket>         # on the other device
+    rsntr peer status station --probe       # reachable?
+
+**Move data.** Blobs travel by BLAKE3 hash over iroh-blobs as verified
+streaming, so a truncated or altered byte is caught rather than trusted.
+
+    rsntr fetch station blake3:<64hex> -o recording.mp4
+
+Structured data moves as itself: `rsntr sparql --peer station '<query>'` runs
+against the peer, and `turtle`, `sql` and `csv` load and dump the same rows
+locally or across the wire.
+
+**Forward a camera.** Register any command whose stdout is a stream, allow a
+peer, and watch it from anywhere the two nodes can reach each other.
+
+    # on the machine with the camera
+    rsntr media add ~/node nvr/39 'ffmpeg -i rtsp://cam/1 -f mpegts -' \
+        --content-type video/mp2t
+    rsntr media allow phone nvr/39
+
+    # anywhere else
+    rsntr watch station nvr/39 | ffplay -f mpegts -
+
+**Talk to a device.** A media source that also declares what its stdin accepts
+becomes audio-duplex — two-way voice over the same encrypted link.
+
+    rsntr media add ~/node door-talk 'aplay -f S16_LE -r 8000' \
+        --accepts 'audio/L16;rate=8000;channels=1' \
+        --content-type 'audio/L16;rate=8000;channels=1'
+
+    sox -d -t raw -r 8000 -e signed -b 16 -c 1 - | rsntr talk station door-talk
+
+**Anything else, as bytes.** Named pipes are duplex byte streams between nodes
+with a program on each end — a serial port, a log tail, a game, a protocol
+nobody has written down.
+
+    rsntr pipe add sensors 'python3 read_sensors.py'   # register an endpoint
+    rsntr pipe open station sensors                    # dial it from a peer
+    rsntr pipe accept scratch                          # or bridge one terminal, ad hoc
+
+**Build a small network for your own things.** Because a node is embeddable and
+the CLI is scriptable, a handful of devices — a laptop, a phone, a Pi in a shed,
+a notebook on Colab — become one addressable set that keeps its own data and
+answers each other's queries. No server in the middle, and nothing to keep
+paying for.
+
 ## One node per device
 
 Every app and tool on a device shares one resonator node: one identity,

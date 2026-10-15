@@ -148,3 +148,54 @@ async fn wait_unblocks_since_pages_and_spill_round_trips() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+/// M3: `chat wait` and `chat watch` ride the owner channel, so they
+/// admit no ephemeral identity (no `_peers`/`_policy` churn) and never
+/// fire the projection-changed point.
+#[tokio::test(flavor = "multi_thread")]
+async fn wait_leaves_no_ephemeral_rows_and_keeps_projection_quiet() {
+    let tb = TempDir::new("wait-quiet");
+    store::init_dir(tb.path()).expect("init");
+    chat::chat_init(tb.path()).expect("chat");
+    let b = serve::start_node(tb.path(), true).await.expect("serve");
+    let (_id, mut rx) = b
+        .node()
+        .entrainments()
+        .subscribe(resonator_protocol::vocab::PROJECTION_CHANGED.into(), None);
+    // Drain anything from startup.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while rx.try_recv().is_ok() {}
+
+    for _ in 0..3 {
+        let report = chat::chat_wait(tb.path(), None, Duration::from_millis(300))
+            .await
+            .expect("wait");
+        assert!(report.timed_out);
+    }
+    let conn = store::open_db(tb.path()).expect("open");
+    let watch_rows: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM _peers WHERE name = '_watch'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(watch_rows, 0, "no ephemeral admission");
+    let policy_rows: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM _policy WHERE note LIKE '%ephemeral%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(policy_rows, 0, "no ephemeral policy rows");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(rx.try_recv().is_err(), "projection-changed stayed quiet");
+
+    // No daemon: a clear error naming rsntr serve, not a dial timeout.
+    b.shutdown().await;
+    let err = chat::chat_wait(tb.path(), None, Duration::from_millis(300))
+        .await
+        .expect_err("no server");
+    assert!(err.to_string().contains("rsntr serve"), "{err}");
+}

@@ -28,6 +28,13 @@ use crate::pipeline::peer_known;
 /// `rsntr:body` ceiling in UTF-8 bytes (chat protocol sec 2).
 pub const BODY_MAX_BYTES: usize = 65536;
 
+/// `rsntr:re` ceiling in characters (it names a message id).
+pub const RE_MAX_CHARS: usize = 256;
+/// At most this many `rsntr:tag` values per message (after dedup).
+pub const TAGS_MAX: usize = 16;
+/// Each `rsntr:tag` ceiling in UTF-8 bytes.
+pub const TAG_MAX_BYTES: usize = 128;
+
 /// The policy resource name of direct messages. A colon keeps it out of
 /// any plausible SQL table namespace.
 pub const DIRECT_RESOURCE: &str = "chat:direct";
@@ -52,7 +59,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   blob_bytes  INTEGER,
   blob_name   TEXT,
   blob_type   TEXT,
-  outgoing    INTEGER NOT NULL DEFAULT 0
+  outgoing    INTEGER NOT NULL DEFAULT 0,
+  re_id       TEXT,
+  tags        TEXT
 );
 CREATE INDEX IF NOT EXISTS chat_messages_scope
   ON chat_messages (scope, received_at);
@@ -97,6 +106,106 @@ pub struct ChatMessage {
     pub attachment: Option<BlobAttachment>,
     /// The `<room> rsntr:name` label riding along, if any.
     pub room_name: Option<String>,
+    /// Threading: the id of the message this one answers (`rsntr:re`).
+    pub re: Option<String>,
+    /// Tags (`rsntr:tag`, repeatable); sorted and deduplicated.
+    pub tags: Vec<String>,
+}
+
+/// Validates and normalizes the threading fields shared by the wire
+/// parser and the sender: `re` is 1..=[`RE_MAX_CHARS`] characters, each
+/// tag 1..=[`TAG_MAX_BYTES`] bytes, at most [`TAGS_MAX`] tags after
+/// sorting and deduplication.
+pub fn validate_thread_fields(
+    re: Option<&str>,
+    tags: &mut Vec<String>,
+) -> Result<(), ChatParseError> {
+    if let Some(re) = re
+        && (re.is_empty() || re.chars().count() > RE_MAX_CHARS)
+    {
+        return Err(ChatParseError::Protocol(format!(
+            "rsntr:re must be 1..={RE_MAX_CHARS} characters"
+        )));
+    }
+    for tag in tags.iter() {
+        if tag.is_empty() || tag.len() > TAG_MAX_BYTES {
+            return Err(ChatParseError::Protocol(format!(
+                "rsntr:tag must be 1..={TAG_MAX_BYTES} bytes"
+            )));
+        }
+    }
+    tags.sort();
+    tags.dedup();
+    if tags.len() > TAGS_MAX {
+        return Err(ChatParseError::Limit(format!(
+            "{} tags; the ceiling is {TAGS_MAX}",
+            tags.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Adds the threading columns (`re_id`, `tags`) to a `chat_messages`
+/// table scaffolded before them, plus the `re_id` index. Idempotent; a
+/// no-op when chat is not scaffolded. Runs from `ensure_node_tables`,
+/// the chat handler, and the CLI's chat paths.
+/// The SQL-side chat log: messages joined with the sender's petname and
+/// the delivery status of own messages, so plain SQL answers "what did
+/// alice say and did mine arrive" without the CLI. `m.*` picks up every
+/// `chat_messages` column, threading included. Created by
+/// [`ensure_chat_columns`], so a database scaffolded before the view
+/// existed gets it on its next open rather than needing `chat init`
+/// re-run. SQLite resolves a view's tables when it is queried, not when
+/// it is created, so `_outbox` need not exist yet.
+pub const CHAT_LOG_VIEW_DDL: &str = "CREATE VIEW IF NOT EXISTS chat_log_v AS \
+     SELECT m.*, p.name AS sender_name, o.status AS delivery_status, \
+            CASE WHEN o.status = 'done' THEN o.completed_at END AS delivered_at \
+     FROM chat_messages m \
+     LEFT JOIN _peers p ON p.endpoint_id = m.sender \
+     LEFT JOIN _outbox o ON o.request_id = m.id";
+
+pub fn ensure_chat_columns(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let exists: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages'",
+        [],
+        |r| r.get(0),
+    )?;
+    if exists == 0 {
+        return Ok(());
+    }
+    for (column, ddl) in [
+        ("re_id", "ALTER TABLE chat_messages ADD COLUMN re_id TEXT"),
+        ("tags", "ALTER TABLE chat_messages ADD COLUMN tags TEXT"),
+    ] {
+        let has: i64 = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('chat_messages') WHERE name = ?1",
+            [column],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            conn.execute_batch(ddl)?;
+        }
+    }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS chat_messages_re ON chat_messages (re_id)")?;
+    // The view is part of the chat scaffold's migration, not of `chat
+    // init` alone: a node scaffolded before it existed must get it too.
+    conn.execute_batch(CHAT_LOG_VIEW_DDL)?;
+    Ok(())
+}
+
+/// `tags` as stored: a JSON array, or NULL when empty.
+pub fn tags_to_json(tags: &[String]) -> Option<String> {
+    if tags.is_empty() {
+        None
+    } else {
+        serde_json::to_string(tags).ok()
+    }
+}
+
+/// The stored `tags` JSON back to a list (garbage reads as empty).
+pub fn tags_from_json(raw: Option<&str>) -> Vec<String> {
+    raw.and_then(|r| serde_json::from_str::<Vec<String>>(r).ok())
+        .unwrap_or_default()
 }
 
 /// Why a signal failed to parse as a chat message.
@@ -178,6 +287,12 @@ pub fn parse_message(signal: &str) -> Result<ChatMessage, ChatParseError> {
             msg.at = term_text(&obj);
         } else if pred == prop::BODY.as_str() {
             body = term_text(&obj);
+        } else if pred == prop::RE.as_str() {
+            msg.re = term_text(&obj);
+        } else if pred == prop::TAG.as_str() {
+            if let Some(tag) = term_text(&obj) {
+                msg.tags.push(tag);
+            }
         } else if pred == prop::ROOM.as_str() {
             match obj {
                 Term::NamedNode(n) => msg.room = Some(n.as_str().to_string()),
@@ -223,6 +338,9 @@ pub fn parse_message(signal: &str) -> Result<ChatMessage, ChatParseError> {
             "rsntr:id must be 1..=256 characters".into(),
         ));
     }
+    let mut tags = std::mem::take(&mut msg.tags);
+    validate_thread_fields(msg.re.as_deref(), &mut tags)?;
+    msg.tags = tags;
 
     if let Some(node) = attachment_node {
         let mut blob = BlobAttachment::default();
@@ -282,6 +400,12 @@ pub fn message_to_turtle(msg: &ChatMessage) -> String {
         out.push_str(&format!("_:m {} {typed} .\n", prop::AT));
     }
     out.push_str(&format!("_:m {} {} .\n", prop::BODY, lit(&msg.body)));
+    if let Some(re) = &msg.re {
+        out.push_str(&format!("_:m {} {} .\n", prop::RE, lit(re)));
+    }
+    for tag in &msg.tags {
+        out.push_str(&format!("_:m {} {} .\n", prop::TAG, lit(tag)));
+    }
     if let Some(blob) = &msg.attachment {
         out.push_str(&format!("_:m {} _:b .\n", prop::ATTACHMENT));
         out.push_str(&format!("_:b {} {} .\n", rdf::TYPE, cls::BLOB_REF));
@@ -364,7 +488,10 @@ pub fn handle_chat(
     {
         return ChatOutcome::ModUnsupported;
     }
-    if let Err(e) = conn.execute_batch(CHAT_TABLES_DDL) {
+    if let Err(e) = conn
+        .execute_batch(CHAT_TABLES_DDL)
+        .and_then(|()| ensure_chat_columns(conn))
+    {
         return ChatOutcome::EngineError {
             message: format!("chat tables unavailable: {e}"),
         };
@@ -562,7 +689,10 @@ fn apply_message(
     fan_out_room: Option<&str>,
     self_id: &str,
 ) -> Result<i64, rusqlite::Error> {
-    let tx = conn.transaction()?;
+    // Immediate: the write lock is taken up front, so a second writer
+    // process queues behind the busy timeout instead of failing the
+    // read-then-write below on a snapshot conflict.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     // Wire-level idempotency: a retransmitted request is answered from
     // its recorded outcome.
@@ -597,8 +727,9 @@ fn apply_message(
     // id (a second delivery path) lands exactly once.
     let affected = tx.execute(
         "INSERT OR IGNORE INTO chat_messages \
-           (id, scope, sender, at, body, blob_hash, blob_bytes, blob_name, blob_type, outgoing) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
+           (id, scope, sender, at, body, blob_hash, blob_bytes, blob_name, blob_type, outgoing, \
+            re_id, tags) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11)",
         rusqlite::params![
             message_id,
             scope,
@@ -609,6 +740,8 @@ fn apply_message(
             blob.and_then(|b| b.bytes),
             blob.and_then(|b| b.name.clone()),
             blob.and_then(|b| b.content_type.clone()),
+            msg.re,
+            tags_to_json(&msg.tags),
         ],
     )? as i64;
 
@@ -633,6 +766,8 @@ fn apply_message(
             body: msg.body.clone(),
             attachment: msg.attachment.clone(),
             room_name,
+            re: msg.re.clone(),
+            tags: msg.tags.clone(),
         };
         let signal = message_to_turtle(&out);
         let members: Vec<String> = {
@@ -700,6 +835,8 @@ mod tests {
                 content_type: Some("image/jpeg".into()),
             }),
             room_name: Some("gardening".into()),
+            re: None,
+            tags: Vec::new(),
         };
         let turtle = message_to_turtle(&src);
         let back = parse_message(&turtle).expect("reparse");
@@ -748,5 +885,82 @@ mod tests {
             parse_message(&signal),
             Err(ChatParseError::Limit(_))
         ));
+    }
+    #[test]
+    fn threading_fields_round_trip_and_normalize() {
+        let src = ChatMessage {
+            id: Some("01K1CH4T0003XMPL0000000003".into()),
+            body: "yes, noon works".into(),
+            re: Some("01K1CH4T0001XMPL0000000001".into()),
+            tags: vec!["topic:lunch".into(), "ack".into(), "topic:lunch".into()],
+            ..ChatMessage::default()
+        };
+        let ttl = message_to_turtle(&src);
+        assert!(ttl.contains("rsntr#re>"), "{ttl}");
+        let back = parse_message(&ttl).expect("parse");
+        assert_eq!(back.re.as_deref(), Some("01K1CH4T0001XMPL0000000001"));
+        assert_eq!(
+            back.tags,
+            vec!["ack".to_string(), "topic:lunch".to_string()]
+        );
+    }
+
+    #[test]
+    fn threading_caps_are_enforced() {
+        let long_re = "x".repeat(RE_MAX_CHARS + 1);
+        let err = parse_message(&format!(
+            "[] a rsntr:Message ; rsntr:body \"b\" ; rsntr:re \"{long_re}\" ."
+        ))
+        .expect_err("re too long");
+        assert!(matches!(err, ChatParseError::Protocol(_)));
+        let many: String = (0..TAGS_MAX + 1)
+            .map(|i| format!("rsntr:tag \"t{i}\" ; "))
+            .collect();
+        let err = parse_message(&format!("[] a rsntr:Message ; {many} rsntr:body \"b\" ."))
+            .expect_err("too many tags");
+        assert!(matches!(err, ChatParseError::Limit(_)));
+        // Unknown predicates on old nodes: the open-world rule keeps a
+        // message with threading readable by a node that knows neither.
+        let msg =
+            parse_message("[] a rsntr:Message ; rsntr:body \"b\" ; rsntr:futureThing \"?\" .")
+                .expect("unknown predicate ignored");
+        assert_eq!(msg.body, "b");
+    }
+
+    #[test]
+    fn ensure_chat_columns_migrates_a_legacy_table_idempotently() {
+        let conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE chat_messages (id TEXT PRIMARY KEY, scope TEXT NOT NULL, \
+             sender TEXT NOT NULL, at TEXT NOT NULL, received_at TEXT NOT NULL DEFAULT '', \
+             body TEXT NOT NULL, blob_hash TEXT, blob_bytes INTEGER, blob_name TEXT, \
+             blob_type TEXT, outgoing INTEGER NOT NULL DEFAULT 0)",
+        )
+        .expect("legacy");
+        ensure_chat_columns(&conn).expect("migrate");
+        ensure_chat_columns(&conn).expect("again");
+        // The view is part of the migration: a database scaffolded before
+        // it existed picks it up on the next open (reported by the
+        // kontrolator fleet, 2026-09-10).
+        let views: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'view' AND name = 'chat_log_v'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("view count");
+        assert_eq!(views, 1, "chat_log_v must be created by the migration");
+        let cols: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('chat_messages') \
+                 WHERE name IN ('re_id', 'tags')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(cols, 2);
+        // The fresh DDL is compatible with the migrated shape.
+        conn.execute_batch(CHAT_TABLES_DDL)
+            .expect("fresh ddl on migrated db");
     }
 }

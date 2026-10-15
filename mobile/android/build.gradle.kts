@@ -44,4 +44,6 @@ dependencies {
     // The uniffi Kotlin bindings load the native library through JNA.
     implementation("net.java.dev.jna:jna:5.14.0@aar")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // SharedNode wires suspend/resume to the process lifecycle.
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
 }

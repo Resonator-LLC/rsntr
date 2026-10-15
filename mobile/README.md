@@ -26,10 +26,48 @@ are needed, per the design constraint recorded in PLAN.md sec 8.
   creates a node, writes a row, and shows vibrations).
 - `dist/`: build output (xcframework); not checked in.
 
+## Sharing one node between apps
+
+Every app on a device can use the same node (one identity, one
+database, one peer set); at most one process serves it at a time
+(`rsntr.serve.lock`), the others reach it over the owner channel
+(loopback TCP with a token in `rsntr.owner`; the unix socket where the
+path fits). Full model: `docs/shared-node.md`.
+
+- **iOS**: one app hosts the node in its `Documents/rsntr`
+  (`UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace` in its
+  Info.plist), the Files app shows it under the app's name, and any other
+  app joins by letting the user pick that folder once
+  (`SharedNode.pickerController()` -> `SharedNode.open(pickedFolder:)`;
+  later launches `SharedNode.openJoined`). `SharedNode.host` /
+  `openJoined` wire the lifecycle: `suspend()` on background (an app
+  suspended while holding a lock on a file in a shared folder is killed),
+  `resume()` on foreground, re-entrain in `onResume`. Any vendor; iCloud
+  Drive and other file providers are not usable (a live SQLite needs a
+  local filesystem). `ios/Sources/Resonator/SharedNode.swift`.
+- **Android**: apps signed with one key that declare the same
+  `android:sharedUserId` (from their first release) share one directory
+  under the host package's `noBackupFilesDir`; `SharedNode.open(context,
+  app)` in `android/src/main/java/network/resonator/SharedNode.kt` wires
+  `ProcessLifecycleOwner` (stop -> suspend unless a foreground Service
+  sets `keepServingInBackground`; start -> resume). Different uids cannot
+  share a SQLite file; that case is a host app plus IPC, not covered.
+- **Both**: open with `Node.open(dir, offline, app, policy)` (the
+  `AppInfo` registers in `_apps`), `declareTables` describes what the app
+  keeps there, `apps()` lists who else is around, `servingInfo()` says
+  who serves, `currentRoute()` where a call goes. `serve()` answers
+  `AlreadyServing` when another app holds the lease; that app is then
+  reached over the owner channel automatically, including `entrain`
+  (its `onEnd("server gone; re-entrain")` means: entrain again).
+
 ## API surface (same shape in Swift and Kotlin)
 
-- `Node(dir, offline)`: creates or reopens a node directory (sqlite db +
-  ed25519 key). Every method is blocking; call off the main thread.
+- `Node(dir, offline)` / `Node.open(dir, offline, app, policy)`: creates
+  or reopens a node directory (sqlite db + ed25519 key), registering the
+  app. Every method is blocking; call off the main thread.
+- `close()`, `suspend()`, `resume()`, `servingInfo()`,
+  `isSharedServing()`, `currentRoute()`, `apps()`, `declareTables()`:
+  the shared-directory lifecycle (above).
 - `serve()` / `stop()` / `isServing()`: serving runs on the crate's own
   background tokio runtime.
 - `ticket(waitMs)`, `addPeer(name, ticketOrId)`, `endpointId()`.
@@ -39,12 +77,13 @@ are needed, per the design constraint recorded in PLAN.md sec 8.
 - `entrain(point, listener) -> Entrainment`: the `VibrationListener`
   callback fires `onVibration` per signal of the Sympathetic point and
   `onEnd` when the entrainment stops; `Entrainment.damp()` ends it.
-  While not serving, entrainments and local writes share one in-process
-  pipeline (a local write vibrates); while serving, calls route to the
-  serving pipeline so remote writes vibrate too. Entrainments opened
-  before `serve()` stay on the standalone pipeline: damp and re-entrain
-  after starting to serve.
-- Do not call `Node` methods from inside `onVibration`/`onEnd`.
+  Calls route by the moment: this process's serving pipeline, the owner
+  channel to another serving process, or an in-process pipeline; writes
+  by other processes vibrate in every case (the pipelines watch for
+  foreign commits), and an entrainment held by another serving process
+  ends with `onEnd("server gone; re-entrain")` when it leaves.
+- Callbacks run on the node's own dispatcher thread, so a listener may
+  call `Node` methods.
 
 ## Verified on this machine (macOS 15, Xcode 26.5, rustc 1.97.1)
 
@@ -85,6 +124,45 @@ package `mobile/ios` from an app project and copy
 The package targets iOS 15+ (the xcframework carries device and
 simulator slices only).
 
+### Privacy manifest
+
+The package ships `Sources/Resonator/PrivacyInfo.xcprivacy` and declares
+it as a resource, so an app that embeds the package inherits the
+required-reason API declarations rather than discovering them from an
+App Store Connect rejection (the ITMS-9105x family). The check is
+static, against the linked binary, so it applies to an app that links
+resonator and never starts a node.
+
+Three categories are declared, and two of them are invisible from the
+Swift sources:
+
+| category | reason | where it comes from |
+| --- | --- | --- |
+| `UserDefaults` | `CA92.1` | `SharedNode.swift` stores the security-scoped bookmark for a Files-app folder in the host app's own defaults |
+| `FileTimestamp` | `C617.1`, `3B52.1` | the Rust library: `stat`, `fstat`, `lstat`, `fstatat` from SQLite's unix VFS and `std::fs`, on files in the app container or a folder picked through the document picker |
+| `DiskSpace` | `E174.1` | the Rust library: `statfs`, `fstatfs`, SQLite checking whether a write can succeed |
+
+The two Rust ones matter: grepping the Swift sources finds only
+`UserDefaults` and a manifest built from that alone is incomplete,
+because the static library is linked into the app binary and its symbols
+are attributed to the app. To re-audit after a dependency change:
+
+    strings -a mobile/dist/ResonatorFFI.xcframework/ios-arm64/libresonator_ffi.a \
+      | grep -xE '_(stat|fstat|lstat|fstatat|getattrlist|getattrlistbulk|fgetattrlist)' 
+    strings -a mobile/dist/ResonatorFFI.xcframework/ios-arm64/libresonator_ffi.a \
+      | grep -xE '_(statfs|fstatfs|statvfs|fstatvfs)'
+    strings -a mobile/dist/ResonatorFFI.xcframework/ios-arm64/libresonator_ffi.a \
+      | grep -xE '_(mach_absolute_time|systemUptime)'
+
+`NSPrivacyCollectedDataTypes` is empty and speaks only for the package:
+a node's data stays on the device and travels only to peers the user
+admits. An app that collects data of its own declares that in its own
+manifest.
+
+Apple revises both the API list and the enforcement dates. Confirm the
+categories and reason codes against current App Store Connect
+documentation before an upload rather than trusting this table.
+
 ## Build: Android
 
 1. Install an NDK (Android Studio: SDK Manager -> SDK Tools -> "NDK
@@ -105,6 +183,7 @@ already declared in `build.gradle.kts`.
         generate --library target/debug/libresonator_ffi.dylib \
         --language swift --out-dir mobile/swift
     # same with --language kotlin --out-dir mobile/kotlin
+    # on Linux the host library is target/debug/libresonator_ffi.so
 
 uniffi is pinned in the workspace `Cargo.toml` (`0.28`); bindings and
 library must always be generated from the same build.

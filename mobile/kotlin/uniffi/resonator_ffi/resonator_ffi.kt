@@ -786,6 +786,32 @@ internal open class UniffiVTableCallbackInterfaceVibrationListener(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -820,7 +846,11 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_resonator_ffi_fn_constructor_node_new(`dir`: RustBuffer.ByValue,`offline`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
+    fun uniffi_resonator_ffi_fn_constructor_node_open(`dir`: RustBuffer.ByValue,`offline`: Byte,`app`: RustBuffer.ByValue,`policy`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
     fun uniffi_resonator_ffi_fn_method_node_add_peer(`ptr`: Pointer,`name`: RustBuffer.ByValue,`ticketOrId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_resonator_ffi_fn_method_node_apps(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_chat_init(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -828,30 +858,52 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_chat_send(`ptr`: Pointer,`target`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_resonator_ffi_fn_method_node_close(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_resonator_ffi_fn_method_node_current_route(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_db_path(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_resonator_ffi_fn_method_node_declare_tables(`ptr`: Pointer,`tables`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_resonator_ffi_fn_method_node_endpoint_id(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_entrain(`ptr`: Pointer,`point`: RustBuffer.ByValue,`listener`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_resonator_ffi_fn_method_node_is_serving(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
+    fun uniffi_resonator_ffi_fn_method_node_is_shared_serving(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    fun uniffi_resonator_ffi_fn_method_node_knock(`ptr`: Pointer,`peer`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_local_execute(`ptr`: Pointer,`signal`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_local_query(`ptr`: Pointer,`signal`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_query_peer(`ptr`: Pointer,`peer`: RustBuffer.ByValue,`signal`: RustBuffer.ByValue,`modulation`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_resonator_ffi_fn_method_node_resume(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_serve(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_resonator_ffi_fn_method_node_serve_web(`ptr`: Pointer,`rotateToken`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_resonator_ffi_fn_method_node_serving_info(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_sparql(`ptr`: Pointer,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_stop(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_resonator_ffi_fn_method_node_stop_web(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_resonator_ffi_fn_method_node_suspend(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_resonator_ffi_fn_method_node_ticket(`ptr`: Pointer,`waitMs`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_method_node_wake_outbox(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_resonator_ffi_fn_method_node_web_url(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_resonator_ffi_fn_clone_vibrationlistener(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_resonator_ffi_fn_free_vibrationlistener(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -980,13 +1032,21 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_add_peer(
     ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_apps(
+    ): Short
     fun uniffi_resonator_ffi_checksum_method_node_chat_init(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_chat_log(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_chat_send(
     ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_close(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_current_route(
+    ): Short
     fun uniffi_resonator_ffi_checksum_method_node_db_path(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_declare_tables(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_endpoint_id(
     ): Short
@@ -994,27 +1054,45 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_is_serving(
     ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_is_shared_serving(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_knock(
+    ): Short
     fun uniffi_resonator_ffi_checksum_method_node_local_execute(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_local_query(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_query_peer(
     ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_resume(
+    ): Short
     fun uniffi_resonator_ffi_checksum_method_node_serve(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_serve_web(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_serving_info(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_sparql(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_stop(
     ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_stop_web(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_suspend(
+    ): Short
     fun uniffi_resonator_ffi_checksum_method_node_ticket(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_node_wake_outbox(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_method_node_web_url(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_vibrationlistener_on_vibration(
     ): Short
     fun uniffi_resonator_ffi_checksum_method_vibrationlistener_on_end(
     ): Short
     fun uniffi_resonator_ffi_checksum_constructor_node_new(
+    ): Short
+    fun uniffi_resonator_ffi_checksum_constructor_node_open(
     ): Short
     fun ffi_resonator_ffi_uniffi_contract_version(
     ): Int
@@ -1042,25 +1120,43 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_resonator_ffi_checksum_method_node_add_peer() != 25651.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_apps() != 50620.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_resonator_ffi_checksum_method_node_chat_init() != 21198.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_resonator_ffi_checksum_method_node_chat_log() != 40246.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_node_chat_send() != 29790.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_node_chat_send() != 10291.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_close() != 1312.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_current_route() != 18880.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_resonator_ffi_checksum_method_node_db_path() != 22430.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_declare_tables() != 60411.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_resonator_ffi_checksum_method_node_endpoint_id() != 1104.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_node_entrain() != 42183.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_node_entrain() != 32631.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_node_is_serving() != 6494.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_node_is_serving() != 38621.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_is_shared_serving() != 65495.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_knock() != 34135.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_resonator_ffi_checksum_method_node_local_execute() != 30344.toShort()) {
@@ -1072,28 +1168,49 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_resonator_ffi_checksum_method_node_query_peer() != 24285.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_node_serve() != 16508.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_node_resume() != 46568.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_serve() != 43145.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_serve_web() != 36507.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_serving_info() != 25341.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_resonator_ffi_checksum_method_node_sparql() != 11957.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_node_stop() != 19991.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_node_stop() != 39956.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_stop_web() != 17221.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_suspend() != 1276.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_resonator_ffi_checksum_method_node_ticket() != 17519.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_node_wake_outbox() != 7461.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_node_wake_outbox() != 24394.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_method_node_web_url() != 25140.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_resonator_ffi_checksum_method_vibrationlistener_on_vibration() != 63114.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_method_vibrationlistener_on_end() != 58233.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_method_vibrationlistener_on_end() != 3220.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_resonator_ffi_checksum_constructor_node_new() != 30471.toShort()) {
+    if (lib.uniffi_resonator_ffi_checksum_constructor_node_new() != 30631.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_resonator_ffi_checksum_constructor_node_open() != 108.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1142,6 +1259,29 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
  * @suppress
  * */
 object NoPointer
+
+/**
+ * @suppress
+ */
+public object FfiConverterUInt: FfiConverter<UInt, Int> {
+    override fun lift(value: Int): UInt {
+        return value.toUInt()
+    }
+
+    override fun read(buf: ByteBuffer): UInt {
+        return lift(buf.getInt())
+    }
+
+    override fun lower(value: UInt): Int {
+        return value.toInt()
+    }
+
+    override fun allocationSize(value: UInt) = 4UL
+
+    override fun write(value: UInt, buf: ByteBuffer) {
+        buf.putInt(value.toInt())
+    }
+}
 
 /**
  * @suppress
@@ -1475,7 +1615,7 @@ private class JavaLangRefCleanable(
 }
 /**
  * A live entrainment; dropping it does NOT damp (the session is held by
- * the runtime until `damp()` or node shutdown).
+ * the runtime until `damp()`, node shutdown, or `close()`).
  */
 public interface EntrainmentInterface {
     
@@ -1495,7 +1635,7 @@ public interface EntrainmentInterface {
 
 /**
  * A live entrainment; dropping it does NOT damp (the session is held by
- * the runtime until `damp()` or node shutdown).
+ * the runtime until `damp()`, node shutdown, or `close()`).
  */
 open class Entrainment: Disposable, AutoCloseable, EntrainmentInterface {
 
@@ -1745,7 +1885,8 @@ public object FfiConverterTypeEntrainment: FfiConverter<Entrainment, Pointer> {
 
 /**
  * A resonator node: one directory holding the sqlite database and the
- * ed25519 key. Constructing initializes the directory when needed.
+ * ed25519 key, possibly shared with other apps. Constructing
+ * initializes the directory when needed.
  */
 public interface NodeInterface {
     
@@ -1754,6 +1895,11 @@ public interface NodeInterface {
      * or a 64-hex endpoint id. Returns the peer's endpoint id.
      */
     fun `addPeer`(`name`: kotlin.String, `ticketOrId`: kotlin.String): kotlin.String
+    
+    /**
+     * Every app registered in the node.
+     */
+    fun `apps`(): List<AppRecord>
     
     /**
      * Scaffolds chat on this node (tables, projection points, policy);
@@ -1770,14 +1916,33 @@ public interface NodeInterface {
     /**
      * Sends a chat message to `target` (peer petname, 64-hex id, room
      * name, or room IRI). The send is an `_outbox` enqueue; delivery
-     * happens while this node serves.
+     * happens while some process serves the directory.
      */
     fun `chatSend`(`target`: kotlin.String, `text`: kotlin.String): SendReceipt
+    
+    /**
+     * Ends every entrainment (`on_end("closed")`) and drops the
+     * in-process pipeline, so this `Node` holds no database handle.
+     * Serving is untouched; see [`suspend`](Self::suspend). Idempotent.
+     */
+    fun `close`()
+    
+    /**
+     * Where a call would go right now.
+     */
+    fun `currentRoute`(): RouteKind
     
     /**
      * Path to the node's sqlite database (WAL; readable while serving).
      */
     fun `dbPath`(): kotlin.String
+    
+    /**
+     * Declares tables this app owns (they must exist): a `_comments`
+     * description each plus the ownership record, so other apps and
+     * peers can discover them. Needs a node opened with `AppInfo`.
+     */
+    fun `declareTables`(`tables`: List<TableDecl>)
     
     /**
      * This node's 64-hex endpoint id.
@@ -1788,14 +1953,30 @@ public interface NodeInterface {
      * Entrains a Sympathetic `point` (its IRI, from `_projection`):
      * `listener.on_vibration` fires on every signal until `damp()` or
      * `on_end`. Owner lane: any registered Sympathetic point works, no
-     * policy filter. Blocks until the node acknowledges.
+     * policy filter. Routed like every call: pushed by this process's
+     * serving pipeline, by the other process serving the directory
+     * (over the owner channel), or by this `Node`'s in-process pipeline.
+     * Blocks until the node acknowledges.
      */
     fun `entrain`(`point`: kotlin.String, `listener`: VibrationListener): Entrainment
     
     /**
-     * Whether this node is currently serving.
+     * Whether this process is currently serving the directory.
      */
     fun `isServing`(): kotlin.Boolean
+    
+    /**
+     * True when another process serves the directory.
+     */
+    fun `isSharedServing`(): kotlin.Boolean
+    
+    /**
+     * Knocks on `peer` (petname, ticket, or 64-hex id) with `message`:
+     * the one frame an unadmitted key may send. `allow` means this node
+     * is now in the peer's `_peers` table and may talk normally. A
+     * stranger the peer's policy refuses outright answers `Denied`.
+     */
+    fun `knock`(`peer`: kotlin.String, `message`: kotlin.String): KnockResult
     
     /**
      * [`local_query`] forced to a write (`rsntr:Execute`).
@@ -1817,11 +1998,33 @@ public interface NodeInterface {
     fun `queryPeer`(`peer`: kotlin.String, `signal`: kotlin.String, `modulation`: kotlin.String, `params`: List<FfiValue>, `timeoutMs`: kotlin.Long?): QueryResult
     
     /**
-     * Starts serving on the crate's background runtime; returns the
-     * direct socket addresses. Subsequent calls route to the serving
-     * pipeline, so remote writes vibrate local entrainments.
+     * Comes back after [`suspend`](Self::suspend): takes the serving
+     * lease when the policy is `ServeIfFree` and nobody holds it (a
+     * held lease is not an error), refreshes the app's `last_seen`, and
+     * reports who serves now (`None` when nobody does). Pipelines
+     * rebuild lazily on the next call; re-entrain what matters.
+     */
+    fun `resume`(): ServingInfo?
+    
+    /**
+     * Starts serving on the crate's background runtime (takes the
+     * directory's serving lease); returns the direct socket addresses.
+     * `AlreadyServing` names the process that holds the lease.
      */
     fun `serve`(): List<kotlin.String>
+    
+    /**
+     * Starts the web console on an ephemeral loopback port. Requires
+     * `serve()` first. Returns the entry URL with the capability token
+     * in the fragment, ready for a WebView to load. `rotate_token`
+     * mints a replacement `rsntr.web-token`.
+     */
+    fun `serveWeb`(`rotateToken`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * Who holds the directory's serving lease right now, if anyone.
+     */
+    fun `servingInfo`(): ServingInfo?
     
     /**
      * Runs a SPARQL text against this node's own store (owner channel).
@@ -1831,9 +2034,28 @@ public interface NodeInterface {
     fun `sparql`(`query`: kotlin.String): QueryResult
     
     /**
-     * Stops serving (a no-op when not serving).
+     * Stops serving (a no-op when not serving): releases the lease, the
+     * endpoint, the blob store, and the serving connection. The web
+     * console, which holds clones of the serving pipeline, goes down
+     * first.
      */
     fun `stop`()
+    
+    /**
+     * Stops the web console only (a no-op when it is not serving).
+     */
+    fun `stopWeb`()
+    
+    /**
+     * Lets go of the directory entirely: the web console, serving (the
+     * lease, endpoint, blob store, serving connection), every
+     * entrainment, and the in-process pipeline. After this the process
+     * holds no handle on the node directory, which is what an app must
+     * be able to say before it is suspended (iOS terminates a suspended
+     * app holding locks on files outside its own container). Never
+     * waits for a running callback.
+     */
+    fun `suspend`()
     
     /**
      * A shareable dialing ticket for the live serving endpoint, waiting
@@ -1843,17 +2065,24 @@ public interface NodeInterface {
     fun `ticket`(`waitMs`: kotlin.ULong): kotlin.String
     
     /**
-     * Nudges the outbox worker to scan `_outbox` now. No-op when not
-     * serving.
+     * Nudges the outbox worker to scan `_outbox` now. No-op when this
+     * process is not serving (another server notices the write itself).
      */
     fun `wakeOutbox`()
+    
+    /**
+     * The console entry URL (fragment token included) while the web
+     * console serves, `None` otherwise.
+     */
+    fun `webUrl`(): kotlin.String?
     
     companion object
 }
 
 /**
  * A resonator node: one directory holding the sqlite database and the
- * ed25519 key. Constructing initializes the directory when needed.
+ * ed25519 key, possibly shared with other apps. Constructing
+ * initializes the directory when needed.
  */
 open class Node: Disposable, AutoCloseable, NodeInterface {
 
@@ -1874,7 +2103,8 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
     }
     /**
      * Opens (initializing on first use) the node directory. `offline`
-     * binds serving to localhost with no relays (tests, LAN demos).
+     * binds serving to localhost with no relays (tests, LAN demos). The
+     * app stays unregistered; see [`open`](Self::open).
      */
     constructor(`dir`: kotlin.String, `offline`: kotlin.Boolean) :
         this(
@@ -1966,6 +2196,22 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
 
     
     /**
+     * Every app registered in the node.
+     */
+    @Throws(FfiException::class)override fun `apps`(): List<AppRecord> {
+            return FfiConverterSequenceTypeAppRecord.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_apps(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Scaffolds chat on this node (tables, projection points, policy);
      * idempotent.
      */
@@ -2001,7 +2247,7 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
     /**
      * Sends a chat message to `target` (peer petname, 64-hex id, room
      * name, or room IRI). The send is an `_outbox` enqueue; delivery
-     * happens while this node serves.
+     * happens while some process serves the directory.
      */
     @Throws(FfiException::class)override fun `chatSend`(`target`: kotlin.String, `text`: kotlin.String): SendReceipt {
             return FfiConverterTypeSendReceipt.lift(
@@ -2009,6 +2255,38 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_chat_send(
         it, FfiConverterString.lower(`target`),FfiConverterString.lower(`text`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Ends every entrainment (`on_end("closed")`) and drops the
+     * in-process pipeline, so this `Node` holds no database handle.
+     * Serving is untouched; see [`suspend`](Self::suspend). Idempotent.
+     */override fun `close`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_close(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Where a call would go right now.
+     */
+    @Throws(FfiException::class)override fun `currentRoute`(): RouteKind {
+            return FfiConverterTypeRouteKind.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_current_route(
+        it, _status)
 }
     }
     )
@@ -2032,6 +2310,23 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
 
     
     /**
+     * Declares tables this app owns (they must exist): a `_comments`
+     * description each plus the ownership record, so other apps and
+     * peers can discover them. Needs a node opened with `AppInfo`.
+     */
+    @Throws(FfiException::class)override fun `declareTables`(`tables`: List<TableDecl>)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_declare_tables(
+        it, FfiConverterSequenceTypeTableDecl.lower(`tables`),_status)
+}
+    }
+    
+    
+
+    
+    /**
      * This node's 64-hex endpoint id.
      */
     @Throws(FfiException::class)override fun `endpointId`(): kotlin.String {
@@ -2051,7 +2346,10 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
      * Entrains a Sympathetic `point` (its IRI, from `_projection`):
      * `listener.on_vibration` fires on every signal until `damp()` or
      * `on_end`. Owner lane: any registered Sympathetic point works, no
-     * policy filter. Blocks until the node acknowledges.
+     * policy filter. Routed like every call: pushed by this process's
+     * serving pipeline, by the other process serving the directory
+     * (over the owner channel), or by this `Node`'s in-process pipeline.
+     * Blocks until the node acknowledges.
      */
     @Throws(FfiException::class)override fun `entrain`(`point`: kotlin.String, `listener`: VibrationListener): Entrainment {
             return FfiConverterTypeEntrainment.lift(
@@ -2067,13 +2365,47 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
 
     
     /**
-     * Whether this node is currently serving.
+     * Whether this process is currently serving the directory.
      */override fun `isServing`(): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_is_serving(
         it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * True when another process serves the directory.
+     */override fun `isSharedServing`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_is_shared_serving(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Knocks on `peer` (petname, ticket, or 64-hex id) with `message`:
+     * the one frame an unadmitted key may send. `allow` means this node
+     * is now in the peer's `_peers` table and may talk normally. A
+     * stranger the peer's policy refuses outright answers `Denied`.
+     */
+    @Throws(FfiException::class)override fun `knock`(`peer`: kotlin.String, `message`: kotlin.String): KnockResult {
+            return FfiConverterTypeKnockResult.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_knock(
+        it, FfiConverterString.lower(`peer`),FfiConverterString.lower(`message`),_status)
 }
     }
     )
@@ -2134,15 +2466,69 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
 
     
     /**
-     * Starts serving on the crate's background runtime; returns the
-     * direct socket addresses. Subsequent calls route to the serving
-     * pipeline, so remote writes vibrate local entrainments.
+     * Comes back after [`suspend`](Self::suspend): takes the serving
+     * lease when the policy is `ServeIfFree` and nobody holds it (a
+     * held lease is not an error), refreshes the app's `last_seen`, and
+     * reports who serves now (`None` when nobody does). Pipelines
+     * rebuild lazily on the next call; re-entrain what matters.
+     */
+    @Throws(FfiException::class)override fun `resume`(): ServingInfo? {
+            return FfiConverterOptionalTypeServingInfo.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_resume(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Starts serving on the crate's background runtime (takes the
+     * directory's serving lease); returns the direct socket addresses.
+     * `AlreadyServing` names the process that holds the lease.
      */
     @Throws(FfiException::class)override fun `serve`(): List<kotlin.String> {
             return FfiConverterSequenceString.lift(
     callWithPointer {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_serve(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Starts the web console on an ephemeral loopback port. Requires
+     * `serve()` first. Returns the entry URL with the capability token
+     * in the fragment, ready for a WebView to load. `rotate_token`
+     * mints a replacement `rsntr.web-token`.
+     */
+    @Throws(FfiException::class)override fun `serveWeb`(`rotateToken`: kotlin.Boolean): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_serve_web(
+        it, FfiConverterBoolean.lower(`rotateToken`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Who holds the directory's serving lease right now, if anyone.
+     */override fun `servingInfo`(): ServingInfo? {
+            return FfiConverterOptionalTypeServingInfo.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_serving_info(
         it, _status)
 }
     }
@@ -2170,12 +2556,49 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
 
     
     /**
-     * Stops serving (a no-op when not serving).
+     * Stops serving (a no-op when not serving): releases the lease, the
+     * endpoint, the blob store, and the serving connection. The web
+     * console, which holds clones of the serving pipeline, goes down
+     * first.
      */override fun `stop`()
         = 
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_stop(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Stops the web console only (a no-op when it is not serving).
+     */override fun `stopWeb`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_stop_web(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Lets go of the directory entirely: the web console, serving (the
+     * lease, endpoint, blob store, serving connection), every
+     * entrainment, and the in-process pipeline. After this the process
+     * holds no handle on the node directory, which is what an app must
+     * be able to say before it is suspended (iOS terminates a suspended
+     * app holding locks on files outside its own container). Never
+     * waits for a running callback.
+     */override fun `suspend`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_suspend(
         it, _status)
 }
     }
@@ -2202,8 +2625,8 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
 
     
     /**
-     * Nudges the outbox worker to scan `_outbox` now. No-op when not
-     * serving.
+     * Nudges the outbox worker to scan `_outbox` now. No-op when this
+     * process is not serving (another server notices the write itself).
      */override fun `wakeOutbox`()
         = 
     callWithPointer {
@@ -2216,10 +2639,44 @@ open class Node: Disposable, AutoCloseable, NodeInterface {
     
 
     
+    /**
+     * The console entry URL (fragment token included) while the web
+     * console serves, `None` otherwise.
+     */override fun `webUrl`(): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_method_node_web_url(
+        it, _status)
+}
+    }
+    )
+    }
+    
 
     
+
     
-    companion object
+    companion object {
+        
+    /**
+     * Opens (initializing on first use) a possibly shared node
+     * directory as `app`, registering it in `_apps`, with the serving
+     * policy `resume()` follows. Safe for several apps starting on one
+     * empty directory at once (one identity results).
+     */
+    @Throws(FfiException::class) fun `open`(`dir`: kotlin.String, `offline`: kotlin.Boolean, `app`: AppInfo?, `policy`: ServePolicy): Node {
+            return FfiConverterTypeNode.lift(
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_resonator_ffi_fn_constructor_node_open(
+        FfiConverterString.lower(`dir`),FfiConverterBoolean.lower(`offline`),FfiConverterOptionalTypeAppInfo.lower(`app`),FfiConverterTypeServePolicy.lower(`policy`),_status)
+}
+    )
+    }
+    
+
+        
+    }
     
 }
 
@@ -2362,9 +2819,11 @@ public interface VibrationListener {
     fun `onVibration`(`point`: kotlin.String, `seq`: kotlin.Long, `at`: kotlin.String?)
     
     /**
-     * The entrainment ended (damp confirmed, node shut down, or the
-     * consumer was too slow); no further callbacks follow. `reason` is
-     * `None` for a clean end.
+     * The entrainment ended (damp confirmed, node shut down, the
+     * serving process went away, the consumer was too slow, or this
+     * `Node` closed); no further callbacks follow. `reason` is `None`
+     * for a clean end, `"closed"` after `close()`/`suspend()`, and
+     * `"server gone; re-entrain"` when the serving process left.
      */
     fun `onEnd`(`reason`: kotlin.String?)
     
@@ -2472,9 +2931,11 @@ open class VibrationListenerImpl: Disposable, AutoCloseable, VibrationListener {
 
     
     /**
-     * The entrainment ended (damp confirmed, node shut down, or the
-     * consumer was too slow); no further callbacks follow. `reason` is
-     * `None` for a clean end.
+     * The entrainment ended (damp confirmed, node shut down, the
+     * serving process went away, the consumer was too slow, or this
+     * `Node` closed); no further callbacks follow. `reason` is `None`
+     * for a clean end, `"closed"` after `close()`/`suspend()`, and
+     * `"server gone; re-entrain"` when the serving process left.
      */override fun `onEnd`(`reason`: kotlin.String?)
         = 
     callWithPointer {
@@ -2606,6 +3067,111 @@ public object FfiConverterTypeVibrationListener: FfiConverter<VibrationListener,
 
 
 /**
+ * Who an app is (recorded in the serving lease and in `_apps`).
+ */
+data class AppInfo (
+    /**
+     * Reverse-DNS id or a slug (`org.example.notebook`).
+     */
+    var `id`: kotlin.String, 
+    var `name`: kotlin.String?, 
+    var `version`: kotlin.String?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAppInfo: FfiConverterRustBuffer<AppInfo> {
+    override fun read(buf: ByteBuffer): AppInfo {
+        return AppInfo(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AppInfo) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`version`)
+    )
+
+    override fun write(value: AppInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`version`, buf)
+    }
+}
+
+
+
+/**
+ * One `_apps` row.
+ */
+data class AppRecord (
+    var `appId`: kotlin.String, 
+    var `name`: kotlin.String, 
+    var `version`: kotlin.String?, 
+    var `libVersion`: kotlin.String, 
+    var `platform`: kotlin.String, 
+    var `tables`: List<kotlin.String>, 
+    var `firstSeen`: kotlin.String, 
+    var `lastSeen`: kotlin.String, 
+    var `note`: kotlin.String?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAppRecord: FfiConverterRustBuffer<AppRecord> {
+    override fun read(buf: ByteBuffer): AppRecord {
+        return AppRecord(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AppRecord) = (
+            FfiConverterString.allocationSize(value.`appId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`version`) +
+            FfiConverterString.allocationSize(value.`libVersion`) +
+            FfiConverterString.allocationSize(value.`platform`) +
+            FfiConverterSequenceString.allocationSize(value.`tables`) +
+            FfiConverterString.allocationSize(value.`firstSeen`) +
+            FfiConverterString.allocationSize(value.`lastSeen`) +
+            FfiConverterOptionalString.allocationSize(value.`note`)
+    )
+
+    override fun write(value: AppRecord, buf: ByteBuffer) {
+            FfiConverterString.write(value.`appId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`version`, buf)
+            FfiConverterString.write(value.`libVersion`, buf)
+            FfiConverterString.write(value.`platform`, buf)
+            FfiConverterSequenceString.write(value.`tables`, buf)
+            FfiConverterString.write(value.`firstSeen`, buf)
+            FfiConverterString.write(value.`lastSeen`, buf)
+            FfiConverterOptionalString.write(value.`note`, buf)
+    }
+}
+
+
+
+/**
  * One chat history entry (newest first from `chat_log`).
  */
 data class ChatMessage (
@@ -2702,6 +3268,52 @@ public object FfiConverterTypeFfiRow: FfiConverterRustBuffer<FfiRow> {
 
     override fun write(value: FfiRow, buf: ByteBuffer) {
             FfiConverterSequenceTypeFfiValue.write(value.`values`, buf)
+    }
+}
+
+
+
+/**
+ * The answer to a knock (connection-protocol.md section 4). `decision`
+ * is `"allow"` (admitted — talk normally now), `"pending"` (parked for
+ * the owner), `"deny"`, or `None` when the peer answered nothing at all
+ * (knocks are rate-limited and dropped in silence).
+ */
+data class KnockResult (
+    var `id`: kotlin.String, 
+    var `decision`: kotlin.String?, 
+    var `decidedBy`: kotlin.String?, 
+    var `reason`: kotlin.String?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeKnockResult: FfiConverterRustBuffer<KnockResult> {
+    override fun read(buf: ByteBuffer): KnockResult {
+        return KnockResult(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: KnockResult) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterOptionalString.allocationSize(value.`decision`) +
+            FfiConverterOptionalString.allocationSize(value.`decidedBy`) +
+            FfiConverterOptionalString.allocationSize(value.`reason`)
+    )
+
+    override fun write(value: KnockResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterOptionalString.write(value.`decision`, buf)
+            FfiConverterOptionalString.write(value.`decidedBy`, buf)
+            FfiConverterOptionalString.write(value.`reason`, buf)
     }
 }
 
@@ -2807,6 +3419,95 @@ public object FfiConverterTypeSendReceipt: FfiConverterRustBuffer<SendReceipt> {
 
 
 
+/**
+ * Who holds the directory's serving lease.
+ */
+data class ServingInfo (
+    var `pid`: kotlin.UInt, 
+    var `appId`: kotlin.String, 
+    var `appName`: kotlin.String?, 
+    var `appVersion`: kotlin.String?, 
+    var `startedAt`: kotlin.String, 
+    /**
+     * True when this very process holds it.
+     */
+    var `isSelf`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeServingInfo: FfiConverterRustBuffer<ServingInfo> {
+    override fun read(buf: ByteBuffer): ServingInfo {
+        return ServingInfo(
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ServingInfo) = (
+            FfiConverterUInt.allocationSize(value.`pid`) +
+            FfiConverterString.allocationSize(value.`appId`) +
+            FfiConverterOptionalString.allocationSize(value.`appName`) +
+            FfiConverterOptionalString.allocationSize(value.`appVersion`) +
+            FfiConverterString.allocationSize(value.`startedAt`) +
+            FfiConverterBoolean.allocationSize(value.`isSelf`)
+    )
+
+    override fun write(value: ServingInfo, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`pid`, buf)
+            FfiConverterString.write(value.`appId`, buf)
+            FfiConverterOptionalString.write(value.`appName`, buf)
+            FfiConverterOptionalString.write(value.`appVersion`, buf)
+            FfiConverterString.write(value.`startedAt`, buf)
+            FfiConverterBoolean.write(value.`isSelf`, buf)
+    }
+}
+
+
+
+/**
+ * A table an app declares as its own, with its description.
+ */
+data class TableDecl (
+    var `name`: kotlin.String, 
+    var `comment`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTableDecl: FfiConverterRustBuffer<TableDecl> {
+    override fun read(buf: ByteBuffer): TableDecl {
+        return TableDecl(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TableDecl) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`comment`)
+    )
+
+    override fun write(value: TableDecl, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`comment`, buf)
+    }
+}
+
+
+
 
 
 sealed class FfiException: kotlin.Exception() {
@@ -2833,6 +3534,19 @@ sealed class FfiException: kotlin.Exception() {
             get() = "reason=${ `reason` }"
     }
     
+    /**
+     * Another process holds the directory's serving lease; `holder`
+     * names it when its record is readable. Not an error for an app
+     * that is content to be a client: use the owner channel.
+     */
+    class AlreadyServing(
+        
+        val `holder`: ServingInfo?
+        ) : FfiException() {
+        override val message
+            get() = "holder=${ `holder` }"
+    }
+    
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<FfiException> {
         override fun lift(error_buf: RustBuffer.ByValue): FfiException = FfiConverterTypeFfiError.lift(error_buf)
@@ -2855,6 +3569,9 @@ public object FfiConverterTypeFfiError : FfiConverterRustBuffer<FfiException> {
             2 -> FfiException.Denied(
                 FfiConverterString.read(buf),
                 )
+            3 -> FfiException.AlreadyServing(
+                FfiConverterOptionalTypeServingInfo.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -2871,6 +3588,11 @@ public object FfiConverterTypeFfiError : FfiConverterRustBuffer<FfiException> {
                 4UL
                 + FfiConverterString.allocationSize(value.`reason`)
             )
+            is FfiException.AlreadyServing -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterOptionalTypeServingInfo.allocationSize(value.`holder`)
+            )
         }
     }
 
@@ -2884,6 +3606,11 @@ public object FfiConverterTypeFfiError : FfiConverterRustBuffer<FfiException> {
             is FfiException.Denied -> {
                 buf.putInt(2)
                 FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+            is FfiException.AlreadyServing -> {
+                buf.putInt(3)
+                FfiConverterOptionalTypeServingInfo.write(value.`holder`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -3021,6 +3748,88 @@ public object FfiConverterTypeFfiValue : FfiConverterRustBuffer<FfiValue>{
 
 
 
+/**
+ * Where a call would go right now.
+ */
+
+enum class RouteKind {
+    
+    /**
+     * This process serves the directory.
+     */
+    SERVING,
+    /**
+     * Another process serves it; the owner channel carries the call.
+     */
+    SOCKET,
+    /**
+     * Nobody serves it; this `Node`'s in-process pipeline.
+     */
+    LOCAL;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRouteKind: FfiConverterRustBuffer<RouteKind> {
+    override fun read(buf: ByteBuffer) = try {
+        RouteKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RouteKind) = 4UL
+
+    override fun write(value: RouteKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
+ * What `resume()` does about serving.
+ */
+
+enum class ServePolicy {
+    
+    /**
+     * Take the lease when nobody holds it (the foreground app serves).
+     */
+    SERVE_IF_FREE,
+    /**
+     * Never serve; always a client of whoever does (or in-process).
+     */
+    CLIENT_ONLY;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeServePolicy: FfiConverterRustBuffer<ServePolicy> {
+    override fun read(buf: ByteBuffer) = try {
+        ServePolicy.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: ServePolicy) = 4UL
+
+    override fun write(value: ServePolicy, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 /**
  * @suppress
@@ -3089,6 +3898,70 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeAppInfo: FfiConverterRustBuffer<AppInfo?> {
+    override fun read(buf: ByteBuffer): AppInfo? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeAppInfo.read(buf)
+    }
+
+    override fun allocationSize(value: AppInfo?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeAppInfo.allocationSize(value)
+        }
+    }
+
+    override fun write(value: AppInfo?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeAppInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeServingInfo: FfiConverterRustBuffer<ServingInfo?> {
+    override fun read(buf: ByteBuffer): ServingInfo? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeServingInfo.read(buf)
+    }
+
+    override fun allocationSize(value: ServingInfo?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeServingInfo.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ServingInfo?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeServingInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -3107,6 +3980,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAppRecord: FfiConverterRustBuffer<List<AppRecord>> {
+    override fun read(buf: ByteBuffer): List<AppRecord> {
+        val len = buf.getInt()
+        return List<AppRecord>(len) {
+            FfiConverterTypeAppRecord.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AppRecord>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAppRecord.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AppRecord>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAppRecord.write(it, buf)
         }
     }
 }
@@ -3163,6 +4064,34 @@ public object FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer<List<FfiRow
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiRow.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTableDecl: FfiConverterRustBuffer<List<TableDecl>> {
+    override fun read(buf: ByteBuffer): List<TableDecl> {
+        val len = buf.getInt()
+        return List<TableDecl>(len) {
+            FfiConverterTypeTableDecl.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TableDecl>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTableDecl.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TableDecl>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTableDecl.write(it, buf)
         }
     }
 }

@@ -21,17 +21,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use bytes::BytesMut;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream, unix::OwnedReadHalf, unix::OwnedWriteHalf};
+use tokio::net::{UnixListener, UnixStream};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use resonator_node::{Node, NodeError};
-use resonator_protocol::{
-    EnvelopeObject, ErrorEnvelope, decode_envelope, encode_envelope, mod_matches,
-};
-use resonator_transport::{RequestStream, TransportError};
 
 /// The control socket's file name inside the node directory.
 pub const SOCKET_FILE: &str = "rsntr.sock";
@@ -41,20 +35,47 @@ pub fn socket_path(dir: &Path) -> PathBuf {
     dir.join(SOCKET_FILE)
 }
 
-/// `sockaddr_un` headroom: paths at or beyond this many bytes cannot be
-/// bound or connected (macOS caps them around 104), so they are reached
-/// through a short `/tmp` symlink alias instead.
-const SUN_PATH_MAX: usize = 100;
+/// Bytes of `sockaddr_un.sun_path`, NUL included: 104 on Darwin, 108 on
+/// Linux and Android. A path that does not fit (with its NUL) cannot be
+/// bound or connected directly.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const SUN_PATH_LEN: usize = 104;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub const SUN_PATH_LEN: usize = 108;
 
-fn needs_alias(path: &Path) -> bool {
+fn path_bytes(path: &Path) -> usize {
     use std::os::unix::ffi::OsStrExt;
-    path.as_os_str().as_bytes().len() >= SUN_PATH_MAX
+    path.as_os_str().as_bytes().len()
 }
 
-/// A short-lived `/tmp` symlink to the node directory, so
+/// True when `path` is too long for `sun_path` and must go through an
+/// alias for the syscall.
+pub fn needs_alias(path: &Path) -> bool {
+    path_bytes(path) + 1 > SUN_PATH_LEN
+}
+
+/// True when the node directory's socket path can be bound at all:
+/// directly, or through a short alias in the temp dir. When false the
+/// serving process skips the unix socket (the loopback TCP owner
+/// channel covers it); iOS Files-app folders are the typical case.
+pub fn fits(dir: &Path) -> bool {
+    let path = socket_path(dir);
+    if !needs_alias(&path) {
+        return true;
+    }
+    !needs_alias(&alias_candidate(0).join(SOCKET_FILE))
+}
+
+fn alias_candidate(n: u64) -> PathBuf {
+    std::env::temp_dir().join(format!("r{:x}{n:x}", std::process::id()))
+}
+
+/// A short-lived symlink in the temp dir to the node directory, so
 /// `<dir>/rsntr.sock` stays reachable inside the sockaddr length cap.
 /// Only the syscall needs the short path; the symlink is removed on drop
-/// and the socket inode itself always lives in the node directory.
+/// and the socket inode itself always lives in the node directory. The
+/// alias is per process (pid-named), so any writable temp dir works,
+/// including an app's private one.
 struct DirAlias {
     link: PathBuf,
 }
@@ -64,7 +85,18 @@ impl DirAlias {
         let target = std::path::absolute(dir)?;
         let mut n: u64 = 0;
         let link = loop {
-            let cand = PathBuf::from(format!("/tmp/rsntr-{}-{n:x}", std::process::id()));
+            let cand = alias_candidate(n);
+            if needs_alias(&cand.join(SOCKET_FILE)) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "the node directory path is too long for a unix socket ({} bytes; \
+                         the cap is {}) and the temp dir alias does not fit either",
+                        path_bytes(&target.join(SOCKET_FILE)),
+                        SUN_PATH_LEN - 1
+                    ),
+                ));
+            }
             match std::os::unix::fs::symlink(&target, &cand) {
                 Ok(()) => break cand,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
@@ -119,8 +151,13 @@ impl OwnerSocket {
 
 /// Binds `<dir>/rsntr.sock` (mode 0600) and starts serving owner
 /// requests on `node`. A leftover socket from a crashed process (connect
-/// refused) is unlinked before rebinding; a live one is an error.
-pub async fn bind(dir: &Path, node: Arc<Node>) -> Result<OwnerSocket> {
+/// refused) is unlinked before rebinding; a live one is an error (the
+/// serving lease decides who serves; a live socket here is a squatter).
+pub async fn bind(
+    dir: &Path,
+    node: Arc<Node>,
+    transport: Option<Arc<resonator_transport::IrohTransport>>,
+) -> Result<OwnerSocket> {
     let path = socket_path(dir);
     // The syscalls need a path inside the sockaddr cap; deep node
     // directories go through a short-lived /tmp alias.
@@ -147,17 +184,22 @@ pub async fn bind(dir: &Path, node: Arc<Node>) -> Result<OwnerSocket> {
         .with_context(|| format!("binding the control socket {}", path.display()))?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         .with_context(|| format!("restricting {} to 0600", path.display()))?;
-    let task = tokio::spawn(accept_loop(listener, node));
+    let task = tokio::spawn(accept_loop(listener, node, transport));
     Ok(OwnerSocket { path, task })
 }
 
-async fn accept_loop(listener: UnixListener, node: Arc<Node>) {
+async fn accept_loop(
+    listener: UnixListener,
+    node: Arc<Node>,
+    transport: Option<Arc<resonator_transport::IrohTransport>>,
+) {
     loop {
         match listener.accept().await {
             Ok((conn, _addr)) => {
                 let node = node.clone();
+                let transport = transport.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_conn(conn, node).await {
+                    if let Err(e) = handle_conn(conn, node, transport).await {
                         debug!(error = %e, "owner socket connection failed");
                     }
                 });
@@ -170,125 +212,37 @@ async fn accept_loop(listener: UnixListener, node: Arc<Node>) {
     }
 }
 
-/// One connection: read the single request frame, dispatch it through
-/// the owner lane, stream the response frames back, close.
-async fn handle_conn(conn: UnixStream, node: Arc<Node>) -> Result<(), NodeError> {
+/// One connection: the owner channel's shared lifecycle over the socket.
+async fn handle_conn(
+    conn: UnixStream,
+    node: Arc<Node>,
+    transport: Option<Arc<resonator_transport::IrohTransport>>,
+) -> Result<(), NodeError> {
     let (read, write) = conn.into_split();
-    let mut stream = SocketStream {
-        read,
-        write,
-        buf: BytesMut::new(),
-        eof: false,
-    };
-
-    let first = match stream.recv().await {
-        Ok(Some(obj)) => obj,
-        // Connected and closed without a frame: nothing to answer.
-        Ok(None) => return Ok(()),
-        Err(e) => {
-            let _ = stream
-                .send(&protocol_error(format!("bad request frame: {e}")))
-                .await;
-            return Ok(());
-        }
-    };
-
-    // The media raw byte feed cannot ride the framed socket (v1); answer
-    // before dispatch so no Media header frame ever precedes the error.
-    if let EnvelopeObject::Query(st) = &first
-        && mod_matches("media", &st.modulation)
-    {
-        let _ = stream
-            .send(&EnvelopeObject::Error(ErrorEnvelope {
-                id: Some(st.id.clone()),
-                code: "mod-unsupported".to_string(),
-                reason: Some(
-                    "the media raw feed is not served on the control socket in v1".to_string(),
-                ),
-            }))
-            .await;
-        return Ok(());
-    }
-
-    node.handle_owner(first, &mut stream).await
+    crate::owner::serve_connection(crate::owner::OwnerStream::new(read, write), node, transport)
+        .await
 }
 
-fn protocol_error(reason: String) -> EnvelopeObject {
-    EnvelopeObject::Error(ErrorEnvelope {
-        id: None,
-        code: "protocol-error".to_string(),
-        reason: Some(reason),
-    })
-}
-
-/// Wraps a dialed connection as a client-side framed stream (the owner
-/// channel's socket transport in `channel.rs`). The protocol is
-/// symmetric, so the serving-side stream type serves both ends.
-pub(crate) fn client_stream(conn: UnixStream) -> SocketStream {
+/// Wraps a dialed connection as a client-side framed stream.
+pub fn client_stream(conn: UnixStream) -> crate::owner::OwnerStream {
     let (read, write) = conn.into_split();
-    SocketStream {
-        read,
-        write,
-        buf: BytesMut::new(),
-        eof: false,
-    }
+    crate::owner::OwnerStream::new(read, write)
 }
 
-/// The pipeline's view of one socket connection: framed envelopes both
-/// ways, no raw byte side channel.
-pub(crate) struct SocketStream {
-    read: OwnedReadHalf,
-    write: OwnedWriteHalf,
-    buf: BytesMut,
-    eof: bool,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl RequestStream for SocketStream {
-    async fn send(&mut self, obj: &EnvelopeObject) -> Result<(), TransportError> {
-        let mut out = BytesMut::new();
-        encode_envelope(obj, &mut out)
-            .map_err(|e| TransportError::Stream(format!("encoding response frame: {e}")))?;
-        self.write
-            .write_all(&out)
-            .await
-            .map_err(|e| TransportError::Stream(format!("socket write: {e}")))
-    }
-
-    async fn recv(&mut self) -> Result<Option<EnvelopeObject>, TransportError> {
-        loop {
-            match decode_envelope(&mut self.buf) {
-                Ok(Some(obj)) => return Ok(Some(obj)),
-                Ok(None) => {}
-                Err(e) => return Err(TransportError::Stream(format!("decoding frame: {e}"))),
-            }
-            if self.eof {
-                return Ok(None);
-            }
-            let n = self
-                .read
-                .read_buf(&mut self.buf)
-                .await
-                .map_err(|e| TransportError::Stream(format!("socket read: {e}")))?;
-            if n == 0 {
-                self.eof = true;
-                if self.buf.is_empty() {
-                    return Ok(None);
-                }
-                return Err(TransportError::Stream(
-                    "connection closed mid-frame".to_string(),
-                ));
-            }
-        }
-    }
-
-    async fn send_raw(&mut self, _bytes: &[u8]) -> Result<(), TransportError> {
-        Err(TransportError::Stream(
-            "raw byte streaming is not served on the control socket".into(),
-        ))
-    }
-
-    async fn finish(&mut self) -> Result<(), TransportError> {
-        let _ = self.write.shutdown().await;
-        Ok(())
+    #[test]
+    fn alias_boundaries_are_exact() {
+        // sun_path holds SUN_PATH_LEN bytes including the NUL: a path of
+        // SUN_PATH_LEN - 1 bytes is the longest that binds directly.
+        let fitting = format!("/{}", "a".repeat(SUN_PATH_LEN - 2));
+        assert_eq!(fitting.len(), SUN_PATH_LEN - 1);
+        assert!(!needs_alias(Path::new(&fitting)));
+        let overflowing = format!("/{}", "a".repeat(SUN_PATH_LEN - 1));
+        assert_eq!(overflowing.len(), SUN_PATH_LEN);
+        assert!(needs_alias(Path::new(&overflowing)));
+        assert!(needs_alias(Path::new(&format!("/{}", "a".repeat(200)))));
     }
 }

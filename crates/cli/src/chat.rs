@@ -13,12 +13,13 @@ use rusqlite::Connection;
 use ulid::Ulid;
 
 use resonator_node::chat::{
-    BODY_MAX_BYTES, BlobAttachment, CHAT_INBOX_POINT, CHAT_TABLES_DDL, ChatMessage,
-    DIRECT_RESOURCE, message_to_turtle,
+    BODY_MAX_BYTES, BlobAttachment, CHAT_INBOX_POINT, CHAT_TABLES_DDL, ChatMessage, ChatParseError,
+    DIRECT_RESOURCE, ensure_chat_columns, message_to_turtle, tags_from_json, tags_to_json,
+    validate_thread_fields,
 };
 use resonator_node::clock::now_rfc3339;
 use resonator_protocol::{EnvelopeObject, Request, RequestKind, Value};
-use resonator_transport::{IrohConfig, IrohTransport, PeerId, RequestStream, Transport};
+use resonator_transport::{PeerId, RequestStream};
 
 use crate::channel::{self, OwnerChannel, Prefer};
 use crate::client::QueryOutcome;
@@ -48,6 +49,8 @@ fn chat_ready(conn: &Connection) -> Result<()> {
     if n == 0 {
         bail!("chat is not scaffolded here; run `rsntr chat init <dir>` first");
     }
+    // A scaffold from before threading gains re_id/tags on first use.
+    ensure_chat_columns(conn).context("migrating chat_messages")?;
     Ok(())
 }
 
@@ -56,19 +59,6 @@ const POLICY_UPSERT_SQL: &str = "INSERT INTO _policy (peer_or_group, table_name,
      SELECT ?1, ?2, ?3, 'allow', ?4 \
      WHERE NOT EXISTS (SELECT 1 FROM _policy \
         WHERE peer_or_group = ?1 AND table_name = ?2 AND action = ?3 AND effect = 'allow')";
-
-/// Inserts a `_policy` allow row unless an identical one already exists.
-/// Direct-connection variant, used by `chat watch`'s ephemeral admission.
-fn ensure_policy(
-    conn: &Connection,
-    peer: &str,
-    table: &str,
-    action: &str,
-    note: &str,
-) -> Result<()> {
-    conn.execute(POLICY_UPSERT_SQL, (peer, table, action, note))?;
-    Ok(())
-}
 
 /// [`ensure_policy`] as an owner-channel Execute (`rsntr chat init`).
 async fn ensure_policy_owner(
@@ -120,10 +110,15 @@ const CHAT_PROJECTION_SQL: [&str; 3] = [
        'chat_messages', 'rsntr chat init')",
 ];
 
+/// The SQL-side chat log view; owned by the node crate's chat migration
+/// so every opener of an older database gets it, not only `chat init`.
+pub use resonator_node::chat::CHAT_LOG_VIEW_DDL;
+
 /// `rsntr chat init <dir>` (chat protocol sec 7): tables, projection
 /// points, policy rows, mods entry, all as owner Executes (DDL is
 /// permitted on the owner channel; `_outbox`/`_results` exist since
-/// `rsntr init`). Idempotent.
+/// `rsntr init`). Idempotent; re-running it on an older scaffold is
+/// the migration path (threading columns, the `chat_log_v` view).
 pub fn chat_init(dir: &Path) -> Result<PeerId> {
     chat_init_with(dir, Prefer::Auto)
 }
@@ -159,6 +154,16 @@ pub fn chat_init_with(dir: &Path, prefer: Prefer) -> Result<PeerId> {
                 .await
                 .context("creating the chat tables")?;
         }
+        // Older scaffolds gain the threading columns before the view
+        // (whose `m.*` must see them). Local connection: ALTER TABLE is
+        // idempotent and schema changes are visible to the daemon.
+        {
+            let conn = store::open_db(dir)?;
+            ensure_chat_columns(&conn).context("migrating chat_messages")?;
+        }
+        channel::execute(&ch, CHAT_LOG_VIEW_DDL, vec![])
+            .await
+            .context("creating chat_log_v")?;
         for sql in CHAT_PROJECTION_SQL {
             channel::execute(&ch, sql, vec![]).await?;
         }
@@ -177,6 +182,10 @@ pub fn chat_init_with(dir: &Path, prefer: Prefer) -> Result<PeerId> {
             (
                 "chat_members",
                 "room membership as known locally: who is in which room",
+            ),
+            (
+                "chat_log_v",
+                "view: chat_messages joined with the sender's petname and delivery status",
             ),
         ] {
             channel::execute(
@@ -349,6 +358,24 @@ fn hash_file_blake3(path: &Path) -> Result<(String, u64)> {
     Ok((hasher.finalize().to_hex().to_string(), bytes))
 }
 
+/// The staging directory for attachments handed to another process's
+/// blob store (chat protocol sec 6; docs/shared-node.md).
+pub const BLOBS_INBOX_DIR: &str = "blobs-inbox";
+
+/// Copies `src` to `<dir>/blobs-inbox/<hash>` (tmp+rename) and returns
+/// the absolute staged path.
+fn stage_attachment(dir: &Path, src: &Path, hash: &str) -> Result<std::path::PathBuf> {
+    let inbox = dir.join(BLOBS_INBOX_DIR);
+    std::fs::create_dir_all(&inbox).with_context(|| format!("creating {}", inbox.display()))?;
+    let staged = inbox.join(hash);
+    if !staged.exists() {
+        let tmp = inbox.join(format!("{hash}.tmp-{}", std::process::id()));
+        std::fs::copy(src, &tmp).with_context(|| format!("staging {}", src.display()))?;
+        std::fs::rename(&tmp, &staged).with_context(|| format!("staging {}", staged.display()))?;
+    }
+    std::path::absolute(&staged).with_context(|| format!("resolving {}", staged.display()))
+}
+
 /// `rsntr chat send <target> <text> [--file <path>]`: append locally and
 /// enqueue in `_outbox` (chat protocol sec 4.1), all as owner-channel
 /// Executes; touches no network. Over the control socket the append
@@ -371,16 +398,43 @@ pub async fn chat_send_with(
     text: &str,
     file: Option<&Path>,
 ) -> Result<SendReport> {
+    chat_send_opts(dir, prefer, target, text, file, &SendOptions::default()).await
+}
+
+/// Threading options of a send (`--re`, `--tag`).
+#[derive(Debug, Clone, Default)]
+pub struct SendOptions {
+    /// The id of the message this one answers (`rsntr:re`).
+    pub re: Option<String>,
+    /// Tags (`rsntr:tag`); normalized (sorted, deduplicated) on send.
+    pub tags: Vec<String>,
+}
+
+/// [`chat_send_with`] plus threading fields.
+pub async fn chat_send_opts(
+    dir: &Path,
+    prefer: Prefer,
+    target: &str,
+    text: &str,
+    file: Option<&Path>,
+    opts: &SendOptions,
+) -> Result<SendReport> {
     let self_id = store::node_id(dir)?.to_string();
     let target = {
         let conn = store::open_db(dir)?;
         chat_ready(&conn)?;
         resolve_target(&conn, target)?
     };
+    let mut tags = opts.tags.clone();
+    validate_thread_fields(opts.re.as_deref(), &mut tags).map_err(|e| match e {
+        ChatParseError::Protocol(m) | ChatParseError::Limit(m) => anyhow::anyhow!(m),
+    })?;
+    let re = opts.re.clone();
 
     // Auto-spill: a body over the wire ceiling goes out as a text-blob
     // attachment with a preview body; local history keeps the full text.
-    let mut spill_tmp: Option<std::path::PathBuf> = None;
+    // Removed on every exit, so a failed send leaves no spill behind.
+    let mut spill_tmp = RemoveOnDrop(None);
     let (wire_body, attach_path, attach_name, attach_type) = if text.len() > BODY_MAX_BYTES {
         if file.is_some() {
             bail!(
@@ -391,7 +445,7 @@ pub async fn chat_send_with(
         }
         let tmp = dir.join(format!(".rsntr-spill-{}.txt", Ulid::new()));
         std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
-        spill_tmp = Some(tmp.clone());
+        spill_tmp.0 = Some(tmp.clone());
         (
             spill_preview(text),
             Some(tmp),
@@ -418,10 +472,10 @@ pub async fn chat_send_with(
         None => None,
         Some(path) if ch.is_socket() => {
             let (hash, bytes) = hash_file_blake3(path)?;
-            import_path = Some(
-                std::path::absolute(path)
-                    .with_context(|| format!("resolving {}", path.display()))?,
-            );
+            // Staged inside the node directory: the serving process may
+            // be another app that cannot read this one's files (an iOS
+            // container), but every app can read the shared directory.
+            import_path = Some(stage_attachment(dir, path, &hash)?);
             Some(BlobAttachment {
                 hash: format!("blake3:{hash}"),
                 bytes: Some(bytes as i64),
@@ -451,8 +505,9 @@ pub async fn chat_send_with(
     channel::execute(
         &ch,
         "INSERT INTO chat_messages \
-           (id, scope, sender, at, body, blob_hash, blob_bytes, blob_name, blob_type, outgoing) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)",
+           (id, scope, sender, at, body, blob_hash, blob_bytes, blob_name, blob_type, outgoing, \
+            re_id, tags) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)",
         vec![
             Value::Text(message_id.clone()),
             Value::Text(scope.clone()),
@@ -478,6 +533,8 @@ pub async fn chat_send_with(
                 .and_then(|b| b.content_type.clone())
                 .map(Value::Text)
                 .unwrap_or(Value::Null),
+            re.clone().map(Value::Text).unwrap_or(Value::Null),
+            tags_to_json(&tags).map(Value::Text).unwrap_or(Value::Null),
         ],
     )
     .await
@@ -488,12 +545,14 @@ pub async fn chat_send_with(
     // The serving process, which holds the redb lock, imports the file
     // into its blob store; the append itself is a no-op because the
     // message id is already recorded (message-level idempotency).
-    if let Some(path) = import_path {
+    if let Some(path) = &import_path {
         let msg = ChatMessage {
             id: Some(message_id.clone()),
             at: Some(at.clone()),
             body: wire_body.clone(),
             attachment: attachment.clone(),
+            re: re.clone(),
+            tags: tags.clone(),
             ..ChatMessage::default()
         };
         let mut request = Request::new(RequestKind::Execute, "chat", message_to_turtle(&msg));
@@ -513,6 +572,10 @@ pub async fn chat_send_with(
             other => bail!("unexpected attachment import response: {other:?}"),
         }
     }
+    if let Some(staged) = &import_path {
+        // The store copied it; the staged file has served its purpose.
+        let _ = std::fs::remove_file(staged);
+    }
 
     // The delivery enqueue: one `_outbox` Execute per recipient.
     let outbox_sql =
@@ -526,6 +589,8 @@ pub async fn chat_send_with(
                 at: Some(at.clone()),
                 body: wire_body.clone(),
                 attachment: attachment.clone(),
+                re: re.clone(),
+                tags: tags.clone(),
                 ..ChatMessage::default()
             };
             channel::execute(
@@ -557,6 +622,8 @@ pub async fn chat_send_with(
                     body: wire_body.clone(),
                     attachment: attachment.clone(),
                     room_name: Some(name.clone()),
+                    re: re.clone(),
+                    tags: tags.clone(),
                 };
                 let signal = message_to_turtle(&msg);
                 let members: Vec<String> = {
@@ -589,6 +656,8 @@ pub async fn chat_send_with(
                     at: Some(at.clone()),
                     body: wire_body.clone(),
                     attachment: attachment.clone(),
+                    re: re.clone(),
+                    tags: tags.clone(),
                     ..ChatMessage::default()
                 };
                 channel::execute(
@@ -607,10 +676,7 @@ pub async fn chat_send_with(
         }
     }
 
-    let spilled = spill_tmp.is_some();
-    if let Some(tmp) = spill_tmp {
-        let _ = std::fs::remove_file(tmp);
-    }
+    let spilled = spill_tmp.0.is_some();
     Ok(SendReport {
         message_id,
         scope,
@@ -618,6 +684,17 @@ pub async fn chat_send_with(
         queued_to,
         spilled,
     })
+}
+
+/// A temporary file deleted when the guard drops (success or error).
+struct RemoveOnDrop(Option<std::path::PathBuf>);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// The preview body of a spilled message: a prefix on a char boundary
@@ -650,6 +727,22 @@ pub struct LogEntry {
     /// `_outbox.status` of own outgoing messages
     /// (queued/sent/done/denied/error/expired), when joinable.
     pub status: Option<String>,
+    /// When the peer applied an own message (`_outbox.completed_at` of a
+    /// `done` row); None for incoming or undelivered messages.
+    pub delivered_at: Option<String>,
+    /// Threading: the message this one answers (`rsntr:re`).
+    pub re: Option<String>,
+    /// Tags (`rsntr:tag`), sorted.
+    pub tags: Vec<String>,
+}
+
+/// `rsntr chat log` filters (`--re`, `--tag`).
+#[derive(Debug, Clone, Default)]
+pub struct LogFilter {
+    /// Only messages answering this id.
+    pub re: Option<String>,
+    /// Only messages carrying this tag.
+    pub tag: Option<String>,
 }
 
 /// `rsntr chat log <target>`: a local read of `chat_messages` for that
@@ -662,18 +755,33 @@ pub fn chat_log(
     limit: i64,
     since: Option<&str>,
 ) -> Result<Vec<LogEntry>> {
+    chat_log_filtered(dir, target, limit, since, &LogFilter::default())
+}
+
+/// [`chat_log`] narrowed by thread (`re`) and/or tag.
+pub fn chat_log_filtered(
+    dir: &Path,
+    target: &str,
+    limit: i64,
+    since: Option<&str>,
+    filter: &LogFilter,
+) -> Result<Vec<LogEntry>> {
     let conn = store::open_db(dir)?;
     chat_ready(&conn)?;
     let scope = resolve_target(&conn, target)?.scope();
     let mut stmt = conn.prepare(
         "SELECT m.id, m.scope, m.sender, m.at, m.received_at, m.body, \
-                m.blob_hash, m.blob_bytes, m.blob_name, m.outgoing, o.status \
+                m.blob_hash, m.blob_bytes, m.blob_name, m.outgoing, o.status, \
+                CASE WHEN o.status = 'done' THEN o.completed_at END, \
+                m.re_id, m.tags \
          FROM chat_messages m LEFT JOIN _outbox o ON o.request_id = m.id \
          WHERE m.scope = ?1 AND (?3 IS NULL OR m.id > ?3) \
+           AND (?4 IS NULL OR m.re_id = ?4) \
+           AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(m.tags) t WHERE t.value = ?5)) \
          ORDER BY m.received_at DESC, m.id DESC LIMIT ?2",
     )?;
     let rows = stmt
-        .query_map((scope, limit, since), |r| {
+        .query_map((scope, limit, since, &filter.re, &filter.tag), |r| {
             Ok(LogEntry {
                 id: r.get(0)?,
                 scope: r.get(1)?,
@@ -686,6 +794,9 @@ pub fn chat_log(
                 blob_name: r.get(8)?,
                 outgoing: r.get::<_, i64>(9)? != 0,
                 status: r.get(10)?,
+                delivered_at: r.get(11)?,
+                re: r.get(12)?,
+                tags: tags_from_json(r.get::<_, Option<String>>(13)?.as_deref()),
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -706,9 +817,6 @@ pub enum WatchEvent {
     Failed(String),
 }
 
-/// The `_policy.note` marking the ephemeral watch rows for cleanup.
-const WATCH_NOTE: &str = "rsntr chat watch (ephemeral surface)";
-
 /// `rsntr chat watch <target>`: dial the local serving node, entrain
 /// `<urn:rsntr:chat-inbox>`, and on each vibration re-read history from
 /// the cursor, emitting new messages for that scope.
@@ -725,160 +833,97 @@ pub async fn chat_watch(
     tx: tokio::sync::mpsc::Sender<WatchEvent>,
     mut damp: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<()> {
-    let conn = store::open_db(&dir)?;
-    chat_ready(&conn)?;
-    let scope = resolve_target(&conn, &target)?.scope();
-    let self_id = store::node_id(&dir)?;
-    let addrs: Vec<std::net::SocketAddr> = resonator_node::get_rsntr(&conn, "serving_addrs")
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .map(|texts| texts.iter().filter_map(|t| t.parse().ok()).collect())
-        .unwrap_or_default();
-    if addrs.is_empty() {
-        bail!(
-            "no serving node found for {}; start one with `rsntr serve {}`",
-            dir.display(),
-            dir.display()
-        );
-    }
-    let mut cursor: i64 = conn
-        .query_row(
-            "SELECT COALESCE(max(rowid), 0) FROM chat_messages",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
-    let hello = store::hello_from_db(&conn);
-
-    // Loopback dial: the serving endpoint's stored listen addrs are
-    // local by construction, so the offline preset is always right here.
-    let config = IrohConfig {
-        hello,
-        secret_key: None,
-        offline: true,
-        relays: Vec::new(),
-        gossip: false,
-        blobs: None,
-    };
-    let (transport, _incoming) = IrohTransport::bind(config)
-        .await
-        .map_err(|e| anyhow::anyhow!("binding the watch endpoint: {e}"))?;
-    transport.add_peer_addrs(self_id, addrs);
-
-    // Admit the ephemeral watch identity for this watch only.
-    let watch_hex = transport.peer_id().to_string();
-    conn.execute(
-        "INSERT OR IGNORE INTO _peers (endpoint_id, name, added_at, notes) \
-         VALUES (?1, '_watch', datetime('now'), ?2)",
-        (&watch_hex, WATCH_NOTE),
-    )?;
-    ensure_policy(&conn, &watch_hex, "chat_messages", "read", WATCH_NOTE)?;
-    ensure_policy(&conn, &watch_hex, "chat_messages", "entrain", WATCH_NOTE)?;
-    // A sqlite Connection is not Sync, so it cannot live inside this
-    // Send future; each catch-up read opens its own (WAL, cheap).
-    drop(conn);
-
-    let entrain_id = Ulid::new().to_string();
-    let result = async {
-        let (mut stream, _hello) = transport.open(self_id).await.map_err(|e| {
-            anyhow::anyhow!(
-                "no node is serving {} (self-dial failed: {e})",
-                dir.display()
+    let (scope, mut cursor) = {
+        let conn = store::open_db(&dir)?;
+        chat_ready(&conn)?;
+        let scope = resolve_target(&conn, &target)?.scope();
+        let cursor: i64 = conn
+            .query_row(
+                "SELECT COALESCE(max(rowid), 0) FROM chat_messages",
+                [],
+                |r| r.get(0),
             )
-        })?;
-        stream
-            .send(&EnvelopeObject::Entrain(resonator_protocol::Entrain {
-                id: entrain_id.clone(),
-                point: CHAT_INBOX_POINT.to_string(),
-            }))
-            .await
-            .map_err(|e| anyhow::anyhow!("sending the entrain request: {e}"))?;
-
-        let mut reader = resonator_protocol::EntrainmentReader::new(&entrain_id, CHAT_INBOX_POINT);
-        let mut damp_armed = true;
-        loop {
-            tokio::select! {
-                frame = stream.recv() => {
-                    let Some(frame) = frame
-                        .map_err(|e| anyhow::anyhow!("receiving from the watch stream: {e}"))?
-                    else {
-                        break;
-                    };
-                    use resonator_protocol::EntrainmentEvent as Ev;
-                    match reader.accept(frame).context("entrainment choreography")? {
-                        Ev::Entrained => {
-                            if tx.send(WatchEvent::Entrained).await.is_err() {
-                                break;
-                            }
-                        }
-                        Ev::Vibration(_) => {
-                            let (new_cursor, entries) = read_since(&dir, cursor, Some(&scope))?;
-                            cursor = new_cursor;
-                            for entry in entries {
-                                if tx.send(WatchEvent::Message(Box::new(entry))).await.is_err() {
-                                    return Ok(());
-                                }
-                            }
-                        }
-                        Ev::Damped => {
-                            let _ = tx.send(WatchEvent::Damped).await;
-                            break;
-                        }
-                        Ev::Denied(d) => {
-                            let _ = tx
-                                .send(WatchEvent::Denied(
-                                    d.reason.unwrap_or_else(|| "denied".to_string()),
-                                ))
-                                .await;
-                            break;
-                        }
-                        Ev::Error(e) => {
-                            let _ = tx
-                                .send(WatchEvent::Failed(format!(
-                                    "{}: {}",
-                                    e.code,
-                                    e.reason.unwrap_or_default()
-                                )))
-                                .await;
+            .unwrap_or(0);
+        (scope, cursor)
+    };
+    // The owner channel: no self-dial, no ephemeral identity, no policy
+    // rows; the serving process pushes vibrations on this connection.
+    let (mut stream, mut reader, entrain_id) =
+        crate::owner::entrain(&dir, CHAT_INBOX_POINT).await?;
+    let mut damp_armed = true;
+    loop {
+        tokio::select! {
+            frame = stream.recv() => {
+                let Some(frame) = frame
+                    .map_err(|e| anyhow::anyhow!("receiving from the watch stream: {e}"))?
+                else {
+                    break;
+                };
+                use resonator_protocol::EntrainmentEvent as Ev;
+                match reader.accept(frame).context("entrainment choreography")? {
+                    Ev::Entrained => {
+                        if tx.send(WatchEvent::Entrained).await.is_err() {
                             break;
                         }
                     }
-                }
-                fired = &mut damp, if damp_armed => {
-                    damp_armed = false;
-                    if fired.is_ok() {
-                        stream
-                            .send(&EnvelopeObject::Damp(resonator_protocol::Damp {
-                                id: Some(entrain_id.clone()),
-                                point: CHAT_INBOX_POINT.to_string(),
-                            }))
-                            .await
-                            .map_err(|e| anyhow::anyhow!("sending the damp: {e}"))?;
+                    Ev::Vibration(_) => {
+                        let (new_cursor, entries) = read_since(&dir, cursor, Some(&scope))?;
+                        cursor = new_cursor;
+                        for entry in entries {
+                            if tx.send(WatchEvent::Message(Box::new(entry))).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Ev::Damped => {
+                        let _ = tx.send(WatchEvent::Damped).await;
+                        break;
+                    }
+                    Ev::Denied(d) => {
+                        let _ = tx
+                            .send(WatchEvent::Denied(
+                                d.reason.unwrap_or_else(|| "denied".to_string()),
+                            ))
+                            .await;
+                        break;
+                    }
+                    Ev::Error(e) => {
+                        let _ = tx
+                            .send(WatchEvent::Failed(format!(
+                                "{}: {}",
+                                e.code,
+                                e.reason.unwrap_or_default()
+                            )))
+                            .await;
+                        break;
                     }
                 }
             }
+            fired = &mut damp, if damp_armed => {
+                damp_armed = false;
+                if fired.is_ok() {
+                    stream
+                        .send(&EnvelopeObject::Damp(resonator_protocol::Damp {
+                            id: Some(entrain_id.clone()),
+                            point: CHAT_INBOX_POINT.to_string(),
+                        }))
+                        .await
+                        .map_err(|e| anyhow::anyhow!("sending the damp: {e}"))?;
+                }
+            }
         }
-        Ok(())
     }
-    .await;
-    transport.shutdown().await;
-    // Best-effort cleanup of the ephemeral admission.
-    if let Ok(conn) = store::open_db(&dir) {
-        let _ = conn.execute("DELETE FROM _peers WHERE endpoint_id = ?1", [&watch_hex]);
-        let _ = conn.execute(
-            "DELETE FROM _policy WHERE peer_or_group = ?1 AND note = ?2",
-            (&watch_hex, WATCH_NOTE),
-        );
-    }
-    result
+    Ok(())
 }
 
 /// Rows past `cursor` (by rowid), filtered to `scope` when given;
 /// returns the advanced cursor over all rows seen, matching or not.
 fn read_since(dir: &Path, cursor: i64, scope: Option<&str>) -> Result<(i64, Vec<LogEntry>)> {
     let conn = store::open_db(dir)?;
+    ensure_chat_columns(&conn)?;
     let mut stmt = conn.prepare(
         "SELECT rowid, id, scope, sender, at, received_at, body, \
-                blob_hash, blob_bytes, blob_name, outgoing \
+                blob_hash, blob_bytes, blob_name, outgoing, re_id, tags \
          FROM chat_messages WHERE rowid > ?1 ORDER BY rowid",
     )?;
     let mut new_cursor = cursor;
@@ -898,6 +943,9 @@ fn read_since(dir: &Path, cursor: i64, scope: Option<&str>) -> Result<(i64, Vec<
                 blob_name: r.get(9)?,
                 outgoing: r.get::<_, i64>(10)? != 0,
                 status: None,
+                delivered_at: None,
+                re: r.get(11)?,
+                tags: tags_from_json(r.get::<_, Option<String>>(12)?.as_deref()),
             },
         ))
     })?;
@@ -935,132 +983,72 @@ pub async fn chat_wait(
     target: Option<&str>,
     timeout: std::time::Duration,
 ) -> Result<WaitReport> {
-    let conn = store::open_db(dir)?;
-    chat_ready(&conn)?;
-    let scope = match target {
-        Some(t) => Some(resolve_target(&conn, t)?.scope()),
-        None => None,
-    };
-    let self_id = store::node_id(dir)?;
-    let addrs: Vec<std::net::SocketAddr> = resonator_node::get_rsntr(&conn, "serving_addrs")
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .map(|texts| texts.iter().filter_map(|t| t.parse().ok()).collect())
-        .unwrap_or_default();
-    if addrs.is_empty() {
-        bail!(
-            "no serving node found for {}; start one with `rsntr serve {}`",
-            dir.display(),
-            dir.display()
-        );
-    }
-    let mut cursor: i64 = conn
-        .query_row(
-            "SELECT COALESCE(max(rowid), 0) FROM chat_messages",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
-    let hello = store::hello_from_db(&conn);
-
-    let config = IrohConfig {
-        hello,
-        secret_key: None,
-        offline: true,
-        relays: Vec::new(),
-        gossip: false,
-        blobs: None,
-    };
-    let (transport, _incoming) = IrohTransport::bind(config)
-        .await
-        .map_err(|e| anyhow::anyhow!("binding the wait endpoint: {e}"))?;
-    transport.add_peer_addrs(self_id, addrs);
-
-    let watch_hex = transport.peer_id().to_string();
-    conn.execute(
-        "INSERT OR IGNORE INTO _peers (endpoint_id, name, added_at, notes) \
-         VALUES (?1, '_watch', datetime('now'), ?2)",
-        (&watch_hex, WATCH_NOTE),
-    )?;
-    ensure_policy(&conn, &watch_hex, "chat_messages", "read", WATCH_NOTE)?;
-    ensure_policy(&conn, &watch_hex, "chat_messages", "entrain", WATCH_NOTE)?;
-    drop(conn);
-
-    let entrain_id = Ulid::new().to_string();
-    let deadline = tokio::time::Instant::now() + timeout;
-    let result = async {
-        let (mut stream, _hello) = transport.open(self_id).await.map_err(|e| {
-            anyhow::anyhow!(
-                "no node is serving {} (self-dial failed: {e})",
-                dir.display()
-            )
-        })?;
-        stream
-            .send(&EnvelopeObject::Entrain(resonator_protocol::Entrain {
-                id: entrain_id.clone(),
-                point: CHAT_INBOX_POINT.to_string(),
-            }))
-            .await
-            .map_err(|e| anyhow::anyhow!("sending the entrain request: {e}"))?;
-
-        let mut reader = resonator_protocol::EntrainmentReader::new(&entrain_id, CHAT_INBOX_POINT);
-        // Reads rows past the cursor and keeps the incoming ones; the
-        // catch-up after Entrained covers what landed during setup.
-        let take_new = |cursor: &mut i64| -> Result<Vec<LogEntry>> {
-            let (new_cursor, entries) = read_since(dir, *cursor, scope.as_deref())?;
-            *cursor = new_cursor;
-            Ok(entries.into_iter().filter(|e| !e.outgoing).collect())
+    let (scope, mut cursor) = {
+        let conn = store::open_db(dir)?;
+        chat_ready(&conn)?;
+        let scope = match target {
+            Some(t) => Some(resolve_target(&conn, t)?.scope()),
+            None => None,
         };
-        loop {
-            tokio::select! {
-                frame = stream.recv() => {
-                    let Some(frame) = frame
-                        .map_err(|e| anyhow::anyhow!("receiving from the wait stream: {e}"))?
-                    else {
-                        bail!("the serving node closed the wait stream");
-                    };
-                    use resonator_protocol::EntrainmentEvent as Ev;
-                    match reader.accept(frame).context("entrainment choreography")? {
-                        Ev::Entrained | Ev::Vibration(_) => {
-                            let messages = take_new(&mut cursor)?;
-                            if !messages.is_empty() {
-                                let next_since = messages.iter().map(|e| e.id.clone()).max();
-                                // Closing the connection damps the
-                                // entrainment; no in-band Damp needed.
-                                return Ok(WaitReport {
-                                    timed_out: false,
-                                    messages,
-                                    next_since,
-                                });
-                            }
+        let cursor: i64 = conn
+            .query_row(
+                "SELECT COALESCE(max(rowid), 0) FROM chat_messages",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        (scope, cursor)
+    };
+    let (mut stream, mut reader, _entrain_id) =
+        crate::owner::entrain(dir, CHAT_INBOX_POINT).await?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    // Reads rows past the cursor and keeps the incoming ones; the
+    // catch-up after Entrained covers what landed during setup.
+    let take_new = |cursor: &mut i64| -> Result<Vec<LogEntry>> {
+        let (new_cursor, entries) = read_since(dir, *cursor, scope.as_deref())?;
+        *cursor = new_cursor;
+        Ok(entries.into_iter().filter(|e| !e.outgoing).collect())
+    };
+    loop {
+        tokio::select! {
+            frame = stream.recv() => {
+                let Some(frame) = frame
+                    .map_err(|e| anyhow::anyhow!("receiving from the wait stream: {e}"))?
+                else {
+                    bail!("the serving node closed the wait stream");
+                };
+                use resonator_protocol::EntrainmentEvent as Ev;
+                match reader.accept(frame).context("entrainment choreography")? {
+                    Ev::Entrained | Ev::Vibration(_) => {
+                        let messages = take_new(&mut cursor)?;
+                        if !messages.is_empty() {
+                            let next_since = messages.iter().map(|e| e.id.clone()).max();
+                            // Dropping the connection damps the
+                            // entrainment; no in-band Damp needed.
+                            return Ok(WaitReport {
+                                timed_out: false,
+                                messages,
+                                next_since,
+                            });
                         }
-                        Ev::Damped => bail!("the serving node damped the wait"),
-                        Ev::Denied(d) => bail!(
-                            "denied: {}",
-                            d.reason.unwrap_or_else(|| "(no reason given)".into())
-                        ),
-                        Ev::Error(e) => bail!("{}: {}", e.code, e.reason.unwrap_or_default()),
                     }
+                    Ev::Damped => bail!("the serving node damped the wait"),
+                    Ev::Denied(d) => bail!(
+                        "denied: {}",
+                        d.reason.unwrap_or_else(|| "(no reason given)".into())
+                    ),
+                    Ev::Error(e) => bail!("{}: {}", e.code, e.reason.unwrap_or_default()),
                 }
-                _ = tokio::time::sleep_until(deadline) => {
-                    return Ok(WaitReport {
-                        timed_out: true,
-                        messages: Vec::new(),
-                        next_since: None,
-                    });
-                }
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                return Ok(WaitReport {
+                    timed_out: true,
+                    messages: Vec::new(),
+                    next_since: None,
+                });
             }
         }
     }
-    .await;
-    transport.shutdown().await;
-    if let Ok(conn) = store::open_db(dir) {
-        let _ = conn.execute("DELETE FROM _peers WHERE endpoint_id = ?1", [&watch_hex]);
-        let _ = conn.execute(
-            "DELETE FROM _policy WHERE peer_or_group = ?1 AND note = ?2",
-            (&watch_hex, WATCH_NOTE),
-        );
-    }
-    result
 }
 
 /// True when this entry is an incoming auto-spilled body still waiting
@@ -1135,6 +1123,93 @@ pub async fn inline_spilled(dir: &Path, entries: &mut [LogEntry]) -> Vec<String>
         }
     }
     skipped
+}
+
+/// One room as `rsntr chat room list` reports it.
+#[derive(Debug, Clone)]
+pub struct RoomInfo {
+    pub room_id: String,
+    pub name: String,
+    /// The hosting peer's endpoint id.
+    pub host: String,
+    /// This node hosts the room (manages its roster, fans out).
+    pub hosting: bool,
+    /// Local roster size; a member side keeps no roster (0), only the
+    /// host knows who is in the room.
+    pub member_count: i64,
+}
+
+/// One roster row of `rsntr chat room members`.
+#[derive(Debug, Clone)]
+pub struct RoomMember {
+    /// The member's endpoint id (64-hex).
+    pub member: String,
+    /// Its `_peers` petname, when admitted under one.
+    pub name: Option<String>,
+    pub added_at: String,
+}
+
+/// `rsntr chat room list`: every room this node knows, hosted or joined.
+pub fn room_list(dir: &Path) -> Result<Vec<RoomInfo>> {
+    let self_id = store::node_id(dir)?.to_string();
+    let conn = store::open_db(dir)?;
+    chat_ready(&conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT r.room_id, r.name, r.host, \
+                (SELECT count(*) FROM chat_members m WHERE m.room_id = r.room_id) \
+         FROM chat_rooms r ORDER BY r.created_at, r.room_id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            let host: String = r.get(2)?;
+            Ok(RoomInfo {
+                room_id: r.get(0)?,
+                name: r.get(1)?,
+                hosting: host == self_id,
+                host,
+                member_count: r.get(3)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// `rsntr chat room members <room>`: the room plus its local roster
+/// (host side: everyone admitted; member side: empty, the host keeps it).
+pub fn room_members(dir: &Path, room: &str) -> Result<(RoomInfo, Vec<RoomMember>)> {
+    let self_id = store::node_id(dir)?.to_string();
+    let conn = store::open_db(dir)?;
+    chat_ready(&conn)?;
+    let Target::Room {
+        room_id,
+        name,
+        host,
+    } = resolve_target(&conn, room)?
+    else {
+        bail!("no room named {room:?}");
+    };
+    let mut stmt = conn.prepare(
+        "SELECT m.member, p.name, m.added_at FROM chat_members m \
+         LEFT JOIN _peers p ON p.endpoint_id = m.member \
+         WHERE m.room_id = ?1 ORDER BY m.added_at, m.member",
+    )?;
+    let members = stmt
+        .query_map([&room_id], |r| {
+            Ok(RoomMember {
+                member: r.get(0)?,
+                name: r.get(1)?,
+                added_at: r.get(2)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let info = RoomInfo {
+        room_id,
+        name,
+        hosting: host == self_id,
+        host,
+        member_count: members.len() as i64,
+    };
+    Ok((info, members))
 }
 
 /// `rsntr chat room create <name>`: mint the room IRI; this node hosts.

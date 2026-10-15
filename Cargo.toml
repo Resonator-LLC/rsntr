@@ -7,7 +7,7 @@ exclude = ["crates/extension"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -33,6 +33,7 @@ oxrdf = "0.3"
 oxttl = "0.2"
 bytes = "1"
 base64 = "0.22"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 ulid = "1"

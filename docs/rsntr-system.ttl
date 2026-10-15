@@ -1,0 +1,196 @@
+# rsntr system vocabulary - a node's own state as RDF
+# Status: accepted, 2026-09-07. Served by the builtin `system` modulation
+# (signal `graph`) as rsntr:Graph frames generated on read from the system
+# tables; normative prose: agents.md sec 6 (RDF) and this file. Storage and
+# enforcement stay relational (footprint policy, table-granular vibrations);
+# this vocabulary is the complete meaning layer over them.
+#
+# Filtering is per caller and per source table: rsntr:Peer needs `read` on
+# _peers, rsntr:PolicyRule on _policy, rsntr:Modulation on _modulations,
+# rsntr:Room on chat_rooms; the node and what it serves are public; the
+# projection points follow the projection's own visibility rule. The owner
+# lane is unfiltered.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix rsntr: <http://resonator.network/v3/rsntr#> .
+
+# ---------------------------------------------------------------------------
+# Classes
+# ---------------------------------------------------------------------------
+
+rsntr:Node a rdfs:Class ;
+    rdfs:label "Node" ;
+    rdfs:comment "The serving node itself, IRI urn:rsntr:node:<endpoint id>. Carries rsntr:endpointId, one rsntr:serves per modulation it works, and the links to everything else in the graph (rsntr:knows, rsntr:rule, rsntr:installed, rsntr:room, rsntr:offers). Always emitted." .
+
+rsntr:Peer a rdfs:Class ;
+    rdfs:label "Peer" ;
+    rdfs:comment "One _peers row, IRI urn:rsntr:peer:<endpoint id>: an admitted peer with its local petname, dial hints, and presence evidence. Requires `read` on _peers." .
+
+rsntr:PolicyRule a rdfs:Class ;
+    rdfs:label "PolicyRule" ;
+    rdfs:comment "One _policy row, IRI urn:rsntr:policy:<rowid>: who (peerOrGroup) may do what (action) on which resource, allow or deny. Requires `read` on _policy." .
+
+rsntr:Modulation a rdfs:Class ;
+    rdfs:label "Modulation" ;
+    rdfs:comment "One _modulations row, IRI urn:rsntr:mod:<name>: an installed wasm mod with its enabled bit, hash, and granted capabilities. Requires `read` on _modulations." .
+
+rsntr:App a rdfs:Class ;
+    rdfs:label "App" ;
+    rdfs:comment "One _apps row, IRI urn:rsntr:app:<id>: an application sharing this node (docs/shared-node.md) with its name, version, the library version it links, its platform, when it was first and last seen, and the tables it declares. Requires `read` on _apps." .
+
+rsntr:Table a rdfs:Class ;
+    rdfs:label "Table" ;
+    rdfs:comment "A table an app declared as its own, IRI urn:rsntr:table:<name>, with its _comments description as rdfs:comment. Named only to a caller who may `read` the table itself." .
+
+rsntr:Room a rdfs:Class ;
+    rdfs:label "Room" ;
+    rdfs:comment "One chat_rooms row under its own IRI (urn:rsntr:room:<ULID>): name, hosting peer, and the local roster (rsntr:member, host side). Requires `read` on chat_rooms." .
+
+# ---------------------------------------------------------------------------
+# Properties
+# ---------------------------------------------------------------------------
+
+rsntr:endpointId a rdf:Property ;
+    rdfs:label "endpointId" ;
+    rdfs:comment "64-hex ed25519 public key of a Node or Peer." ;
+    rdfs:range xsd:string .
+
+rsntr:serves a rdf:Property ;
+    rdfs:label "serves" ;
+    rdfs:comment "A modulation name the node works (help, sql-sqlite, sparql, projection, chat, pages, system, ...); one triple each." ;
+    rdfs:domain rsntr:Node ;
+    rdfs:range xsd:string .
+
+rsntr:knows a rdf:Property ;
+    rdfs:label "knows" ;
+    rdfs:comment "Node to admitted Peer." ;
+    rdfs:domain rsntr:Node ;
+    rdfs:range rsntr:Peer .
+
+rsntr:addr a rdf:Property ;
+    rdfs:label "addr" ;
+    rdfs:comment "A stored direct dial address (ip:port) of a Peer; one triple each, freshest first in the source row." ;
+    rdfs:domain rsntr:Peer ;
+    rdfs:range xsd:string .
+
+rsntr:relay a rdf:Property ;
+    rdfs:label "relay" ;
+    rdfs:comment "Last-known relay URL of a Peer." ;
+    rdfs:domain rsntr:Peer ;
+    rdfs:range xsd:string .
+
+rsntr:addedAt a rdf:Property ;
+    rdfs:label "addedAt" ;
+    rdfs:comment "When the Peer was admitted." ;
+    rdfs:domain rsntr:Peer ;
+    rdfs:range xsd:dateTime .
+
+rsntr:lastSeen a rdf:Property ;
+    rdfs:label "lastSeen" ;
+    rdfs:comment "Peer: last presence beacon received (evidence, not a liveness verdict; beacons are single-hop gossip and often absent). App: when it last opened this node." ;
+    rdfs:domain rsntr:Peer, rsntr:App ;
+    rdfs:range xsd:dateTime .
+
+rsntr:rule a rdf:Property ;
+    rdfs:label "rule" ;
+    rdfs:comment "Node to one of its PolicyRules." ;
+    rdfs:domain rsntr:Node ;
+    rdfs:range rsntr:PolicyRule .
+
+rsntr:peerOrGroup a rdf:Property ;
+    rdfs:label "peerOrGroup" ;
+    rdfs:comment "The rule's subject: an endpoint id, a group name, or '*'." ;
+    rdfs:domain rsntr:PolicyRule ;
+    rdfs:range xsd:string .
+
+rsntr:resource a rdf:Property ;
+    rdfs:label "resource" ;
+    rdfs:comment "The rule's table (or point/endpoint name), or '*'." ;
+    rdfs:domain rsntr:PolicyRule ;
+    rdfs:range xsd:string .
+
+rsntr:effect a rdf:Property ;
+    rdfs:label "effect" ;
+    rdfs:comment "allow or deny." ;
+    rdfs:domain rsntr:PolicyRule ;
+    rdfs:range xsd:string .
+
+rsntr:installed a rdf:Property ;
+    rdfs:label "installed" ;
+    rdfs:comment "Node to an installed Modulation." ;
+    rdfs:domain rsntr:Node ;
+    rdfs:range rsntr:Modulation .
+
+rsntr:enabled a rdf:Property ;
+    rdfs:label "enabled" ;
+    rdfs:domain rsntr:Modulation ;
+    rdfs:range xsd:boolean .
+
+rsntr:cap a rdf:Property ;
+    rdfs:label "cap" ;
+    rdfs:comment "A capability granted to the mod (db_read, clock, ...); one triple each." ;
+    rdfs:domain rsntr:Modulation ;
+    rdfs:range xsd:string .
+
+rsntr:room a rdf:Property ;
+    rdfs:label "room" ;
+    rdfs:comment "Node to a Room it knows (hosted or joined)." ;
+    rdfs:domain rsntr:Node ;
+    rdfs:range rsntr:Room .
+
+rsntr:host a rdf:Property ;
+    rdfs:label "host" ;
+    rdfs:comment "The Peer (or the Node itself, as a Peer IRI) hosting the Room." ;
+    rdfs:domain rsntr:Room ;
+    rdfs:range rsntr:Peer .
+
+rsntr:member a rdf:Property ;
+    rdfs:label "member" ;
+    rdfs:comment "A roster entry of a Room, as a Peer IRI; host side only." ;
+    rdfs:domain rsntr:Room ;
+    rdfs:range rsntr:Peer .
+
+rsntr:hosts a rdf:Property ;
+    rdfs:label "hosts" ;
+    rdfs:comment "Node to an App sharing it." ;
+    rdfs:domain rsntr:Node ;
+    rdfs:range rsntr:App .
+
+rsntr:declares a rdf:Property ;
+    rdfs:label "declares" ;
+    rdfs:comment "App to a Table it owns." ;
+    rdfs:domain rsntr:App ;
+    rdfs:range rsntr:Table .
+
+rsntr:version a rdf:Property ;
+    rdfs:label "version" ;
+    rdfs:comment "The app's own version string." ;
+    rdfs:domain rsntr:App ;
+    rdfs:range xsd:string .
+
+rsntr:libVersion a rdf:Property ;
+    rdfs:label "libVersion" ;
+    rdfs:comment "The resonator library version the app links." ;
+    rdfs:domain rsntr:App ;
+    rdfs:range xsd:string .
+
+rsntr:platform a rdf:Property ;
+    rdfs:label "platform" ;
+    rdfs:comment "ios, android, macos, linux, or windows." ;
+    rdfs:domain rsntr:App ;
+    rdfs:range xsd:string .
+
+rsntr:firstSeen a rdf:Property ;
+    rdfs:label "firstSeen" ;
+    rdfs:comment "When the app first opened this node." ;
+    rdfs:domain rsntr:App ;
+    rdfs:range xsd:dateTime .
+
+rsntr:offers a rdf:Property ;
+    rdfs:comment "In the system graph: a flat Node-to-ResonancePoint link, one per point the caller may use (the projection's rdf:List form is not used here). The points carry their projection vocabulary (rsntr-projection.ttl)." .
+
+# rsntr:name, rsntr:note, rsntr:hash, rsntr:action are shared with the
+# envelope and chat vocabularies (same meaning: label, free text, blake3
+# or sha256 hash, policy action name).

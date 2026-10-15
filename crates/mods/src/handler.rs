@@ -87,9 +87,11 @@ impl ModsHost {
             node.config().clone(),
         )
         .await?;
-        if !host.registry.is_empty() {
-            node.set_mod_handler(Box::new(host));
-        }
+        // Always install, even with an empty registry: `find` then
+        // returns None (same mod-unsupported as before), and this is
+        // what makes the FIRST hot install on a zero-mod node reachable
+        // and a hot removal of the last mod stop serving it.
+        node.set_mod_handler(Box::new(host));
         Ok(refused)
     }
 

@@ -7,7 +7,6 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension};
@@ -39,6 +38,74 @@ pub const DEFAULT_HELP_TEXT: &str = "This is a resonator node.\n\
 Send an rsntr:Query with modulation 'sql-sqlite' to run SQL, \
 'sparql' to query the RDF store, 'projection' for my capability menu, \
 or 'help' for usage.";
+
+/// Where `rsntr` looks for the node when no directory is given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirSource {
+    /// `$RSNTR_NODE`.
+    Env,
+    /// The current directory, because it holds `rsntr.db`.
+    Cwd,
+    /// The per-user default ([`default_node_dir`]).
+    Default,
+}
+
+impl DirSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DirSource::Env => "env",
+            DirSource::Cwd => "cwd",
+            DirSource::Default => "default",
+        }
+    }
+}
+
+/// The per-user default node directory: one node per device, shared by
+/// every tool of the user (docs/shared-node.md). macOS
+/// `~/Library/Application Support/rsntr/node`, Linux
+/// `$XDG_DATA_HOME/rsntr/node` (else `~/.local/share/rsntr/node`),
+/// Windows `%APPDATA%\rsntr\node`; `.` when no home is known.
+pub fn default_node_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let base = if cfg!(target_os = "macos") {
+        home.map(|h| h.join("Library").join("Application Support"))
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(|| home.map(|h| h.join(".local").join("share")))
+    };
+    match base {
+        Some(b) => b.join("rsntr").join("node"),
+        None => PathBuf::from("."),
+    }
+}
+
+/// Resolves the directory a command uses when `-d` is omitted, in
+/// order: `$RSNTR_NODE`; the current directory when it already holds
+/// `rsntr.db` (scripts that `cd` into a node keep working); the
+/// per-user default.
+pub fn resolve_default_dir() -> (PathBuf, DirSource) {
+    if let Some(env) = std::env::var_os("RSNTR_NODE")
+        && !env.is_empty()
+    {
+        return (PathBuf::from(env), DirSource::Env);
+    }
+    if Path::new(DB_FILE).exists() {
+        return (PathBuf::from("."), DirSource::Cwd);
+    }
+    (default_node_dir(), DirSource::Default)
+}
+
+/// [`resolve_default_dir`] memoized for clap defaults.
+pub fn cli_default_dir() -> PathBuf {
+    static DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| resolve_default_dir().0);
+    DIR.clone()
+}
 
 /// Path to the database file of a node directory.
 pub fn db_path(dir: &Path) -> PathBuf {
@@ -74,14 +141,19 @@ pub fn load_or_mint_web_token(dir: &Path, rotate: bool) -> Result<String> {
         );
     }
     let token = resonator_web::mint_token();
-    std::fs::write(&path, format!("{token}\n"))
-        .with_context(|| format!("writing {}", path.display()))?;
+    // tmp + rename: another app reading mid-write must see the old
+    // token or the new one, never a torn file.
+    let tmp = dir.join(format!("{WEB_TOKEN_FILE}.tmp-{}", std::process::id()));
+    std::fs::write(&tmp, format!("{token}\n"))
+        .with_context(|| format!("writing {}", tmp.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("restricting {}", path.display()))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("restricting {}", tmp.display()))?;
     }
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("moving the web token into {}", path.display()))?;
     Ok(token)
 }
 
@@ -98,25 +170,110 @@ pub fn open_db(dir: &Path) -> Result<Connection> {
             dir.display()
         );
     }
-    let conn = Connection::open(&path).with_context(|| format!("opening {}", path.display()))?;
+    let conn = open_db_at(&path)?;
     configure(&conn)?;
+    verify_identity(dir, &conn)?;
     Ok(conn)
 }
 
+/// A side connection to a node database by path: the busy timeout set
+/// before anything else and the schema-compat check, nothing more. For
+/// the short-lived connections serving surfaces open beside the
+/// pipeline (dial-time `_peers` reads, address sinks, the blob gate).
+pub fn open_db_at(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+    conn.busy_timeout(resonator_node::BUSY_TIMEOUT)?;
+    resonator_node::check_schema_compat(&conn).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(conn)
+}
+
+/// A directory mixed from two nodes (a database copied beside the wrong
+/// key) would serve one identity's data under another's name; refuse it.
+fn verify_identity(dir: &Path, conn: &Connection) -> Result<()> {
+    if let Some(stored) = resonator_node::get_rsntr(conn, "endpoint_id")
+        && let Ok(id) = node_id(dir)
+        && stored != id.to_string()
+    {
+        bail!(
+            "{} holds the database of node {stored} but the key of node {id}; \
+             the directory mixes two nodes",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn configure(conn: &Connection) -> Result<()> {
-    conn.busy_timeout(Duration::from_millis(5_000))?;
+    conn.busy_timeout(resonator_node::BUSY_TIMEOUT)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     Ok(())
+}
+
+/// The init lock file name: initialization of a shared directory by
+/// several apps at once must produce one identity.
+pub const INIT_LOCK_FILE: &str = "rsntr.init.lock";
+
+/// Held while a directory is initialized (blocking exclusive lock; a
+/// filesystem without locks proceeds unlocked with a warning).
+struct InitLock {
+    file: Option<std::fs::File>,
+}
+
+impl InitLock {
+    fn acquire(dir: &Path) -> Result<Self> {
+        let path = dir.join(INIT_LOCK_FILE);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .with_context(|| format!("opening {}", path.display()))?;
+        match file.lock() {
+            Ok(()) => Ok(Self { file: Some(file) }),
+            Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+                tracing::warn!(path = %path.display(), "file locking unsupported; initializing unlocked");
+                Ok(Self { file: None })
+            }
+            Err(e) => Err(anyhow::anyhow!("locking {}: {e}", path.display())),
+        }
+    }
+}
+
+impl Drop for InitLock {
+    fn drop(&mut self) {
+        if let Some(f) = &self.file {
+            let _ = f.unlock();
+        }
+    }
 }
 
 /// `rsntr init <dir>`: creates the directory, generates `rsntr.key`,
 /// creates `rsntr.db` with every reserved table (including `_policy`,
 /// `_outbox`/`_results`, and the RDF store schema), and seeds the
 /// `_rsntr` defaults (modulations help/sql-sqlite/sparql/projection/
-/// media, encodings turtle, auth_chain cache+policy). Refuses to touch an
+/// media, encodings turtle, auth_chain cache+policy+human). Refuses to touch an
 /// initialized directory.
 pub fn init_dir(dir: &Path) -> Result<PeerId> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let _lock = InitLock::acquire(dir)?;
+    init_locked(dir)
+}
+
+/// Initializes `dir` unless it already holds a node, in which case its
+/// id is returned: what an embedding calls on every start, safe for
+/// several apps starting on one empty shared directory at once (the
+/// init lock serializes them; exactly one generates the key).
+pub fn ensure_dir_initialized(dir: &Path) -> Result<PeerId> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let _lock = InitLock::acquire(dir)?;
+    if key_path(dir).exists() {
+        return node_id(dir);
+    }
+    init_locked(dir)
+}
+
+fn init_locked(dir: &Path) -> Result<PeerId> {
     let kpath = key_path(dir);
     let dpath = db_path(dir);
     if kpath.exists() || dpath.exists() {
@@ -130,13 +287,29 @@ pub fn init_dir(dir: &Path) -> Result<PeerId> {
     let bytes = secret.to_bytes();
     let id = endpoint_id_from_secret(bytes);
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::write(&kpath, format!("{hex}\n"))
-        .with_context(|| format!("writing {}", kpath.display()))?;
+    // create_new: even without the lock two initializers cannot both
+    // write a key; the loser sees AlreadyExists.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&kpath, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("restricting {}", kpath.display()))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut key_file = match opts.open(&kpath) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => bail!(
+            "{} is already initialized (rsntr.key exists)",
+            dir.display()
+        ),
+        Err(e) => return Err(e).with_context(|| format!("creating {}", kpath.display())),
+    };
+    {
+        use std::io::Write;
+        key_file
+            .write_all(format!("{hex}\n").as_bytes())
+            .with_context(|| format!("writing {}", kpath.display()))?;
+        key_file.sync_all().ok();
     }
 
     // open_node_db creates the file, switches to WAL, and ensures every
@@ -402,12 +575,15 @@ pub async fn peer_dial_hints(
 /// hints current across peer restarts (every serve run binds new
 /// ports).
 pub fn merge_peer_addrs(
-    conn: &Connection,
+    conn: &mut Connection,
     endpoint_hex: &str,
     observed: &[SocketAddr],
 ) -> Result<bool> {
     const MAX_ADDRS: usize = 8;
-    let row: Option<Option<String>> = conn
+    // Read-modify-write under the write lock: two processes observing
+    // one peer at once must not lose each other's addresses.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let row: Option<Option<String>> = tx
         .query_row(
             "SELECT addrs FROM _peers WHERE endpoint_id = ?1",
             [endpoint_hex],
@@ -429,10 +605,11 @@ pub fn merge_peer_addrs(
     }
     merged.truncate(MAX_ADDRS);
     let json = serde_json::to_string(&merged)?;
-    conn.execute(
+    tx.execute(
         "UPDATE _peers SET addrs = ?2 WHERE endpoint_id = ?1",
         (endpoint_hex, json),
     )?;
+    tx.commit()?;
     Ok(true)
 }
 
@@ -495,7 +672,7 @@ mod tests {
     fn merge_peer_addrs_freshens_known_peers_only() {
         let tmp = TempDir::new("store-merge-addrs");
         init_dir(tmp.path()).expect("init");
-        let conn = open_db(tmp.path()).expect("open");
+        let mut conn = open_db(tmp.path()).expect("open");
         let hex = "aa".repeat(32);
         conn.execute(
             "INSERT INTO _peers (endpoint_id, name, addrs, added_at) \
@@ -509,7 +686,7 @@ mod tests {
             "10.0.0.1:2000".parse().unwrap(),
             "10.0.0.2:1000".parse().unwrap(),
         ];
-        assert!(merge_peer_addrs(&conn, &hex, &observed).expect("merge"));
+        assert!(merge_peer_addrs(&mut conn, &hex, &observed).expect("merge"));
         let json: String = conn
             .query_row(
                 "SELECT addrs FROM _peers WHERE endpoint_id = ?1",
@@ -525,7 +702,7 @@ mod tests {
 
         // A stranger's observation writes nothing.
         let stranger = "bb".repeat(32);
-        assert!(!merge_peer_addrs(&conn, &stranger, &observed).expect("no-op"));
+        assert!(!merge_peer_addrs(&mut conn, &stranger, &observed).expect("no-op"));
         let n: i64 = conn
             .query_row(
                 "SELECT count(*) FROM _peers WHERE endpoint_id = ?1",
@@ -585,7 +762,7 @@ mod tests {
         );
         assert_eq!(
             read_rsntr(&conn, "auth_chain").as_deref(),
-            Some(r#"["cache","policy"]"#)
+            Some(r#"["cache","policy","human"]"#)
         );
         assert_eq!(read_rsntr(&conn, "hint").as_deref(), Some(DEFAULT_HINT));
         assert!(
@@ -680,4 +857,94 @@ mod tests {
             .expect("policy row");
         assert_eq!(n, 1);
     }
+}
+
+// ---------------------------------------------------------------------
+// Peer visibility: `rsntr peer list` / `rsntr peer status`
+// ---------------------------------------------------------------------
+
+/// One peer as `rsntr peer list` reports it.
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub name: Option<String>,
+    pub endpoint_id: String,
+    /// `_peers.last_seen`: written only by presence beacons, so often
+    /// NULL — evidence, not a liveness verdict.
+    pub last_seen: Option<String>,
+    pub last_seen_age_secs: Option<i64>,
+    pub addr_count: usize,
+    /// `_outbox` rows for this peer still queued or sent (not done).
+    pub pending_outbox: i64,
+}
+
+/// Every admitted peer with presence evidence and undelivered counts.
+/// Ephemeral watch identities are skipped.
+pub fn peer_list(conn: &Connection) -> Result<Vec<PeerInfo>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.endpoint_id, p.name, p.addrs, p.last_seen, \
+                CASE WHEN p.last_seen IS NULL THEN NULL \
+                     ELSE CAST((julianday('now') - julianday(p.last_seen)) * 86400 AS INTEGER) END, \
+                (SELECT count(*) FROM _outbox o \
+                  WHERE (o.peer = p.endpoint_id OR (p.name IS NOT NULL AND o.peer = p.name)) \
+                    AND o.status IN ('queued', 'sent')) \
+         FROM _peers p \
+         WHERE p.name IS NULL OR p.name NOT IN ('_watch', '_await') \
+         ORDER BY p.name IS NULL, p.name, p.endpoint_id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            let addrs: Option<String> = r.get(2)?;
+            Ok(PeerInfo {
+                endpoint_id: r.get(0)?,
+                name: r.get(1)?,
+                addr_count: addrs
+                    .and_then(|a| serde_json::from_str::<Vec<String>>(&a).ok())
+                    .map(|v| v.len())
+                    .unwrap_or(0),
+                last_seen: r.get(3)?,
+                last_seen_age_secs: r.get(4)?,
+                pending_outbox: r.get(5)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// `rsntr peer status <name>`: one peer's evidence, plus its outbox
+/// breakdown. `reachable` is filled by the caller's `--probe`.
+#[derive(Debug, Clone)]
+pub struct PeerStatus {
+    pub info: PeerInfo,
+    /// `(status, count)` over this peer's `_outbox` rows.
+    pub outbox_by_status: Vec<(String, i64)>,
+    pub reachable: Option<bool>,
+}
+
+pub fn peer_status(conn: &Connection, target: &str) -> Result<PeerStatus> {
+    let (id, _addrs) = resolve_peer(conn, target)?;
+    let hex = id.to_string();
+    let info = peer_list(conn)?
+        .into_iter()
+        .find(|p| p.endpoint_id == hex)
+        .unwrap_or(PeerInfo {
+            name: None,
+            endpoint_id: hex.clone(),
+            last_seen: None,
+            last_seen_age_secs: None,
+            addr_count: 0,
+            pending_outbox: 0,
+        });
+    let mut stmt = conn.prepare(
+        "SELECT status, count(*) FROM _outbox \
+         WHERE peer = ?1 OR (?2 IS NOT NULL AND peer = ?2) \
+         GROUP BY status ORDER BY status",
+    )?;
+    let outbox_by_status = stmt
+        .query_map((&hex, &info.name), |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(PeerStatus {
+        info,
+        outbox_by_status,
+        reachable: None,
+    })
 }

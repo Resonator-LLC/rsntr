@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use tokio::task::JoinHandle;
 
 use resonator_authenticator::Chain;
@@ -15,10 +15,12 @@ use resonator_node::{DbHandle, Node, NodeConfig};
 use resonator_surfaces::{OutboxConfig, OutboxHandle, OutboxWorker, Presence, PresenceConfig};
 use resonator_transport::{IrohConfig, IrohTransport, PeerId, parse_ticket};
 
+use crate::lease::{AppInfo, LeaseInfo, ServeLease};
 use crate::store;
 
 /// A running node: transport + pipeline + the serve task, plus the send
-/// side (outbox worker) and liveness (presence gossip) surfaces.
+/// side (outbox worker) and liveness (presence gossip) surfaces. Holds
+/// the directory's serving lease for its lifetime.
 pub struct RunningNode {
     transport: Arc<IrohTransport>,
     node: Arc<Node>,
@@ -27,10 +29,20 @@ pub struct RunningNode {
     presence: Arc<Presence>,
     /// The event-hook dispatcher (`rsntr hook`, crate::hooks).
     hooks: JoinHandle<()>,
+    /// The ticket/address freshness task ([`FRESHNESS_CADENCE`]).
+    freshness: JoinHandle<()>,
+    /// Bound offline (loopback, no relay): readiness never waits for one.
+    offline: bool,
     /// The owner channel's control socket (docs/owner-channel.md sec
     /// 3.2); `None` when binding failed (serving continues without it).
     #[cfg(unix)]
     owner_socket: Option<crate::owner_socket::OwnerSocket>,
+    /// The owner channel over loopback TCP (crate::owner_tcp), bound on
+    /// every platform; `None` when binding failed.
+    owner_tcp: Option<crate::owner_tcp::OwnerTcp>,
+    /// The serving lease (crate::lease); last field, so it is released
+    /// after everything else let go of the directory.
+    lease: ServeLease,
 }
 
 impl RunningNode {
@@ -52,21 +64,18 @@ impl RunningNode {
         self.transport.ticket()
     }
 
-    /// [`ticket`](Self::ticket), but waits up to `wait` for the endpoint
-    /// to learn at least one direct address first, so the printed ticket
-    /// is dialable immediately.
+    /// [`ticket`](Self::ticket), but waits up to `wait` for the ticket to
+    /// be dialable first ([`ticket_ready`]): online that means the home
+    /// relay is in it (a NAT'd peer is unreachable without one), offline
+    /// at least one direct address. Past the deadline the ticket is
+    /// returned as is.
     pub async fn ready_ticket(&self, wait: Duration) -> String {
-        let deadline = tokio::time::Instant::now() + wait;
-        loop {
-            let t = self.ticket();
-            if matches!(parse_ticket(&t), Ok((_, addrs)) if !addrs.is_empty()) {
-                return t;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return t;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        wait_ready_ticket(&self.transport, self.offline, wait).await
+    }
+
+    /// True once the endpoint has a home relay (never when offline).
+    pub fn has_relay(&self) -> bool {
+        self.transport.has_relay()
     }
 
     /// The pipeline (the tests' window into the serving database).
@@ -97,26 +106,205 @@ impl RunningNode {
         self.owner_socket.as_ref().map(|s| s.path())
     }
 
-    /// Stops the surfaces and the serve loop, closes the endpoint,
-    /// removes the control socket.
+    /// Who holds the serving lease: this process.
+    pub fn lease_info(&self) -> &LeaseInfo {
+        self.lease.info()
+    }
+
+    /// The loopback owner port, when bound.
+    pub fn owner_tcp_port(&self) -> Option<u16> {
+        self.owner_tcp.as_ref().map(|t| t.port())
+    }
+
+    /// Stops everything and lets go of the directory entirely: control
+    /// socket, surfaces, watcher, every entrainment, the endpoint and
+    /// the blob store (its file lock), the published serving keys, then
+    /// the database connection itself (its WAL locks), then the lease.
+    /// After this the process holds no handle on the node directory,
+    /// which is what a suspended iOS app must be able to say.
     pub async fn shutdown(self) {
         #[cfg(unix)]
         if let Some(sock) = self.owner_socket {
             sock.shutdown().await;
         }
+        if let Some(tcp) = self.owner_tcp {
+            tcp.shutdown().await;
+        }
         self.outbox.shutdown().await;
         self.presence.shutdown().await;
         self.hooks.abort();
+        self.freshness.abort();
+        self.node.stop_change_watcher();
+        self.node.entrainments().close_all();
         self.task.abort();
         self.transport.shutdown().await;
+        // The daemon's published record is only meaningful while it
+        // serves; a reader trusting a stale ticket would dial a dead port.
+        let _ = self
+            .node
+            .db()
+            .call(|conn| {
+                conn.execute(
+                    "DELETE FROM _rsntr WHERE key IN \
+                     ('serving_addrs', 'serving_ticket', 'external_addrs')",
+                    [],
+                )
+            })
+            .await;
+        let _ = self.node.db().close().await;
+        drop(self.lease);
     }
+}
+
+/// How often a serving node re-reads its ticket and external addresses
+/// and rewrites `_rsntr.serving_ticket` / `_rsntr.external_addrs` when
+/// they changed (a relay learned late, a network change).
+pub const FRESHNESS_CADENCE: Duration = Duration::from_secs(60);
+
+/// The `_rsntr` key holding `{"addrs":[...],"relay":bool}` while a node
+/// serves: the non-loopback addresses and relay presence a peer would
+/// dial, as opposed to `serving_addrs` (loopback, for self-dials).
+pub const EXTERNAL_ADDRS_KEY: &str = "external_addrs";
+
+/// Whether a ticket is worth handing out: online it needs the home relay
+/// (direct addresses alone strand every NAT'd dialer), offline it needs a
+/// direct address (there is nothing else to dial).
+pub fn ticket_ready(offline: bool, has_relay: bool, direct_count: usize) -> bool {
+    if offline { direct_count > 0 } else { has_relay }
+}
+
+/// Polls the live ticket until [`ticket_ready`] or `wait` elapses.
+async fn wait_ready_ticket(transport: &IrohTransport, offline: bool, wait: Duration) -> String {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let t = transport.ticket();
+        let direct = parse_ticket(&t).map(|(_, a)| a.len()).unwrap_or(0);
+        if ticket_ready(offline, transport.has_relay(), direct)
+            || tokio::time::Instant::now() >= deadline
+        {
+            return t;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The `external_addrs` JSON for the current endpoint state.
+fn external_addrs_json(transport: &IrohTransport) -> String {
+    serde_json::json!({
+        "addrs": transport.external_addrs().iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+        "relay": transport.has_relay(),
+    })
+    .to_string()
+}
+
+/// Writes the ticket and external addrs when they differ from `last`;
+/// returns the values now on record.
+async fn publish_freshness(
+    transport: &IrohTransport,
+    db: &DbHandle,
+    last: &mut (String, String),
+) -> Result<()> {
+    let ticket = transport.ticket();
+    let ext = external_addrs_json(transport);
+    if (ticket.as_str(), ext.as_str()) == (last.0.as_str(), last.1.as_str()) {
+        return Ok(());
+    }
+    let (t, e) = (ticket.clone(), ext.clone());
+    db.call(move |conn| {
+        resonator_node::set_rsntr(conn, crate::detach_keys::SERVING_TICKET_KEY, &t)?;
+        resonator_node::set_rsntr(conn, EXTERNAL_ADDRS_KEY, &e)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("publishing the ticket: {e}"))?
+    .map_err(|e| anyhow::anyhow!("publishing the ticket: {e}"))?;
+    *last = (ticket, ext);
+    Ok(())
 }
 
 /// Opens the node directory and starts serving. `offline` binds to
 /// localhost with no relays and no address lookup (tests, LAN demos);
 /// production uses the n0 defaults.
+/// The UDP ports to bind, from the environment.
+///
+/// `RSNTR_BIND_PORT` pins IPv4 and `RSNTR_BIND_PORT_V6` pins IPv6;
+/// unset means an ephemeral port, which is what a node has always had.
+/// A node behind a firewall rule needs the port to be known before it
+/// starts, and an ephemeral one changes on every restart.
+///
+/// A value that is not a port is an error rather than a fallback to
+/// ephemeral: a typo here would otherwise leave the node running on
+/// some other port with the firewall rule pointing at nothing, which is
+/// precisely the thing the setting exists to prevent.
+pub fn bind_ports_from_env() -> Result<resonator_transport::BindPorts> {
+    parse_bind_ports(
+        std::env::var("RSNTR_BIND_PORT").ok().as_deref(),
+        std::env::var("RSNTR_BIND_PORT_V6").ok().as_deref(),
+    )
+}
+
+/// The parsing behind [`bind_ports_from_env`], separated so it can be
+/// tested without writing to the process environment.
+pub fn parse_bind_ports(
+    v4: Option<&str>,
+    v6: Option<&str>,
+) -> Result<resonator_transport::BindPorts> {
+    fn port(var: &str, raw: Option<&str>) -> Result<Option<u16>> {
+        let Some(raw) = raw else { return Ok(None) };
+        if raw.trim().is_empty() {
+            return Ok(None);
+        }
+        let port: u16 = raw
+            .trim()
+            .parse()
+            .with_context(|| format!("{var}={raw:?} is not a port number (1-65535)"))?;
+        if port == 0 {
+            bail!("{var}=0 would take a random port; unset it instead");
+        }
+        Ok(Some(port))
+    }
+    Ok(resonator_transport::BindPorts {
+        v4: port("RSNTR_BIND_PORT", v4)?,
+        v6: port("RSNTR_BIND_PORT_V6", v6)?,
+    })
+}
+
+#[cfg(test)]
+mod bind_port_tests {
+    use super::parse_bind_ports;
+
+    #[test]
+    fn unset_or_empty_means_ephemeral() {
+        assert_eq!(parse_bind_ports(None, None).unwrap().v4, None);
+        assert_eq!(parse_bind_ports(Some(""), Some("  ")).unwrap().v6, None);
+    }
+
+    #[test]
+    fn a_port_is_taken_per_family() {
+        let p = parse_bind_ports(Some("47193"), Some(" 47194 ")).unwrap();
+        assert_eq!((p.v4, p.v6), (Some(47193), Some(47194)));
+    }
+
+    /// A typo must stop the node rather than quietly fall back to an
+    /// ephemeral port: the firewall rule would then name a port nothing
+    /// is listening on, which is the failure this setting prevents.
+    #[test]
+    fn nonsense_and_zero_are_refused_by_name() {
+        for bad in ["http", "70000", "-1", "47193x"] {
+            let err = parse_bind_ports(Some(bad), None).unwrap_err().to_string();
+            assert!(err.contains("RSNTR_BIND_PORT"), "{bad}: {err}");
+        }
+        let zero = parse_bind_ports(Some("0"), None).unwrap_err().to_string();
+        assert!(zero.contains("random port"), "{zero}");
+    }
+}
+
 pub async fn start_node(dir: &Path, offline: bool) -> Result<RunningNode> {
-    start_node_with(dir, offline, PresenceConfig::default()).await
+    start_node_full(dir, offline, PresenceConfig::default(), AppInfo::cli()).await
+}
+
+/// [`start_node`] as an embedding app (recorded in the serving lease).
+pub async fn start_node_as(dir: &Path, offline: bool, app: AppInfo) -> Result<RunningNode> {
+    start_node_full(dir, offline, PresenceConfig::default(), app).await
 }
 
 /// [`start_node`] with an explicit presence configuration (`cadence` and
@@ -127,6 +315,15 @@ pub async fn start_node_with(
     offline: bool,
     presence_config: PresenceConfig,
 ) -> Result<RunningNode> {
+    start_node_full(dir, offline, presence_config, AppInfo::cli()).await
+}
+
+async fn start_node_full(
+    dir: &Path,
+    offline: bool,
+    presence_config: PresenceConfig,
+    app: AppInfo,
+) -> Result<RunningNode> {
     let dpath = store::db_path(dir);
     if !dpath.exists() {
         bail!(
@@ -135,6 +332,9 @@ pub async fn start_node_with(
             dir.display()
         );
     }
+    // The lease first: one process serves a directory. A typed
+    // `LeaseError` (downcastable through anyhow) names the holder.
+    let lease = ServeLease::acquire(dir, &app).map_err(anyhow::Error::from)?;
     // The serving connection needs the rdf_* SQL surface for the sparql
     // modulation; open through the node crate, then apply the CLI's
     // cross-process settings.
@@ -147,16 +347,23 @@ pub async fn start_node_with(
     let db = DbHandle::spawn(conn);
 
     // Blob provider on the shared endpoint, accept-gated by _peers (chat
-    // protocol sec 6.2); beyond the gate the hash is the capability.
-    let gate_db = db.clone();
+    // protocol sec 6.2); beyond the gate the hash is the capability. A
+    // side connection, never the DbHandle: the gate lives inside the
+    // transport, which the serving connection's vtab aux holds, and a
+    // DbHandle in it would keep the db thread alive past `close()`.
+    let gate_path = dpath.clone();
     let blobs = resonator_transport::BlobsConfig {
         store_dir: dir.join("blobs"),
         gate: Some(Arc::new(move |peer: resonator_transport::PeerId| {
-            let db = gate_db.clone();
+            let path = gate_path.clone();
             Box::pin(async move {
-                db.call(move |conn| resonator_node::peer_known(conn, &peer.to_string()))
-                    .await
-                    .unwrap_or(false)
+                tokio::task::spawn_blocking(move || {
+                    store::open_db_at(&path)
+                        .map(|conn| resonator_node::peer_known(&conn, &peer.to_string()))
+                        .unwrap_or(false)
+                })
+                .await
+                .unwrap_or(false)
             })
         })),
     };
@@ -165,12 +372,18 @@ pub async fn start_node_with(
         hello,
         secret_key: Some(secret),
         offline,
+        // Only the serving endpoint pins a port. Client dials keep
+        // ephemeral ones: they share this node's key, so a client that
+        // pinned the same port would collide with the daemon holding it.
+        bind_ports: bind_ports_from_env()?,
         // Empty is n0's relays. A node that should ride its own puts them
         // here; the ticket this node hands out then names them, because
         // `ready_ticket` reads the live endpoint.
         relays: Vec::new(),
         gossip: true,
         blobs: Some(blobs),
+        // The one endpoint that publishes this key's address record.
+        publish: true,
     };
     let (transport, incoming) = IrohTransport::bind(config)
         .await
@@ -217,7 +430,7 @@ pub async fn start_node_with(
             let path = source_path.clone();
             Box::pin(async move {
                 tokio::task::spawn_blocking(move || {
-                    let conn = rusqlite::Connection::open(&path).ok()?;
+                    let conn = store::open_db_at(&path).ok()?;
                     store::resolve_peer(&conn, &peer.to_string())
                         .ok()
                         .map(|(_, addrs)| addrs)
@@ -240,10 +453,10 @@ pub async fn start_node_with(
         transport.set_addr_sink(Arc::new(move |peer: PeerId, addrs: Vec<SocketAddr>| {
             let path = sink_path.clone();
             tokio::task::spawn_blocking(move || {
-                let Ok(conn) = rusqlite::Connection::open(&path) else {
+                let Ok(mut conn) = store::open_db_at(&path) else {
                     return;
                 };
-                match store::merge_peer_addrs(&conn, &peer.to_string(), &addrs) {
+                match store::merge_peer_addrs(&mut conn, &peer.to_string(), &addrs) {
                     Ok(true) => {
                         tracing::debug!(peer = %peer, ?addrs, "refreshed dial addresses from live connection");
                     }
@@ -262,7 +475,7 @@ pub async fn start_node_with(
     {
         let resolver_path = dpath.clone();
         let resolver: resonator_surfaces::PeerResolver = Arc::new(move |peer: &str| {
-            let conn = rusqlite::Connection::open(&resolver_path).ok()?;
+            let conn = store::open_db_at(&resolver_path).ok()?;
             store::resolve_peer(&conn, peer).ok().map(|(id, _addrs)| id)
         });
         let ctx = Arc::new(
@@ -316,7 +529,7 @@ pub async fn start_node_with(
     .map_err(|e| anyhow::anyhow!("starting the outbox worker: {e}"))?;
     let waker = outbox.waker();
     let (hook_tx, hook_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let hooks = crate::hooks::HookRunner::spawn(dir.to_path_buf(), hook_rx);
+    let hooks = crate::hooks::HookRunner::spawn(dir.to_path_buf(), node.db().clone(), hook_rx);
     node.set_table_observer(move |table| {
         if table == "_outbox" {
             waker.wake();
@@ -341,14 +554,119 @@ pub async fn start_node_with(
         }));
     }
 
+    // The blob fetch hook: the remote mod-install path pulls an
+    // installer's wasm by hash from the requesting peer. A fresh client
+    // endpoint (the proven `rsntr fetch` path) rather than the serving
+    // transport: the serving blob provider serves, it does not dial, and
+    // the installer must be a known peer for its provider to answer.
+    {
+        let fetch_dir = dir.to_path_buf();
+        node.set_blob_fetcher(Arc::new(
+            move |peer: String, hash: String, addrs: Vec<String>| {
+                let dir = fetch_dir.clone();
+                Box::pin(async move {
+                    let parsed: Vec<std::net::SocketAddr> =
+                        addrs.iter().filter_map(|a| a.parse().ok()).collect();
+                    crate::client::fetch_blob_with_addrs(&dir, &peer, &hash, &parsed, offline)
+                        .await
+                        .map_err(|e| e.to_string())
+                })
+            },
+        ));
+    }
+
+    // The mods reload hook: reinstall the mods host from the current
+    // `_modulations` rows and refresh the transport's advertised
+    // modulation list, so a hot install/removal takes effect without a
+    // restart. A Weak avoids an Arc cycle (the hook lives on the node it
+    // reinstalls). Feature-gated with the mods host itself.
+    #[cfg(feature = "mods")]
+    {
+        let weak = std::sync::Arc::downgrade(&node);
+        let reload_transport = transport.clone();
+        node.set_mod_reloader(std::sync::Arc::new(move || {
+            let weak = weak.clone();
+            let transport = reload_transport.clone();
+            Box::pin(async move {
+                let node = weak
+                    .upgrade()
+                    .ok_or_else(|| "the serving node is gone".to_string())?;
+                let refused = resonator_mods::ModsHost::install(&node)
+                    .await
+                    .map_err(|e| format!("reloading the mods host: {e}"))?;
+                let hello = node
+                    .db()
+                    .call(|conn| store::hello_from_db(conn))
+                    .await
+                    .map_err(|e| format!("recomputing the hello: {e}"))?;
+                transport.set_hello_mods(hello.mods);
+                Ok(refused)
+            })
+        }));
+    }
+
+    // The daemon's published ticket and external addresses: written once
+    // the ticket is dialable (bounded wait) and re-checked on a cadence,
+    // rewritten only on change. Before the control socket binds, so a
+    // detach parent that sees the socket answer finds the ticket too.
+    let freshness = {
+        let transport = transport.clone();
+        let db = node.db().clone();
+        let mut last = (String::new(), String::new());
+        wait_ready_ticket(
+            &transport,
+            offline,
+            Duration::from_secs(if offline { 3 } else { 5 }),
+        )
+        .await;
+        publish_freshness(&transport, &db, &mut last).await?;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(FRESHNESS_CADENCE).await;
+                if let Err(e) = publish_freshness(&transport, &db, &mut last).await {
+                    tracing::warn!(error = %e, "ticket freshness write failed");
+                }
+                // WAL hygiene for a database many processes read: a
+                // passive checkpoint whenever no reader pins the log.
+                let _ = db
+                    .call(|conn| conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)"))
+                    .await;
+            }
+        })
+    };
+
     // The control socket: owner commands dispatched on this process's
     // live connection, so update hooks fire and Sympathetic points
     // vibrate. Serving continues without it if binding fails.
     #[cfg(unix)]
-    let owner_socket = match crate::owner_socket::bind(dir, node.clone()).await {
-        Ok(sock) => Some(sock),
+    let owner_socket = if crate::owner_socket::fits(dir) {
+        match crate::owner_socket::bind(dir, node.clone(), Some(transport.clone())).await {
+            Ok(sock) => Some(sock),
+            Err(e) => {
+                tracing::warn!(error = %e, "control socket unavailable");
+                None
+            }
+        }
+    } else {
+        tracing::debug!(
+            "node directory path too long for a unix socket; owner channel over loopback TCP only"
+        );
+        None
+    };
+    // Loopback TCP with a token file: the owner channel for platforms
+    // and paths without a unix socket, bound everywhere so a client
+    // never has to guess.
+    let owner_tcp = match crate::owner_tcp::bind(
+        dir,
+        node.clone(),
+        &lease.info().app.id,
+        Some(transport.clone()),
+    )
+    .await
+    {
+        Ok(tcp) => Some(tcp),
         Err(e) => {
-            tracing::warn!(error = %e, "control socket unavailable");
+            tracing::warn!(error = %e, "loopback owner channel unavailable");
             None
         }
     };
@@ -359,6 +677,25 @@ pub async fn start_node_with(
     node.install_vibration_hook()
         .await
         .map_err(|e| anyhow::anyhow!("installing the vibration hook: {e}"))?;
+    // Writes by other processes (apps, `rsntr --local`) reach this
+    // process's vibrations, hooks, feed and outbox through the watcher.
+    node.start_change_watcher().await;
+    // The serving process is an app of the node too (`rsntr apps list`
+    // on a phone shows the desktop daemon).
+    {
+        let app = resonator_node::AppInfo {
+            id: lease.info().app.id.clone(),
+            name: lease.info().app.name.clone(),
+            version: lease.info().app.version.clone(),
+        };
+        if let Err(e) = node
+            .db()
+            .call(move |conn| resonator_node::register_app(conn, &app))
+            .await
+        {
+            tracing::warn!(error = %e, "registering the serving app failed");
+        }
+    }
     let task = tokio::spawn(node.clone().run(incoming));
 
     // Presence gossip on the same endpoint and identity (the transport's
@@ -402,8 +739,12 @@ pub async fn start_node_with(
         outbox,
         presence,
         hooks,
+        freshness,
+        offline,
         #[cfg(unix)]
         owner_socket,
+        owner_tcp,
+        lease,
     })
 }
 
@@ -436,4 +777,22 @@ pub async fn start_web(
     )
     .await
     .map_err(|e| anyhow::anyhow!("starting the web interface: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ticket_ready;
+
+    #[test]
+    fn ticket_ready_matrix() {
+        // offline: a direct address is all there is to dial
+        assert!(!ticket_ready(true, false, 0));
+        assert!(ticket_ready(true, false, 1));
+        assert!(ticket_ready(true, true, 1));
+        // online: the relay decides; direct addresses alone strand NAT'd dialers
+        assert!(!ticket_ready(false, false, 0));
+        assert!(!ticket_ready(false, false, 3));
+        assert!(ticket_ready(false, true, 0));
+        assert!(ticket_ready(false, true, 3));
+    }
 }

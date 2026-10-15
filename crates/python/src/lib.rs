@@ -5,9 +5,15 @@
 //! so Jupyter's own asyncio loop is never touched.
 //!
 //! Surface:
-//! - `Node(dir, offline=False)`: create (init) or reopen a node directory.
+//! - `Node(dir, offline=False, app_id=None, app_name=None,
+//!   app_version=None, serve_if_free=True)`: create (init) or reopen a
+//!   node directory, registering the app in `_apps` when named.
 //! - `serve(web=False)` / `stop()`, `ticket()`, `add_peer()`, `knock()`,
-//!   `endpoint_id`, `db_path`; context-manager support (`with` stops).
+//!   `endpoint_id`, `db_path`; context-manager support (`with`
+//!   suspends).
+//! - a shared directory (docs/shared-node.md): `close()`, `suspend()`,
+//!   `resume()`, `serving_info()`, `is_shared_serving`, `route`,
+//!   `apps()`, `declare_tables()`; `resonator.AlreadyServing`.
 //! - remote: `query()` / `execute()` -> `QueryResult` (or Turtle text for
 //!   CONSTRUCT), `help()` -> str.
 //! - local (the owner channel, ungated): `local()`, `sparql()`,
@@ -34,15 +40,15 @@ use resonator_authenticator::{Decision as AuthDecision, Footprint};
 use resonator_node::mod_handler::{ModHandler, ModHandlerFuture};
 use resonator_node::{audit, peer_known};
 use resonator_protocol::{
-    Denied as DeniedFrame, Done, EnvelopeObject, ErrorEnvelope, Request, RequestKind, ResultHeader,
-    Row, Value, mod_matches,
+    Denied as DeniedFrame, Done, EnvelopeObject, ErrorEnvelope, MAX_FRAME_LEN, Request,
+    RequestKind, ResultHeader, Row, Value, estimate_row_bytes, mod_matches,
 };
 use resonator_transport::parse_ticket;
-use rsntr::channel::{self, OwnerChannel, Prefer};
+use rsntr::channel::{self, OwnerChannel};
 use rsntr::chat;
 use rsntr::client::{self, MediaChunk, QueryOutcome};
 use rsntr::serve::{self, RunningNode};
-use rsntr::store;
+use rsntr::{lease, owner, store};
 
 /// The one tokio runtime the module owns; built on first use.
 static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -58,6 +64,7 @@ fn rt() -> &'static tokio::runtime::Runtime {
 
 create_exception!(resonator, Denied, PyException);
 create_exception!(resonator, QueryError, PyException);
+create_exception!(resonator, AlreadyServing, PyException);
 
 fn anyhow_err(e: anyhow::Error) -> PyErr {
     PyRuntimeError::new_err(format!("{e:#}"))
@@ -191,12 +198,22 @@ fn turtle_to_insert_data(
 }
 
 /// Ensures `dir` is an initialized node directory, initializing when the
-/// key is missing.
+/// key is missing (safe for several apps starting on one empty shared
+/// directory at once).
 fn ensure_node_dir(dir: &Path) -> anyhow::Result<()> {
-    if store::node_id(dir).is_err() {
-        store::init_dir(dir)?;
-    }
+    store::ensure_dir_initialized(dir)?;
     Ok(())
+}
+
+fn serving_dict(py: Python<'_>, h: &lease::LeaseInfo) -> PyResult<Py<PyAny>> {
+    let d = PyDict::new(py);
+    d.set_item("pid", h.pid)?;
+    d.set_item("app_id", &h.app.id)?;
+    d.set_item("app_name", &h.app.name)?;
+    d.set_item("app_version", &h.app.version)?;
+    d.set_item("started_at", &h.started_at)?;
+    d.set_item("is_self", h.pid == std::process::id())?;
+    d.into_py_any(py)
 }
 
 /// One chat history row; kept out of the pyclass so the Rust test suite
@@ -384,26 +401,258 @@ fn outcome_to_py(py: Python<'_>, outcome: QueryOutcome) -> PyResult<Py<PyAny>> {
 struct Node {
     dir: PathBuf,
     offline: bool,
+    /// The app this process is, when named (registered in `_apps`).
+    app: Option<resonator_node::AppInfo>,
+    /// `resume()` takes the serving lease when nobody holds it.
+    serve_if_free: bool,
     running: Mutex<Option<RunningNode>>,
     web: Mutex<Option<resonator_web::WebServer>>,
+    /// The in-process pipeline used while nobody serves: built lazily,
+    /// kept (with the foreign-write watcher running) so local calls
+    /// share one connection; dropped by `close()`.
+    local: Mutex<Option<Arc<resonator_node::Node>>>,
     /// Python-defined mods by modulation name; shared with the
     /// [`PyModsHandler`] installed at serve time.
     pymods: Arc<Mutex<HashMap<String, Py<PyAny>>>>,
 }
 
+/// Where a local call goes (docs/shared-node.md): this process's serving
+/// pipeline, the owner channel to another serving process, or the
+/// in-process pipeline.
+enum Route {
+    Serving(Arc<resonator_node::Node>),
+    Socket,
+    Local(Arc<resonator_node::Node>),
+}
+
+impl Node {
+    fn app_lease(&self) -> lease::AppInfo {
+        match &self.app {
+            Some(a) => lease::AppInfo {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                version: a.version.clone(),
+            },
+            None => lease::AppInfo::new("network.resonator.python"),
+        }
+    }
+
+    async fn local_pipeline(&self) -> anyhow::Result<Arc<resonator_node::Node>> {
+        if let Some(node) = self.local.lock().expect("local lock").as_ref() {
+            return Ok(node.clone());
+        }
+        let ch = OwnerChannel::local(&self.dir)?;
+        let node = ch
+            .node()
+            .expect("a local owner channel has a pipeline")
+            .clone();
+        node.install_vibration_hook().await?;
+        node.start_change_watcher().await;
+        let existing = {
+            let mut guard = self.local.lock().expect("local lock");
+            match guard.as_ref() {
+                Some(existing) => Some(existing.clone()),
+                None => {
+                    *guard = Some(node.clone());
+                    None
+                }
+            }
+        };
+        if let Some(existing) = existing {
+            let _ = node.db().close().await;
+            return Ok(existing);
+        }
+        Ok(node)
+    }
+
+    async fn current_route(&self) -> anyhow::Result<Route> {
+        if let Some(r) = self.running.lock().expect("running lock").as_ref() {
+            return Ok(Route::Serving(r.node().clone()));
+        }
+        if owner::probe(&self.dir).await {
+            return Ok(Route::Socket);
+        }
+        Ok(Route::Local(self.local_pipeline().await?))
+    }
+
+    async fn channel(&self) -> anyhow::Result<OwnerChannel> {
+        Ok(match self.current_route().await? {
+            Route::Serving(node) | Route::Local(node) => OwnerChannel::from_node(node),
+            Route::Socket => OwnerChannel::socket(&self.dir),
+        })
+    }
+
+    fn close_local(&self) {
+        let local = self.local.lock().expect("local lock").take();
+        if let Some(node) = local {
+            node.entrainments().close_all();
+            node.stop_change_watcher();
+            let _ = rt().block_on(node.db().close());
+        }
+    }
+
+    fn serving_info_py(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        match lease::holder(&self.dir) {
+            Some(h) => Ok(Some(serving_dict(py, &h)?)),
+            None => Ok(None),
+        }
+    }
+}
+
 #[pymethods]
 impl Node {
     #[new]
-    #[pyo3(signature = (dir, offline=false))]
-    fn new(dir: PathBuf, offline: bool) -> PyResult<Self> {
+    #[pyo3(signature = (dir, offline=false, app_id=None, app_name=None, app_version=None, serve_if_free=true))]
+    fn new(
+        py: Python<'_>,
+        dir: PathBuf,
+        offline: bool,
+        app_id: Option<String>,
+        app_name: Option<String>,
+        app_version: Option<String>,
+        serve_if_free: bool,
+    ) -> PyResult<Self> {
         ensure_node_dir(&dir).map_err(anyhow_err)?;
-        Ok(Node {
+        let app = app_id.map(|id| resonator_node::AppInfo {
+            id,
+            name: app_name,
+            version: app_version,
+        });
+        let node = Node {
             dir,
             offline,
+            app,
+            serve_if_free,
             running: Mutex::new(None),
             web: Mutex::new(None),
+            local: Mutex::new(None),
             pymods: Arc::new(Mutex::new(HashMap::new())),
+        };
+        if let Some(app) = node.app.clone() {
+            py.allow_threads(|| {
+                rt().block_on(async {
+                    let ch = node.channel().await?;
+                    rsntr::appscmd::register_over(&ch, &app).await
+                })
+            })
+            .map_err(anyhow_err)?;
+        }
+        Ok(node)
+    }
+
+    /// Who holds the directory's serving lease right now (a dict with
+    /// pid, app_id, app_name, app_version, started_at, is_self), or
+    /// None when nobody serves.
+    fn serving_info(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.serving_info_py(py)
+    }
+
+    /// True when another process serves the directory.
+    #[getter]
+    fn is_shared_serving(&self) -> bool {
+        lease::holder(&self.dir).is_some_and(|h| h.pid != std::process::id())
+    }
+
+    /// Where a local call goes right now: "serving", "socket", or "local".
+    #[getter]
+    fn route(&self, py: Python<'_>) -> PyResult<&'static str> {
+        let r = py
+            .allow_threads(|| rt().block_on(self.current_route()))
+            .map_err(anyhow_err)?;
+        Ok(match r {
+            Route::Serving(_) => "serving",
+            Route::Socket => "socket",
+            Route::Local(_) => "local",
         })
+    }
+
+    /// Drops the in-process pipeline (its connection and sqlite locks).
+    /// Serving is untouched; see `suspend()`. Idempotent.
+    fn close(&self, py: Python<'_>) {
+        py.allow_threads(|| self.close_local());
+    }
+
+    /// Lets go of the directory entirely: the web console, serving (the
+    /// lease, endpoint, blob store, serving connection), and the
+    /// in-process pipeline. What an app calls before it is suspended.
+    fn suspend(&self, py: Python<'_>) -> PyResult<()> {
+        self.stop(py)?;
+        self.close(py);
+        Ok(())
+    }
+
+    /// Comes back after `suspend()`: takes the serving lease when
+    /// `serve_if_free` and nobody holds it (a held lease is not an
+    /// error), refreshes the app's last_seen, and returns
+    /// `serving_info()`.
+    fn resume(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        if self.serve_if_free && !self.is_serving() {
+            match self.serve(py, false, None) {
+                Ok(_) => {}
+                Err(e) if e.is_instance_of::<AlreadyServing>(py) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if let Some(app) = &self.app
+            && let Ok(conn) = store::open_db(&self.dir)
+        {
+            let _ = resonator_node::touch_app(&conn, &app.id, 300);
+        }
+        self.serving_info_py(py)
+    }
+
+    /// Every app registered in the node, as dicts.
+    fn apps(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let conn = store::open_db(&self.dir).map_err(anyhow_err)?;
+        let rows =
+            resonator_node::list_apps(&conn).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let out = PyList::empty(py);
+        for r in rows {
+            let d = PyDict::new(py);
+            d.set_item("app_id", r.app_id)?;
+            d.set_item("name", r.name)?;
+            d.set_item("version", r.version)?;
+            d.set_item("lib_version", r.lib_version)?;
+            d.set_item("platform", r.platform)?;
+            d.set_item("tables", r.tables)?;
+            d.set_item("first_seen", r.first_seen)?;
+            d.set_item("last_seen", r.last_seen)?;
+            d.set_item("note", r.note)?;
+            out.append(d)?;
+        }
+        out.into_py_any(py)
+    }
+
+    /// Declares tables this app owns: `{table: comment}` (the tables
+    /// must exist). Needs a node opened with `app_id`.
+    fn declare_tables(&self, py: Python<'_>, tables: HashMap<String, String>) -> PyResult<()> {
+        let Some(app) = self.app.clone() else {
+            return Err(PyRuntimeError::new_err(
+                "open the node with app_id before declaring tables",
+            ));
+        };
+        let mut decls: Vec<resonator_node::TableDecl> = tables
+            .into_iter()
+            .map(|(name, comment)| resonator_node::TableDecl { name, comment })
+            .collect();
+        decls.sort_by(|a, b| a.name.cmp(&b.name));
+        let statements = {
+            let conn = store::open_db(&self.dir).map_err(anyhow_err)?;
+            resonator_node::declare_statements(&conn, &app.id, &decls)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        };
+        py.allow_threads(|| {
+            rt().block_on(async {
+                let ch = self.channel().await?;
+                rsntr::appscmd::register_over(&ch, &app).await?;
+                for (sql, params) in statements {
+                    channel::execute(&ch, &sql, params.into_iter().map(Value::Text).collect())
+                        .await?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+        })
+        .map_err(anyhow_err)
     }
 
     /// This node's 64-hex endpoint id.
@@ -441,9 +690,15 @@ impl Node {
         }
         let dir = self.dir.clone();
         let offline = self.offline;
+        let app = self.app_lease();
         let running = py
-            .allow_threads(|| rt().block_on(serve::start_node(&dir, offline)))
-            .map_err(anyhow_err)?;
+            .allow_threads(|| rt().block_on(serve::start_node_as(&dir, offline, app)))
+            .map_err(|e| match e.downcast_ref::<lease::LeaseError>() {
+                Some(le @ lease::LeaseError::AlreadyServing { .. }) => {
+                    AlreadyServing::new_err(le.to_string())
+                }
+                _ => anyhow_err(e),
+            })?;
         if !self.pymods.lock().expect("pymods lock").is_empty() {
             running.node().set_mod_handler(Box::new(PyModsHandler {
                 mods: self.pymods.clone(),
@@ -572,7 +827,13 @@ impl Node {
             ));
         }
         const BUILTINS: &[&str] = &[
-            "help", "projection", "media", "audio-duplex", "chat", "sparql", "sql-sqlite",
+            "help",
+            "projection",
+            "media",
+            "audio-duplex",
+            "chat",
+            "sparql",
+            "sql-sqlite",
         ];
         if name.is_empty()
             || !name
@@ -594,8 +855,8 @@ impl Node {
         let mut mods: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
         if !mods.iter().any(|m| m == name) {
             mods.push(name.to_string());
-            let json = serde_json::to_string(&mods)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let json =
+                serde_json::to_string(&mods).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             resonator_node::set_rsntr(&conn, "modulations", &json)
                 .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         }
@@ -696,10 +957,11 @@ impl Node {
         let dir = self.dir.clone();
         let modulation = r#mod.to_string();
         let signal = signal.to_string();
+        let _ = dir;
         let outcome = py
             .allow_threads(|| {
                 rt().block_on(async move {
-                    let ch = OwnerChannel::open(&dir, Prefer::Auto).await?;
+                    let ch = self.channel().await?;
                     channel::run(&ch, kind, &modulation, &signal, values).await
                 })
             })
@@ -724,11 +986,10 @@ impl Node {
         else {
             return Ok(0);
         };
-        let dir = self.dir.clone();
         let outcome = py
             .allow_threads(|| {
                 rt().block_on(async move {
-                    let ch = OwnerChannel::open(&dir, Prefer::Auto).await?;
+                    let ch = self.channel().await?;
                     channel::run(&ch, RequestKind::Execute, "sparql", &update, vec![]).await
                 })
             })
@@ -859,7 +1120,7 @@ impl Node {
         // The feed runs as its own task; the header (or a refusal) arrives
         // first, then Data chunks, all drained by MediaStream.
         let handle = rt().spawn(async move {
-            client::run_media_channel(&dir, &peer_s, &source_s, offline, tx).await
+            client::run_media_channel(&dir, &peer_s, &source_s, offline, tx, None).await
         });
         let first = py.allow_threads(|| rt().block_on(rx.recv()));
         match first {
@@ -898,7 +1159,7 @@ impl Node {
         _exc: Option<Py<PyAny>>,
         _tb: Option<Py<PyAny>>,
     ) -> PyResult<bool> {
-        self.stop(py)?;
+        self.suspend(py)?;
         Ok(false)
     }
 
@@ -1047,7 +1308,12 @@ struct PyModsHandler {
 
 impl ModHandler for PyModsHandler {
     fn mods(&self) -> Vec<String> {
-        self.mods.lock().expect("pymods lock").keys().cloned().collect()
+        self.mods
+            .lock()
+            .expect("pymods lock")
+            .keys()
+            .cloned()
+            .collect()
     }
 
     fn handle(
@@ -1093,7 +1359,13 @@ impl ModHandler for PyModsHandler {
                 .call(move |conn| {
                     if !peer_known(conn, &peer_g) {
                         audit::audit_direct(
-                            conn, &peer_g, &id_g, &signal_g, "deny", "peer-gate", "unknown peer",
+                            conn,
+                            &peer_g,
+                            &id_g,
+                            &signal_g,
+                            "deny",
+                            "peer-gate",
+                            "unknown peer",
                         );
                         return ModGate::Unknown;
                     }
@@ -1251,25 +1523,27 @@ fn convert_mod_return(ret: &Bound<'_, PyAny>) -> PyModOutcome {
             if t.len() == 2 {
                 return rows_outcome(t.get_item(0)?.extract()?, &t.get_item(1)?);
             }
-            return Err(PyValueError::new_err("mod return tuple must be (columns, rows)"));
+            return Err(PyValueError::new_err(
+                "mod return tuple must be (columns, rows)",
+            ));
         }
         if let Ok(l) = ret.downcast::<PyList>() {
             if l.is_empty() {
                 return Ok(PyModOutcome::Done);
             }
             let first = l.get_item(0)?;
-            let fd = first.downcast::<PyDict>().map_err(|_| {
-                PyValueError::new_err("a mod return list must contain dicts")
-            })?;
+            let fd = first
+                .downcast::<PyDict>()
+                .map_err(|_| PyValueError::new_err("a mod return list must contain dicts"))?;
             let mut columns: Vec<String> = Vec::new();
             for k in fd.keys() {
                 columns.push(k.extract()?);
             }
             let mut rows = Vec::with_capacity(l.len());
             for item in l.iter() {
-                let d = item.downcast::<PyDict>().map_err(|_| {
-                    PyValueError::new_err("a mod return list must contain dicts")
-                })?;
+                let d = item
+                    .downcast::<PyDict>()
+                    .map_err(|_| PyValueError::new_err("a mod return list must contain dicts"))?;
                 let mut row = Vec::with_capacity(columns.len());
                 for c in &columns {
                     row.push(match d.get_item(c)? {
@@ -1307,6 +1581,20 @@ fn rows_outcome(columns: Vec<String>, rows_obj: &Bound<'_, PyAny>) -> PyResult<P
     Ok(PyModOutcome::Rows { columns, rows })
 }
 
+/// Rows per frame from a mod, matching the SQL path's own limit.
+const MOD_ROWS_PER_FRAME: usize = 512;
+
+/// Soft byte budget per row frame, comfortably inside MAX_FRAME_LEN once
+/// base64 has inflated any blob. Same value the pipeline uses.
+const MOD_FRAME_BUDGET: usize = 96 * 1024;
+
+/// Largest a single row may be, in the same estimated units as
+/// [`estimate_row_bytes`], which already counts base64 inflation. A row
+/// cannot be split across frames, so this is the honest ceiling on one
+/// row rather than on a response. Just under MAX_FRAME_LEN, leaving room
+/// for the frame's own envelope.
+const MOD_ROW_MAX_BYTES: usize = MAX_FRAME_LEN - 8 * 1024;
+
 /// Emits the frames for one outcome (ids all carry the request id, as
 /// the wasm host does) and returns the row count for the audit trailer.
 async fn send_mod_outcome(
@@ -1336,14 +1624,7 @@ async fn send_mod_outcome(
         }
         PyModOutcome::Rows { columns, rows } => {
             let n = rows.len() as i64;
-            let _ = frames
-                .send(EnvelopeObject::Result(ResultHeader {
-                    id: id.to_string(),
-                    columns: columns.clone(),
-                    decl_types: vec![],
-                }))
-                .await;
-            let batch: Vec<Row> = rows
+            let all: Vec<Row> = rows
                 .into_iter()
                 .enumerate()
                 .map(|(i, cells)| Row {
@@ -1351,6 +1632,57 @@ async fn send_mod_outcome(
                     cells: columns.iter().cloned().zip(cells).collect(),
                 })
                 .collect();
+
+            // A single row that cannot fit any frame is refused here,
+            // before a header promises results. Left to the wire it
+            // would fail while encoding, where the error has nowhere to
+            // go: the caller would see the stream end with no trailer
+            // and read it as a broken connection.
+            if let Some((seq, est)) = all
+                .iter()
+                .map(|r| (r.seq, estimate_row_bytes(r)))
+                .find(|(_, est)| *est > MOD_ROW_MAX_BYTES)
+            {
+                let _ = frames
+                    .send(EnvelopeObject::Error(ErrorEnvelope {
+                        id: Some(id.to_string()),
+                        code: "engine-error".to_string(),
+                        reason: Some(format!(
+                            "row {seq} is about {est} bytes, past the {MOD_ROW_MAX_BYTES} a \
+                             single row may occupy; return it in pieces or as a blob a peer \
+                             fetches separately"
+                        )),
+                    }))
+                    .await;
+                return 0;
+            }
+
+            let _ = frames
+                .send(EnvelopeObject::Result(ResultHeader {
+                    id: id.to_string(),
+                    columns: columns.clone(),
+                    decl_types: vec![],
+                }))
+                .await;
+
+            // Split across frames by estimated size, as the SQL path
+            // does. Without this every row rode one frame and a mod
+            // could return only about 190 KB in total.
+            let mut batch: Vec<Row> = Vec::new();
+            let mut bytes = 0usize;
+            for row in all {
+                let est = estimate_row_bytes(&row);
+                if !batch.is_empty()
+                    && (batch.len() >= MOD_ROWS_PER_FRAME || bytes + est >= MOD_FRAME_BUDGET)
+                {
+                    let _ = frames
+                        .send(EnvelopeObject::Row(std::mem::take(&mut batch)))
+                        .await;
+                    bytes = 0;
+                }
+                bytes += est;
+                batch.push(row);
+            }
             if !batch.is_empty() {
                 let _ = frames.send(EnvelopeObject::Row(batch)).await;
             }
@@ -1386,6 +1718,7 @@ fn resonator(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MediaStream>()?;
     m.add("Denied", m.py().get_type::<Denied>())?;
     m.add("QueryError", m.py().get_type::<QueryError>())?;
+    m.add("AlreadyServing", m.py().get_type::<AlreadyServing>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
@@ -1394,6 +1727,112 @@ fn resonator(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use rsntr::testutil::TempDir;
+
+    /// Drives send_mod_outcome and collects what went on the wire.
+    async fn frames_for(columns: Vec<String>, rows: Vec<Vec<Value>>) -> Vec<EnvelopeObject> {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        send_mod_outcome(&tx, "req-1", PyModOutcome::Rows { columns, rows }).await;
+        drop(tx);
+        let mut out = Vec::new();
+        while let Some(f) = rx.recv().await {
+            out.push(f);
+        }
+        out
+    }
+
+    fn blob_rows(count: usize, each: usize) -> Vec<Vec<Value>> {
+        (0..count)
+            .map(|_| vec![Value::Blob(vec![0u8; each])])
+            .collect()
+    }
+
+    /// The reported bug: a mod returning 12 rows of 180 KB sent every row
+    /// in one frame, which could not be encoded, and the caller saw the
+    /// stream end with no trailer. The rows must now be spread over
+    /// several frames, each inside the budget, and still arrive whole.
+    #[tokio::test]
+    async fn a_large_result_is_split_across_frames() {
+        let frames = frames_for(vec!["bytes".into()], blob_rows(12, 180 * 1024)).await;
+
+        let row_frames: Vec<&Vec<Row>> = frames
+            .iter()
+            .filter_map(|f| match f {
+                EnvelopeObject::Row(rows) => Some(rows),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            row_frames.len() > 1,
+            "2.1 MB cannot ride one frame, got {} frame(s)",
+            row_frames.len()
+        );
+        for rows in &row_frames {
+            let bytes: usize = rows.iter().map(estimate_row_bytes).sum();
+            assert!(bytes < MAX_FRAME_LEN, "a frame estimated {bytes} bytes");
+        }
+        assert_eq!(
+            row_frames.iter().map(|r| r.len()).sum::<usize>(),
+            12,
+            "every row still arrives"
+        );
+        assert!(
+            matches!(frames.last(), Some(EnvelopeObject::Done(_))),
+            "and the response still ends with a trailer: {:?}",
+            frames.last()
+        );
+    }
+
+    /// A single row too big for any frame cannot be split, so it must be
+    /// refused by name before a header promises results. Silence here is
+    /// what made the original failure look like a dropped connection.
+    #[tokio::test]
+    async fn one_oversized_row_is_named_not_dropped() {
+        let frames = frames_for(vec!["bytes".into()], blob_rows(1, 400 * 1024)).await;
+
+        match frames.first() {
+            Some(EnvelopeObject::Error(e)) => {
+                let reason = e.reason.clone().unwrap_or_default();
+                assert!(reason.contains("row 0"), "names the row: {reason}");
+                assert!(reason.contains("past the"), "says why: {reason}");
+            }
+            other => panic!("expected a named error, got {other:?}"),
+        }
+        assert!(
+            !frames
+                .iter()
+                .any(|f| matches!(f, EnvelopeObject::Result(_))),
+            "no header promises rows that will never come"
+        );
+    }
+
+    /// A result well inside the budget still rides a single frame, so
+    /// splitting only happens when it is needed.
+    #[tokio::test]
+    async fn a_small_result_still_rides_one_frame() {
+        let frames = frames_for(vec!["bytes".into()], blob_rows(12, 1024)).await;
+        let row_frames = frames
+            .iter()
+            .filter(|f| matches!(f, EnvelopeObject::Row(_)))
+            .count();
+        assert_eq!(row_frames, 1, "16 KB estimated needs no splitting");
+    }
+
+    /// 12 rows of 15 KB was one of the sizes measured as working before
+    /// this change. It still works; it simply arrives over more than one
+    /// frame now, which the caller never sees.
+    #[tokio::test]
+    async fn a_result_that_worked_before_still_works() {
+        let frames = frames_for(vec!["bytes".into()], blob_rows(12, 15 * 1024)).await;
+        let rows: usize = frames
+            .iter()
+            .filter_map(|f| match f {
+                EnvelopeObject::Row(r) => Some(r.len()),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(rows, 12);
+        assert!(matches!(frames.last(), Some(EnvelopeObject::Done(_))));
+    }
 
     #[test]
     fn ensure_node_dir_inits_once() {
@@ -1457,7 +1896,7 @@ mod tests {
             .build()
             .expect("rt");
         rt.block_on(async {
-            let ch = OwnerChannel::open(tmp.path(), Prefer::Local)
+            let ch = OwnerChannel::open(tmp.path(), rsntr::channel::Prefer::Local)
                 .await
                 .expect("open channel");
             let (update, count) = turtle_to_insert_data(

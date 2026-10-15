@@ -4,7 +4,8 @@
 //! broadcast a small `rsntr:Presence` beacon (default cadence ~60s). On
 //! receipt, a peer refreshes `_peers.last_seen` for the beaconing endpoint;
 //! only endpoints with a `_peers` row (admitted peers) are ever refreshed.
-//! The outbox scheduler consults [`is_stale`] to skip known-offline peers.
+//! [`is_stale`] serves visibility (`rsntr peer status`); the outbox worker
+//! retries on its own backoff and never consults presence.
 //!
 //! The topic id is a stable hash of the sorted admitted `EndpointId`s of
 //! the whole peer-set (this node plus its `_peers`), so presence is

@@ -95,6 +95,28 @@ impl Entrainments {
     pub fn active(&self) -> usize {
         self.inner.lock().expect("entrainments lock").subs.len()
     }
+
+    /// The distinct tables active entrainments listen to (the foreign
+    /// write watcher signals exactly these when another process commits).
+    pub fn subscribed_tables(&self) -> Vec<String> {
+        let inner = self.inner.lock().expect("entrainments lock");
+        let mut tables: Vec<String> = inner
+            .subs
+            .values()
+            .filter_map(|s| s.table.clone())
+            .collect();
+        tables.sort();
+        tables.dedup();
+        tables
+    }
+
+    /// Ends every entrainment: dropping the senders makes each handler's
+    /// signal receiver yield `None`, so the handler finishes its stream
+    /// (the client sees its Done / `on_end`). Used at shutdown and
+    /// suspension.
+    pub fn close_all(&self) {
+        self.inner.lock().expect("entrainments lock").subs.clear();
+    }
 }
 
 /// What the entrain handler should answer (gate outcome).

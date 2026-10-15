@@ -373,6 +373,8 @@ async fn demo() {
             relays: Vec::new(),
             gossip: false,
             blobs: None,
+            bind_ports: Default::default(),
+            publish: false,
         };
         let (client_t, _rx) = IrohTransport::bind(config).await.expect("bind c");
         client_t.add_peer_addrs(b.peer_id(), b.direct_addrs());
@@ -451,7 +453,7 @@ async fn demo() {
     // 7. Media: the registered shell command streams its stdout to a
     //    watch call.
     let (media_tx, mut media_rx) = tokio::sync::mpsc::channel(16);
-    client::run_media_channel(ta.path(), "b", "feed", true, media_tx)
+    client::run_media_channel(ta.path(), "b", "feed", true, media_tx, None)
         .await
         .expect("media watch");
     match media_rx.recv().await {

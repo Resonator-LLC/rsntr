@@ -95,6 +95,30 @@ pub fn error_exit_code(code: &str) -> i32 {
     }
 }
 
+/// One refusal as a terminal line.
+///
+/// A request parked in the peer's `_inbox` comes back as a denial
+/// carrying [`PENDING_REASON`](resonator_authenticator::PENDING_REASON),
+/// because on the wire there is nothing else for it to be. Printed as
+/// "denied: pending human decision" it reads as a wall, and the reader
+/// stops: in fact nobody has refused anything, the peer's owner has not
+/// answered yet, and the identical retry succeeds once they do. That
+/// flow - one agent asks, the other's owner approves - is the one the
+/// manual advertises, so the line has to say which of the two it is.
+/// `--json` has said so structurally all along (`"pending": true`).
+///
+/// The row's id is minted by the peer when it parks, so the requester
+/// cannot name it; `rsntr inbox list` on the other node can.
+pub fn denied_line(reason: Option<&str>) -> String {
+    if reason == Some(resonator_authenticator::PENDING_REASON) {
+        return "pending: parked in the peer's inbox for its owner, not denied \
+                (they answer it with `rsntr inbox answer <id> allow`, from \
+                `rsntr inbox list` on their node; this same request then succeeds)"
+            .to_string();
+    }
+    format!("denied: {}", reason.unwrap_or("(no reason given)"))
+}
+
 /// The stable JSON object for one query/help report.
 pub fn report_to_json(report: &QueryReport) -> Json {
     let id = &report.id;
@@ -126,11 +150,19 @@ pub fn report_to_json(report: &QueryReport) -> Json {
             "help": text,
             "topics": topics,
         }),
-        QueryOutcome::Denied(d) => json!({
-            "ok": false,
-            "id": id,
-            "denied": d.reason,
-        }),
+        QueryOutcome::Denied(d) => {
+            // "pending human decision" is the stable marker for a
+            // request parked in the peer's `_inbox` awaiting the owner
+            // (docs/mod-install.md): surface it structurally so agents
+            // can branch without string-matching.
+            let pending = d.reason.as_deref() == Some(resonator_authenticator::PENDING_REASON);
+            json!({
+                "ok": false,
+                "id": id,
+                "denied": d.reason,
+                "pending": pending,
+            })
+        }
         QueryOutcome::Failed(e) => json!({
             "ok": false,
             "id": id,
@@ -228,6 +260,22 @@ mod tests {
         };
         assert_eq!(row_to_json(&columns, &row), json!(["x", null, 3]));
         assert_eq!(render_row(&columns, &row), "x\tNULL\t3");
+    }
+
+    /// The two refusals must not read alike: one is a wall, the other
+    /// is a question waiting on a person, and the word "denied" was
+    /// doing both jobs.
+    #[test]
+    fn a_parked_request_does_not_read_as_a_refusal() {
+        let parked = denied_line(Some(resonator_authenticator::PENDING_REASON));
+        assert!(parked.starts_with("pending:"), "{parked}");
+        assert!(parked.contains("not denied"), "{parked}");
+        assert!(
+            parked.contains("inbox answer"),
+            "names the remedy: {parked}"
+        );
+        assert_eq!(denied_line(Some("no read grant")), "denied: no read grant");
+        assert_eq!(denied_line(None), "denied: (no reason given)");
     }
 
     #[test]

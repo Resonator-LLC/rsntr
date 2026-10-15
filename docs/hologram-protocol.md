@@ -124,10 +124,12 @@ kind, so menus can label the entry as an app before invoking it; the hint
 is a courtesy, not a contract. Clients that do not render holograms fall
 back to the open-world rule and show the frames inertly.
 
-Staleness follows the projection rules: the document is stable for a
-serve run (the mod registry loads at start), clients SHOULD refetch when
-`urn:rsntr:projection-changed` vibrates, and MUST NOT cache a hologram
-across sessions.
+Staleness follows the projection rules: a wasm mod's document is stable
+for a serve run (the registry loads at start; a hot install/update via
+[mod-install.md](mod-install.md) replaces it live), and a `pages`-served
+document changes whenever its row is republished. Clients SHOULD refetch
+when `urn:rsntr:projection-changed` vibrates, and MUST NOT cache a
+hologram across sessions.
 
 ## 5. The containment contract
 
@@ -167,7 +169,7 @@ holds nothing and reaches nothing except the protocol:
 
 Non-goals, stated so nobody reinvents them: no same-origin hosting, no
 service-worker fetch interception (both would hand the guest ambient
-authority), no hot mod install (the registry loads at serve start,
+authority), hot mod install is now supported (docs/mod-install.md); mods still load at serve start, but a granted peer may install/update one live (the registry loads at serve start,
 owner-channel.md section 5), no multi-file bundling beyond
 `hologram <path>`.
 

@@ -1,7 +1,11 @@
 // Minimal example view: drop into an iOS app that depends on the
-// Resonator Swift package (mobile/ios). Creates a node in the app's
-// documents directory, runs a local SQL statement, entrains a
-// Sympathetic point, and shows vibrations arriving live.
+// Resonator Swift package (mobile/ios). HOSTS the device's shared node in
+// this app's Documents/rsntr (Info.plist: UIFileSharingEnabled = YES and
+// LSSupportsOpeningDocumentsInPlace = YES, so other apps can pick the
+// folder in Files and join), declares a table, entrains a Sympathetic
+// point, and shows vibrations arriving live, including writes made by
+// other apps on the same node. A second app joins with
+// `SharedNode.openJoined` / the Files picker; see docs/shared-node.md.
 //
 // This file is example code, not part of the package target; copy it
 // into your app project.
@@ -28,6 +32,7 @@ final class VibrationModel: ObservableObject, VibrationListener {
 
 struct ResonatorDemoView: View {
     @StateObject private var model = VibrationModel()
+    @State private var shared: SharedNode?
     @State private var node: Node?
     @State private var session: Entrainment?
     @State private var endpointId = ""
@@ -53,26 +58,36 @@ struct ResonatorDemoView: View {
         // real app. Node directory = one sqlite db + one key file.
         DispatchQueue.global().async {
             do {
-                let dir = FileManager.default
-                    .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("resonator-node").path
-                let n = try Node(dir: dir, offline: false)
+                // A joiner would call SharedNode.openJoined(app:) and, when
+                // that returns nil, present SharedNode.pickerController().
+                let app = AppInfo(id: "network.resonator.demo", name: "Resonator Demo", version: "0.1")
+                let sh = try SharedNode.host(app: app, offline: false)
+                let n = sh.node
                 let id = try n.endpointId()
                 _ = try n.localExecute(
-                    signal: "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)",
+                    signal: "CREATE TABLE IF NOT EXISTS demo_notes (id INTEGER PRIMARY KEY, body TEXT)",
                     params: [])
+                try n.declareTables(tables: [TableDecl(name: "demo_notes", comment: "notes typed in the demo app")])
                 _ = try n.localExecute(
                     signal: """
                         INSERT OR IGNORE INTO _projection (point_iri, kind, label, resource) \
-                        VALUES ('urn:demo:notes-changed', 'sympathetic', 'notes changed', 'notes')
+                        VALUES ('urn:demo:notes-changed', 'sympathetic', 'notes changed', 'demo_notes')
                         """,
                     params: [])
                 let s = try n.entrain(point: "urn:demo:notes-changed", listener: model)
+                // Entrainments end on suspend; come back with the app.
+                sh.onResume = { node in
+                    if let again = try? node.entrain(point: "urn:demo:notes-changed", listener: model) {
+                        DispatchQueue.main.async { session = again }
+                    }
+                }
+                _ = sh.resume()
                 DispatchQueue.main.async {
+                    shared = sh
                     node = n
                     session = s
                     endpointId = id
-                    status = "entrained urn:demo:notes-changed"
+                    status = "entrained urn:demo:notes-changed (serving: \(n.servingInfo()?.appId ?? "nobody"))"
                 }
             } catch {
                 DispatchQueue.main.async { status = "failed: \(error)" }
@@ -84,7 +99,7 @@ struct ResonatorDemoView: View {
         guard let n = node else { return }
         DispatchQueue.global().async {
             _ = try? n.localExecute(
-                signal: "INSERT INTO notes (body) VALUES (?1)",
+                signal: "INSERT INTO demo_notes (body) VALUES (?1)",
                 params: [.text(v: "hello at \(Date())")])
         }
     }

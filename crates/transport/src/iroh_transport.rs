@@ -13,13 +13,13 @@
 //! request gets its own bi stream on it.
 
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bytes::BytesMut;
-use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, SendStream, presets};
+use iroh::endpoint::{BindOpts, Connection, QuicTransportConfig, RecvStream, SendStream, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, SecretKey, TransportAddr};
 use iroh_tickets::endpoint::EndpointTicket;
@@ -40,11 +40,28 @@ const INCOMING_QUEUE: usize = 32;
 /// Connection-level QUIC idle timeout. A peer that restarts leaves the
 /// old connection looking alive (`close_reason()` stays `None`,
 /// `open_bi` succeeds locally); with iroh's 5s keep-alives this bound
-/// turns such a zombie into a closed connection within ~10s instead of
-/// hanging requests indefinitely. Healthy-but-quiet connections
-/// (entrainments, parked requests) are unaffected: the keep-alives keep
-/// them under the bound.
-const CONN_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// turns such a zombie into a closed connection instead of hanging
+/// requests indefinitely. Healthy-but-quiet connections (entrainments,
+/// parked requests) are unaffected: the keep-alives keep them under it.
+///
+/// 30s, raised from 10s, to sit at the tolerance of the layer below
+/// rather than three times inside it. iroh's own defaults are a 5s
+/// keep-alive, a 15s per-path idle timeout and a 30s idle timeout for
+/// relay paths; at 10s we were closing connections that iroh would have
+/// kept, and this bound is the one that decides. What it costs is the
+/// other side: a genuinely dead peer is now noticed in 30s rather than
+/// 10s. That is the better trade here because a caller who cannot wait
+/// already carries its own deadline (`query_peer`, the CLI verbs, the
+/// media first-byte bound), while a connection killed during a real
+/// stall has no remedy at all - it is simply a session that dropped.
+///
+/// The stalls that matter are not hypothetical: a phone driving a
+/// screen meets cell handovers, lifts and tunnels, which plausibly go
+/// past 10s and rarely past 30s. Measured alongside this, a 0.99s gap
+/// was harmless and a 19.8s gap killed every relayed connection a node
+/// held, which is the boundary this constant sets
+/// (docs/relay-identity-sharing.md).
+const CONN_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Upper bound on one dial (connect + hello exchange). A dial against
 /// stale addresses and a not-yet-republished discovery record otherwise
@@ -89,23 +106,61 @@ async fn bind_endpoint(
     secret_key: SecretKey,
     offline: bool,
     relays: &[String],
+    publish: bool,
+    ports: BindPorts,
 ) -> Result<Endpoint, TransportError> {
     let transport_config = QuicTransportConfig::builder()
-        .max_idle_timeout(Some(CONN_IDLE_TIMEOUT.try_into().expect("10s fits an IdleTimeout")))
+        .max_idle_timeout(Some(
+            CONN_IDLE_TIMEOUT
+                .try_into()
+                .expect("10s fits an IdleTimeout"),
+        ))
         .build();
     let bound = if offline {
-        Endpoint::builder(presets::Minimal)
+        let builder = Endpoint::builder(presets::Minimal)
             .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .transport_config(transport_config)
-            .bind_addr(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
-            .map_err(|e| TransportError::Bind(e.to_string()))?
-            .bind()
-            .await
+            // The builder comes with sockets on 0.0.0.0 and [::]; binding
+            // 127.0.0.1 replaces only the first, and [::] would advertise
+            // every IPv6 address of the host.
+            .clear_ip_transports()
+            .bind_addr(SocketAddr::from((
+                Ipv4Addr::LOCALHOST,
+                ports.v4.unwrap_or(0),
+            )))
+            .map_err(|e| TransportError::Bind(e.to_string()))?;
+        // Offline binds loopback, but a pinned IPv6 port is honoured
+        // here too: a setting that quietly does nothing under one preset
+        // is worse than one that does not exist. Unpinned, [::1] is
+        // optional, so a host without IPv6 still binds.
+        let builder = match ports.v6 {
+            None => builder
+                .bind_addr_with_opts(
+                    SocketAddr::from((Ipv6Addr::LOCALHOST, 0)),
+                    BindOpts::default().set_is_required(false),
+                )
+                .map_err(|e| TransportError::Bind(e.to_string()))?,
+            Some(port) => builder
+                .bind_addr(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
+                .map_err(|e| TransportError::Bind(format!("IPv6 port {port}: {e}")))?,
+        };
+        builder.bind().await
     } else {
         let builder = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .transport_config(transport_config);
+        // Resolve-only for client endpoints: the N0 preset installs a
+        // pkarr publisher too, and a throwaway endpoint must not replace
+        // the serving endpoint's record for this key.
+        let builder = if publish {
+            builder
+        } else {
+            builder
+                .clear_address_lookup()
+                .address_lookup(iroh::address_lookup::PkarrResolver::n0_dns())
+                .address_lookup(iroh::address_lookup::DnsAddressLookup::n0_dns())
+        };
         // A relay list that does not parse is a configuration error, not
         // a reason to fall back to n0: silently relaying through someone
         // else's servers is exactly what setting this was meant to stop.
@@ -116,9 +171,36 @@ async fn bind_endpoint(
                 .map_err(|e| TransportError::Bind(format!("relay url: {e}")))?;
             builder.relay_mode(RelayMode::Custom(map))
         };
+        // A pinned port replaces the preset's unspecified bind for that
+        // address family (iroh binds 0.0.0.0 and [::] by default), so a
+        // node keeps the same port across restarts and a firewall rule
+        // written ahead of time keeps pointing at it. Binding stays on
+        // all interfaces; only the port is fixed.
+        let builder = match ports.v4 {
+            None => builder,
+            Some(port) => builder
+                .bind_addr(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))
+                .map_err(|e| TransportError::Bind(format!("IPv4 port {port}: {e}")))?,
+        };
+        let builder = match ports.v6 {
+            None => builder,
+            Some(port) => builder
+                .bind_addr(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+                .map_err(|e| TransportError::Bind(format!("IPv6 port {port}: {e}")))?,
+        };
         builder.bind().await
     };
-    bound.map_err(|e| TransportError::Bind(e.to_string()))
+    // A port in use is the common failure and the message has to say so:
+    // the alternative, quietly taking another port, would leave whatever
+    // rule named this one pointing at nothing.
+    bound.map_err(|e| match (ports.v4, ports.v6) {
+        (None, None) => TransportError::Bind(e.to_string()),
+        (v4, v6) => TransportError::Bind(format!(
+            "{e} (binding pinned port(s){}{}; another process may hold it)",
+            v4.map(|p| format!(" v4={p}")).unwrap_or_default(),
+            v6.map(|p| format!(" v6={p}")).unwrap_or_default(),
+        )),
+    })
 }
 
 /// Stands up a short-lived endpoint for `secret`, waits up to `wait` for
@@ -135,7 +217,15 @@ pub async fn mint_ticket(
     relays: &[String],
     wait: std::time::Duration,
 ) -> Result<String, TransportError> {
-    let endpoint = bind_endpoint(SecretKey::from_bytes(&secret), offline, relays).await?;
+    // A minted ticket names a throwaway endpoint: it must not publish.
+    let endpoint = bind_endpoint(
+        SecretKey::from_bytes(&secret),
+        offline,
+        relays,
+        false,
+        BindPorts::default(),
+    )
+    .await?;
     let deadline = tokio::time::Instant::now() + wait;
     while endpoint.addr().addrs.is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -245,6 +335,26 @@ impl std::fmt::Debug for BlobsConfig {
     }
 }
 
+/// Which UDP ports the endpoint binds.
+///
+/// Default is both ephemeral: the OS picks a free port per address
+/// family and picks different ones after a restart. That is fine for a
+/// node found through discovery, and wrong for one behind a firewall
+/// rule, because the rule has to name a port before the node starts.
+/// Pinning a port makes the node's address predictable at the cost of
+/// failing to start when something else holds it, which is the honest
+/// failure: silently landing on another port would leave the rule
+/// pointing at nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BindPorts {
+    /// IPv4 port, or `None` for an ephemeral one.
+    pub v4: Option<u16>,
+    /// IPv6 port, or `None` for an ephemeral one. Separate from `v4`
+    /// because a host may have no usable IPv6 at all, and a pin that
+    /// cannot bind would stop the node from starting.
+    pub v6: Option<u16>,
+}
+
 /// What [`IrohTransport::bind`] needs to know.
 #[derive(Debug, Clone)]
 pub struct IrohConfig {
@@ -277,10 +387,20 @@ pub struct IrohConfig {
     /// transfer, chat protocol sec 6). The store comes back through
     /// [`IrohTransport::blobs`].
     pub blobs: Option<BlobsConfig>,
+    /// Publish this endpoint's address record (pkarr over n0's DNS) so
+    /// peers can dial the id alone. True for the one endpoint that
+    /// serves a node; false for the short-lived client endpoints every
+    /// `rsntr query`/`knock`/fetch binds with the same key, which would
+    /// otherwise overwrite the serving record with a throwaway address
+    /// for as long as the record lives. Resolving stays on either way.
+    /// Ignored when `offline`.
+    pub publish: bool,
+    /// UDP ports to bind; see [`BindPorts`].
+    pub bind_ports: BindPorts,
 }
 
 impl IrohConfig {
-    /// Production preset: n0 relays and address lookup.
+    /// Production preset: n0 relays and address lookup, publishing.
     pub fn n0(hello: Hello) -> Self {
         Self {
             hello,
@@ -289,6 +409,8 @@ impl IrohConfig {
             relays: Vec::new(),
             gossip: false,
             blobs: None,
+            publish: true,
+            bind_ports: BindPorts::default(),
         }
     }
 
@@ -301,6 +423,8 @@ impl IrohConfig {
             relays: Vec::new(),
             gossip: false,
             blobs: None,
+            publish: true,
+            bind_ports: BindPorts::default(),
         }
     }
 }
@@ -370,6 +494,55 @@ impl std::fmt::Debug for AddrSinkSlot {
     }
 }
 
+/// What the live paths of one connection look like at a moment.
+///
+/// A snapshot, not a subscription: paths open, close and get reselected
+/// as the network changes, so a measurement should sample this at the
+/// end of the run it describes, and for a long run more than once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathReport {
+    /// True when the path currently carrying application data is a
+    /// relay path. This, not `has_relay`, is the directness answer.
+    pub relay: bool,
+    /// The selected path's remote address, as QUIC sees it.
+    pub remote: Option<String>,
+    /// Round-trip estimate of the selected path, in milliseconds.
+    pub rtt_ms: Option<u64>,
+    /// Open paths in total.
+    pub paths: usize,
+    /// Open direct (IP) paths. `direct > 0` alongside `relay == true`
+    /// means a direct path exists but was not selected, which is a
+    /// different story from "no direct path was ever found".
+    pub direct: usize,
+}
+
+impl PathReport {
+    fn of(conn: &Connection) -> Self {
+        let paths = conn.paths();
+        let selected = paths.iter().find(|p| p.is_selected());
+        Self {
+            relay: selected.as_ref().is_some_and(|p| p.is_relay()),
+            remote: selected.as_ref().map(|p| p.remote_addr().to_string()),
+            rtt_ms: selected.as_ref().map(|p| p.rtt().as_millis() as u64),
+            paths: paths.len(),
+            direct: paths.iter().filter(|p| p.is_ip()).count(),
+        }
+    }
+
+    /// One line for a human or a log: what carried the data.
+    pub fn describe(&self) -> String {
+        let how = if self.relay { "relayed" } else { "direct" };
+        let via = self.remote.as_deref().unwrap_or("no path selected");
+        match self.rtt_ms {
+            Some(ms) => format!(
+                "{how} via {via}, rtt {ms}ms ({} path(s) open, {} direct)",
+                self.paths, self.direct
+            ),
+            None => format!("{how} via {via} ({} path(s) open)", self.paths),
+        }
+    }
+}
+
 /// Watches a live connection's network paths and reports the peer's
 /// direct (IP) remote addresses to the sink whenever the set changes.
 /// One lightweight task per connection; it ends when the connection
@@ -409,6 +582,10 @@ fn watch_paths(conn: Connection, peer: PeerId, slot: Arc<AddrSinkSlot>) {
 
 /// The iroh transport: accept router on one side, connection cache on
 /// the other.
+/// This node's hello behind an RwLock, shared by the transport and its
+/// acceptor so the advertised modulation set can be updated live.
+type SharedHello = Arc<std::sync::RwLock<Hello>>;
+
 #[derive(Debug)]
 pub struct IrohTransport {
     endpoint: Endpoint,
@@ -416,7 +593,11 @@ pub struct IrohTransport {
     #[cfg(feature = "gossip")]
     gossip: Option<iroh_gossip::Gossip>,
     blobs: Option<iroh_blobs::store::fs::FsStore>,
-    local_hello: Hello,
+    /// This node's hello, shared with the acceptor behind an RwLock so
+    /// the advertised modulation set can change at runtime (a hot mod
+    /// install) without rebinding. `route_request` clones the mods list
+    /// per request, so a swap is honored on already-open connections.
+    local_hello: SharedHello,
     /// Cache of dialed connections by peer. A tokio Mutex on purpose: it
     /// is held across the dial await, which also serializes concurrent
     /// dials to the same peer.
@@ -451,15 +632,23 @@ impl IrohTransport {
             .secret_key
             .map(|bytes| SecretKey::from_bytes(&bytes))
             .unwrap_or_else(SecretKey::generate);
-        let endpoint = bind_endpoint(secret_key, config.offline, &config.relays).await?;
+        let endpoint = bind_endpoint(
+            secret_key,
+            config.offline,
+            &config.relays,
+            config.publish,
+            config.bind_ports,
+        )
+        .await?;
 
         let (tx, rx) = mpsc::channel(INCOMING_QUEUE);
         let accepted = Arc::new(AtomicU64::new(0));
         let addr_sink = Arc::new(AddrSinkSlot::default());
+        let local_hello: SharedHello = Arc::new(std::sync::RwLock::new(config.hello));
         let mut builder = Router::builder(endpoint.clone()).accept(
             ALPN,
             Acceptor {
-                local_hello: config.hello.clone(),
+                local_hello: local_hello.clone(),
                 incoming: tx,
                 accepted: accepted.clone(),
                 addr_sink: addr_sink.clone(),
@@ -509,7 +698,7 @@ impl IrohTransport {
             #[cfg(feature = "gossip")]
             gossip,
             blobs,
-            local_hello: config.hello,
+            local_hello,
             conns: Mutex::new(HashMap::new()),
             addr_book: std::sync::Mutex::new(HashMap::new()),
             addr_source: AddrSourceSlot::default(),
@@ -649,13 +838,7 @@ impl IrohTransport {
         // Highest-sorting IP first. The order within the set is `Ord`, not
         // the order iroh learned them, so there is no "keep the most local
         // one" to preserve here — only "keep the relay".
-        while let Some(ip) = addr
-            .addrs
-            .iter()
-            .filter(|a| !a.is_relay())
-            .next_back()
-            .cloned()
-        {
+        while let Some(ip) = addr.addrs.iter().rfind(|a| !a.is_relay()).cloned() {
             addr.addrs.remove(&ip);
             let candidate = EndpointTicket::from(addr.clone()).to_string();
             if candidate.len() <= max_bytes {
@@ -669,6 +852,47 @@ impl IrohTransport {
     /// side of an offline test or for persisting as dial hints.
     pub fn direct_addrs(&self) -> Vec<SocketAddr> {
         self.endpoint.bound_sockets()
+    }
+
+    /// True once the endpoint has a home relay in its address, i.e. the
+    /// ticket it hands out can be dialed through NAT. Always false when
+    /// bound offline.
+    pub fn has_relay(&self) -> bool {
+        self.endpoint.addr().addrs.iter().any(|a| a.is_relay())
+    }
+
+    /// How data to `peer` is actually flowing right now, read from the
+    /// live connection rather than from this endpoint's own address
+    /// set.
+    ///
+    /// [`Self::has_relay`] answers a different question: whether *this*
+    /// endpoint has a home relay, so its ticket is dialable through
+    /// NAT. That is true for nearly every online node and says nothing
+    /// about any particular connection, so it must never be read as
+    /// "this traffic is relayed". This does: QUIC may keep several
+    /// paths to one peer open and picks one for application data, and
+    /// the selected path is the honest answer to "direct or relayed".
+    ///
+    /// `None` when there is no live connection to that peer.
+    pub async fn peer_path(&self, peer: PeerId) -> Option<PathReport> {
+        let conn = self.conns.lock().await.get(&peer)?.conn.clone();
+        Some(PathReport::of(&conn))
+    }
+
+    /// The non-loopback direct addresses the endpoint currently
+    /// advertises (interface and observed addresses, as they land in the
+    /// ticket). These change as the network does, so a serving node
+    /// re-reads them on a cadence.
+    pub fn external_addrs(&self) -> Vec<SocketAddr> {
+        let mut out: Vec<SocketAddr> = self
+            .endpoint
+            .addr()
+            .ip_addrs()
+            .filter(|a| !a.ip().is_loopback())
+            .copied()
+            .collect();
+        out.sort();
+        out
     }
 
     /// Registers manual dial addresses for a peer (offline / LAN use).
@@ -696,11 +920,15 @@ impl IrohTransport {
     /// Installs the observed-address sink consulted by every live
     /// connection's path watcher (see [`AddrSink`]).
     pub fn set_addr_sink(&self, sink: AddrSink) {
-        *self
-            .addr_sink
-            .0
-            .lock()
-            .expect("addr sink lock poisoned") = Some(sink);
+        *self.addr_sink.0.lock().expect("addr sink lock poisoned") = Some(sink);
+    }
+
+    /// Replaces the advertised modulation list in this node's hello, so
+    /// a hot mod install/removal changes what dialers may request without
+    /// rebinding. `route_request` reads this per request, so the change
+    /// is honored on already-open inbound connections immediately.
+    pub fn set_hello_mods(&self, mods: Vec<String>) {
+        self.local_hello.write().expect("hello lock poisoned").mods = mods;
     }
 
     /// Drops the cached connection to `peer`, closing it. The next
@@ -797,9 +1025,12 @@ impl IrohTransport {
             .await
             .map_err(|e| TransportError::Handshake(format!("open hello stream: {e}")))?;
         let mut hello_stream = IrohRequestStream::new(send, recv);
-        hello_stream
-            .send(&EnvelopeObject::Hello(self.local_hello.clone()))
-            .await?;
+        let my_hello = self
+            .local_hello
+            .read()
+            .expect("hello lock poisoned")
+            .clone();
+        hello_stream.send(&EnvelopeObject::Hello(my_hello)).await?;
         hello_stream.finish().await?;
         let hello = match hello_stream.recv().await {
             Ok(Some(EnvelopeObject::Hello(h))) => h,
@@ -1020,7 +1251,7 @@ pub async fn blob_import(
 /// The `ProtocolHandler` behind `resonator/rdf/0`.
 #[derive(Debug, Clone)]
 struct Acceptor {
-    local_hello: Hello,
+    local_hello: SharedHello,
     incoming: mpsc::Sender<IncomingRequest<IrohRequestStream>>,
     accepted: Arc<AtomicU64>,
     addr_sink: Arc<AddrSinkSlot>,
@@ -1085,10 +1316,12 @@ impl ProtocolHandler for Acceptor {
             return Ok(());
         }
 
-        if let Err(e) = hello_stream
-            .send(&EnvelopeObject::Hello(self.local_hello.clone()))
-            .await
-        {
+        let my_hello = self
+            .local_hello
+            .read()
+            .expect("hello lock poisoned")
+            .clone();
+        if let Err(e) = hello_stream.send(&EnvelopeObject::Hello(my_hello)).await {
             debug!(peer = %peer, error = %e, "failed to answer hello");
             return Ok(());
         }
@@ -1108,11 +1341,17 @@ impl ProtocolHandler for Acceptor {
                     break;
                 }
             };
+            let my_mods = self
+                .local_hello
+                .read()
+                .expect("hello lock poisoned")
+                .mods
+                .clone();
             tokio::spawn(route_request(
                 IrohRequestStream::new(send, recv),
                 peer,
                 peer_hello.clone(),
-                self.local_hello.mods.clone(),
+                my_mods,
                 self.incoming.clone(),
             ));
         }
@@ -1196,6 +1435,13 @@ pub struct IrohRequestStream {
 }
 
 impl IrohRequestStream {
+    /// The stream's two halves plus whatever was read past the last
+    /// frame, for code that must read and write at once. The leftover
+    /// bytes belong to the caller: they are already off the wire.
+    pub fn into_parts(self) -> (SendStream, RecvStream, BytesMut) {
+        (self.send, self.recv, self.buf)
+    }
+
     fn new(send: SendStream, recv: RecvStream) -> Self {
         Self {
             send,

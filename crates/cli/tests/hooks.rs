@@ -201,3 +201,80 @@ async fn hanging_hook_is_killed_at_the_timeout() {
 
     b.shutdown().await;
 }
+
+/// The hook timeout covers waiting for the command, but not writing the
+/// event to it, and the event goes into a pipe that holds 64 KiB.
+///
+/// A parked `turtle load` chunk is 64 KiB of triples by default and a
+/// chat body may be 65536 bytes, so an ordinary event outgrows the pipe.
+/// A hook that does not read its stdin - which is most of them; the
+/// manual's own example is a `touch` - then leaves that write blocked
+/// for as long as the command runs. The runner is one serialized task,
+/// so it is not one hook that stalls, it is every hook on the node,
+/// silently, with the agent it exists to wake never woken again.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_event_larger_than_the_pipe_does_not_wedge_the_runner() {
+    // SAFETY: test-process env, matching the sibling timeout test.
+    unsafe { std::env::set_var("RSNTR_HOOK_TIMEOUT_MS", "500") };
+
+    let tb = TempDir::new("hooks-bigpipe");
+    store::init_dir(tb.path()).expect("init");
+    chat::chat_init(tb.path()).expect("chat init");
+    let marker = tb.path().join("ran");
+    // Records that it ran, then lives on without ever reading stdin.
+    hooks::hook_add(
+        tb.path(),
+        Prefer::Local,
+        "inbox",
+        &format!("echo x >> '{}'; sleep 600", marker.display()),
+    )
+    .await
+    .expect("hook add");
+
+    let b = serve::start_node(tb.path(), true).await.expect("serve");
+    // A parked statement whose text alone is past a pipe buffer.
+    let big = format!("INSERT INTO t VALUES ('{}')", "x".repeat(100 * 1024));
+    b.node()
+        .db()
+        .call(move |conn| {
+            conn.execute(
+                "INSERT INTO _inbox (request_id, peer, sql, params, received_at) \
+                 VALUES ('01BIGPIPE', ?1, ?2, '{}', datetime('now'))",
+                (&"ea".repeat(32), &big),
+            )
+            .expect("park a big statement");
+        })
+        .await
+        .expect("db call");
+    wait_file(&marker, "first hook run", Duration::from_secs(10), |text| {
+        text.lines().count() == 1
+    })
+    .await;
+
+    // The proof: a later event still gets through. Before, the runner
+    // was still blocked writing the first one into a full pipe.
+    b.node()
+        .db()
+        .call(|conn| {
+            conn.execute(
+                "INSERT INTO _inbox (request_id, peer, sql, params, received_at) \
+                 VALUES ('01BIGPIPE2', ?1, '', 'small', datetime('now'))",
+                [&"eb".repeat(32)],
+            )
+            .expect("park a small one");
+        })
+        .await
+        .expect("db call");
+    wait_file(
+        &marker,
+        "second hook run after a big event",
+        Duration::from_secs(15),
+        |text| text.lines().count() == 2,
+    )
+    .await;
+    // Let the second run reach its own timeout so the runner sweeps its
+    // process group before the runtime goes away.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    b.shutdown().await;
+}

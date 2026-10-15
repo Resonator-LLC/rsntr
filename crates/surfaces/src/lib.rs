@@ -6,7 +6,8 @@
 //!   restart-safe idempotency via stable wire request ids.
 //! - [`presence`]: iroh-gossip liveness beacons on a topic derived from the
 //!   admitted peer set; received beacons refresh `_peers.last_seen`, and
-//!   [`presence::is_stale`] feeds outbox scheduling.
+//!   [`presence::is_stale`] feeds visibility surfaces (`rsntr peer
+//!   status`); the outbox worker retries on its own backoff regardless.
 //! - [`remote`]: the SQL vtab surfaces `remote_query(...)` and
 //!   `CREATE VIRTUAL TABLE ... USING iroh_remote(...)`: interactive
 //!   remote reads and writes as plain SQL over a [`resonator_transport::Transport`].

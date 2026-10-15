@@ -8,6 +8,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use rsntr::testutil::TempDir;
+use rsntr::{serve, store};
 
 /// Kills a spawned daemon on drop, so a failing assert never leaks one.
 struct DaemonGuard(Option<i32>);
@@ -138,4 +139,59 @@ fn status_counts_peers_and_inbox() {
     assert_eq!(status["serving"], false);
     assert_eq!(status["peers"].as_i64(), Some(1));
     assert_eq!(status["pending_inbox"].as_i64(), Some(1));
+}
+
+/// `status` exits 0 for a stopped node because the command succeeded,
+/// which is correct and is also why a readiness probe written the
+/// obvious way calls a dead node healthy. `--serving` is the predicate
+/// that answers the question the operator is actually asking.
+#[tokio::test(flavor = "multi_thread")]
+async fn serving_predicate_separates_the_answer_from_the_command() {
+    let t = TempDir::new("serving-predicate");
+    store::init_dir(t.path()).expect("init");
+
+    // Nothing is serving: the ordinary form still succeeds...
+    let plain = Command::new(env!("CARGO_BIN_EXE_rsntr"))
+        .arg("status")
+        .arg(t.path())
+        .arg("--json")
+        .output()
+        .expect("status runs");
+    assert_eq!(plain.status.code(), Some(0), "the command itself succeeded");
+    let v: serde_json::Value =
+        serde_json::from_slice(&plain.stdout).expect("status --json is json");
+    assert_eq!(
+        v["ok"],
+        serde_json::json!(true),
+        "ok means the query worked"
+    );
+    assert_eq!(v["serving"], serde_json::json!(false), "and it says so");
+
+    // ...while the predicate answers the question a probe is asking.
+    let probe = Command::new(env!("CARGO_BIN_EXE_rsntr"))
+        .arg("status")
+        .arg(t.path())
+        .arg("--serving")
+        .output()
+        .expect("status --serving runs");
+    assert_eq!(
+        probe.status.code(),
+        Some(1),
+        "a stopped node is a failed readiness check: {}",
+        String::from_utf8_lossy(&probe.stderr)
+    );
+
+    // And it agrees with itself once a node is actually serving.
+    let node = serve::start_node(t.path(), true).await.expect("serve");
+    let up = Command::new(env!("CARGO_BIN_EXE_rsntr"))
+        .arg("status")
+        .arg(t.path())
+        .arg("--serving")
+        .arg("--json")
+        .output()
+        .expect("status --serving runs");
+    assert_eq!(up.status.code(), Some(0), "a serving node passes");
+    let v: serde_json::Value = serde_json::from_slice(&up.stdout).expect("json");
+    assert_eq!(v["serving"], serde_json::json!(true));
+    node.shutdown().await;
 }

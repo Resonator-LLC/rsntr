@@ -236,10 +236,14 @@ the API.
 Request: `POST /request`, `Content-Type: application/rsntr-frames`, body =
 exactly one framed envelope request: an `rsntr:Query` or `rsntr:Execute`
 in any modulation the node serves (`sql-sqlite`, `sparql`, `help`,
-`projection`, `media`, ...). Any other envelope class in the body is a
-`protocol-error` (requests parse strictly; `/entrain` is the one carve-out
-with its own endpoint). The server honors a well-formed client ULID in
-`rsntr:id` and mints one otherwise, exactly as on the wire.
+`projection`, `media`, ...). With `?peer=`, one `rsntr:Knock` is also
+accepted — the browser's way to introduce this node to a stranger
+(connection-protocol.md section 4); the answer (`rsntr:Decision` or
+nothing while parked) relays back as frames. Any other envelope class in
+the body is a `protocol-error` (requests parse strictly; `/entrain` is
+the one carve-out with its own endpoint). The server honors a
+well-formed client ULID in `rsntr:id` and mints one otherwise, exactly
+as on the wire.
 
 Response: `200` with `Content-Type: application/rsntr-frames`, the body
 streaming the response frames exactly as they would cross an iroh stream:
@@ -750,3 +754,29 @@ accounts, CORS, tokens in query strings.
   when asked to do it.
 - Give heavy media streams their own origin (a second `--web` port) if
   they starve RDF traffic in practice, per the decision doc.
+
+
+## The inbox API
+
+Two owner-only JSON endpoints surface the node's pending approval queue
+(the `_inbox` table: stranger knocks, and parked cross-peer requests to
+publish a page, add a projection, or install a mod). They let an owner
+UI show and answer requests without hand-writing SQL.
+
+- `GET /api/inbox` -> `{ok, inbox: [{request_id, peer, kind, action,
+  summary, received_at}]}`. `kind` is `"knock"` (empty `sql`) or
+  `"request"`; `action` is the parked action (`"mod-install"`,
+  `"write"`, ...); `summary` is a short human line.
+- `POST /api/inbox/answer` with `{request_id, allow, remember?, grants?}`
+  -> `{ok, peer, knock, remembered, granted}`. It runs the canonical
+  answer on the serving connection: sets the decision, records the
+  `_decisions` cache for a parked statement (so the requester's
+  identical retry passes), writes remember policy rows per footprint
+  table, admits the peer for a knock, and writes one `_policy` allow row
+  per `grants` entry (`"table=action"`, e.g. `"cameras=mod-install"`,
+  `"cameras=mod-cap:db_read"`).
+
+Live updates: the well-known Sympathetic point `urn:rsntr:inbox` (seeded
+on every node, resource `_inbox`) vibrates on any inbox write, so a UI
+can entrain it (like `urn:rsntr:chat-inbox`) and refresh instantly
+instead of polling.

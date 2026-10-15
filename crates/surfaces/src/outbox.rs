@@ -307,6 +307,9 @@ pub struct OutboxConfig {
     /// Ceiling on the exponential backoff.
     pub max_backoff: Duration,
     /// Rows older than this without completion flip to `expired`.
+    /// The default is 30 days: recipients such as mobile nodes are
+    /// offline most of the time, and a queued chat message should
+    /// survive until they reappear rather than silently lapse.
     pub expiry: Duration,
     /// Per-attempt bound on dialing/opening a stream, so one dead peer
     /// cannot stall the whole queue.
@@ -325,7 +328,7 @@ impl Default for OutboxConfig {
             poll_interval: Duration::from_secs(2),
             base_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_secs(60),
-            expiry: Duration::from_secs(3600),
+            expiry: Duration::from_secs(30 * 24 * 3600),
             open_timeout: Duration::from_secs(10),
             install_update_hook: true,
         }
@@ -812,7 +815,9 @@ impl<T: Transport> OutboxWorker<T> {
         let res = self
             .db
             .call(move |conn| -> Result<(), rusqlite::Error> {
-                let tx = conn.transaction()?;
+                // Immediate: another process may be writing this database.
+                let tx =
+                    conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
                 tx.execute("DELETE FROM _results WHERE request_id = ?1", [&rid])?;
                 for (i, row) in rows.iter().enumerate() {
                     tx.execute(

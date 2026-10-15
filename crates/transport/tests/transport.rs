@@ -446,18 +446,17 @@ async fn addr_source_supplies_dial_addresses() {
 async fn addr_sink_reports_live_direct_addresses() {
     use std::net::SocketAddr;
     use std::sync::Mutex;
+    type Seen = Arc<Mutex<Vec<(resonator_transport::PeerId, Vec<SocketAddr>)>>>;
 
     let (server, client, server_rx) = offline_pair().await;
 
-    let seen_by_client: Arc<Mutex<Vec<(resonator_transport::PeerId, Vec<SocketAddr>)>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let seen_by_client: Seen = Arc::new(Mutex::new(Vec::new()));
     let seen_by_server = seen_by_client.clone();
     let by_client = seen_by_client.clone();
     client.set_addr_sink(Arc::new(move |peer, addrs| {
         by_client.lock().unwrap().push((peer, addrs));
     }));
-    let server_seen: Arc<Mutex<Vec<(resonator_transport::PeerId, Vec<SocketAddr>)>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let server_seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let by_server = server_seen.clone();
     server.set_addr_sink(Arc::new(move |peer, addrs| {
         by_server.lock().unwrap().push((peer, addrs));
@@ -468,18 +467,19 @@ async fn addr_sink_reports_live_direct_addresses() {
         .await
         .expect("dial within deadline")
         .expect("open");
-    stream.send(&query("01JADDRSINK000000000000001", "help", "")).await.expect("send");
+    stream
+        .send(&query("01JADDRSINK000000000000001", "help", ""))
+        .await
+        .expect("send");
     stream.finish().await.expect("finish");
     let (_rx, _req) = serve_one(server_rx).await;
 
     // Both watchers sample immediately on spawn; give them a moment.
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
     loop {
-        let client_ok = seen_by_client
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(p, a)| *p == server.peer_id() && a.iter().all(|sa| sa.ip().is_loopback()) && !a.is_empty());
+        let client_ok = seen_by_client.lock().unwrap().iter().any(|(p, a)| {
+            *p == server.peer_id() && a.iter().all(|sa| sa.ip().is_loopback()) && !a.is_empty()
+        });
         let server_ok = server_seen
             .lock()
             .unwrap()

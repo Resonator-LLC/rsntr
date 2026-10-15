@@ -81,8 +81,16 @@ pub struct NodeConfig {
     /// How long one vibration send may stall before the node damps the
     /// entrainment with `limit-exceeded` (the slow-consumer rule).
     pub vibration_send_timeout_ms: u64,
+    /// Ceiling (MiB) on the memory a peer-installed mod may request via
+    /// the mod-install limits; the registry's own default (64) applies
+    /// when the installer names none.
+    pub max_mod_memory_mb: u64,
     /// Test seam; see [`PostDecideHook`].
     pub post_decide_hook: Option<PostDecideHook>,
+    /// Cadence of the foreign-write watcher ([`Node::start_change_watcher`]):
+    /// how often the pipeline checks `PRAGMA data_version` for commits
+    /// made by other connections and processes. Milliseconds.
+    pub change_watch_interval_ms: u64,
 }
 
 /// Persisted token-bucket settings for knock rate limiting.
@@ -130,7 +138,9 @@ impl Default for NodeConfig {
             pragma_allowlist: Arc::new(Vec::new()),
             knock_limits: KnockLimits::default(),
             vibration_send_timeout_ms: 10_000,
+            max_mod_memory_mb: 256,
             post_decide_hook: None,
+            change_watch_interval_ms: 250,
         }
     }
 }
@@ -148,6 +158,35 @@ pub type BlobImporter = Arc<
             std::path::PathBuf,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<(String, u64), String>> + Send>,
+        > + Send
+        + Sync,
+>;
+
+/// A callback registered via [`Node::set_blob_fetcher`]: fetches a blob
+/// by hash FROM a peer over the serving transport, resolving to the raw
+/// bytes or an error message. The mirror of [`BlobImporter`]; wired by
+/// the serving wrapper to the transport's `blob_fetch_bytes`. Used by
+/// the remote mod-install path to pull an installer's wasm out of band.
+pub type BlobFetcher = Arc<
+    dyn Fn(
+            String,      // peer endpoint id (hex)
+            String,      // blob hash (blake3, `blake3:` prefix accepted)
+            Vec<String>, // the provider's serving addresses, in-band
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// A callback registered via [`Node::set_mod_reloader`]: re-reads the
+/// enabled `_modulations` rows, rebuilds the mods host, reinstalls it,
+/// and refreshes the transport's advertised modulation list. Resolves to
+/// the list of `(name, reason)` rows refused at load. Wired by the
+/// serving wrapper (the mods host lives in a crate that depends on this
+/// one, so the node cannot call it directly).
+pub type ModReloader = Arc<
+    dyn Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Vec<(String, String)>, String>> + Send>,
         > + Send
         + Sync,
 >;
@@ -171,6 +210,100 @@ pub struct Node {
     /// Blob-store import hook for the owner channel's chat attachment
     /// path parameter; `None` when no store is wired (not serving).
     blob_importer: Mutex<Option<BlobImporter>>,
+    /// Blob fetch hook (pull a peer's blob by hash); `None` when not
+    /// serving. Used by the remote mod-install path.
+    blob_fetcher: Mutex<Option<BlobFetcher>>,
+    /// Live mods-host reload hook; `None` when no mods host is wired.
+    mod_reloader: Mutex<Option<ModReloader>>,
+    /// The foreign-write watcher task while one runs
+    /// ([`start_change_watcher`](Self::start_change_watcher)).
+    watcher: Mutex<Option<ChangeWatcher>>,
+    /// Media sources published by the embedding host (crate::media):
+    /// what serves a camera on a phone, where no shell command can.
+    media_feeds: Arc<crate::media::MediaFeeds>,
+}
+
+/// The foreign-write watcher: a task polling `PRAGMA data_version` on
+/// the pipeline's own connection. Dropping it aborts the task.
+pub struct ChangeWatcher {
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ChangeWatcher {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Tables the serving surfaces watch through the table observer (the
+/// outbox wake, the hooks runner). A foreign commit signals all of them:
+/// each consumer re-reads from its own cursor, so a spurious wake costs
+/// one cheap query.
+const OBSERVED_TABLES: [&str; 4] = ["_outbox", "chat_messages", "_inbox", "_hooks"];
+
+/// The watcher's memory between ticks.
+#[derive(Default)]
+struct ChangeState {
+    data_version: Option<i64>,
+    projection_fp: (i64, i64),
+    policy_fp: (i64, i64),
+}
+
+fn table_fingerprint(conn: &Connection, table: &str) -> (i64, i64) {
+    conn.query_row(
+        &format!("SELECT count(*), COALESCE(max(rowid), 0) FROM \"{table}\""),
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .unwrap_or((0, 0))
+}
+
+/// One watcher tick on the db thread. `PRAGMA data_version` is per
+/// connection and moves only when ANOTHER connection commits, so the
+/// pipeline's own writes (already signalled by its commit hook) never
+/// re-signal here. Returns the new state, whether a foreign commit
+/// landed, and whether `_projection`/`_policy` changed by count or
+/// max rowid (the projection-changed gate: in-place updates of those two
+/// small tables are the one thing this cheap fingerprint misses).
+fn foreign_change_scan(conn: &Connection, mut state: ChangeState) -> (ChangeState, bool, bool) {
+    let dv: i64 = conn
+        .query_row("PRAGMA data_version", [], |r| r.get(0))
+        .unwrap_or(0);
+    match state.data_version {
+        None => {
+            state.data_version = Some(dv);
+            state.projection_fp = table_fingerprint(conn, "_projection");
+            state.policy_fp = table_fingerprint(conn, "_policy");
+            return (state, false, false);
+        }
+        Some(prev) if prev == dv => return (state, false, false),
+        Some(_) => {}
+    }
+    state.data_version = Some(dv);
+    let projection = table_fingerprint(conn, "_projection");
+    let policy = table_fingerprint(conn, "_policy");
+    let projection_changed = projection != state.projection_fp || policy != state.policy_fp;
+    state.projection_fp = projection;
+    state.policy_fp = policy;
+    (state, true, projection_changed)
+}
+
+/// The one place a table change fans out: entrainments on the table,
+/// the projection-changed point for `_projection`/`_policy`, and the
+/// registered table observer. Called from the commit hook (own writes)
+/// and from the watcher (foreign writes).
+fn fanout(ent: &Entrainments, observer: &Mutex<Option<TableObserver>>, table: &str) {
+    if table == "_projection" || table == "_policy" {
+        ent.signal_point(resonator_protocol::vocab::PROJECTION_CHANGED);
+    }
+    ent.signal_table(table);
+    let extra = observer
+        .lock()
+        .expect("table observer lock poisoned")
+        .clone();
+    if let Some(f) = extra {
+        f(table);
+    }
 }
 
 impl Node {
@@ -183,6 +316,124 @@ impl Node {
             table_observer: Arc::new(Mutex::new(None)),
             mod_handler: Mutex::new(None),
             blob_importer: Mutex::new(None),
+            blob_fetcher: Mutex::new(None),
+            mod_reloader: Mutex::new(None),
+            watcher: Mutex::new(None),
+            media_feeds: Arc::new(crate::media::MediaFeeds::new()),
+        }
+    }
+
+    /// The feeds this process publishes as media sources. An embedded
+    /// app publishes here and writes frames; a `_media` row with an
+    /// empty `command` is what makes one reachable over the wire.
+    pub fn media_feeds(&self) -> &Arc<crate::media::MediaFeeds> {
+        &self.media_feeds
+    }
+
+    /// Signals a table change as if this connection had committed it
+    /// (entrainments, projection-changed, the table observer).
+    pub fn signal_table_changed(&self, table: &str) {
+        fanout(&self.entrainments, &self.table_observer, table);
+    }
+
+    /// Starts the foreign-write watcher: every
+    /// `config.change_watch_interval_ms` the pipeline checks whether
+    /// another connection or process committed, and if so signals every
+    /// table an entrainment listens to plus the observed surface tables,
+    /// and the projection-changed point when `_projection`/`_policy`
+    /// moved. Coarse by design: consumers re-read from cursors, so a
+    /// spurious wake is cheap. Idempotent; the task holds only a `Weak`
+    /// and ends with the node or with [`stop_change_watcher`]
+    /// (Self::stop_change_watcher). Backs off to one second after 30 s
+    /// without foreign commits.
+    pub async fn start_change_watcher(self: &Arc<Self>) {
+        if self
+            .watcher
+            .lock()
+            .expect("watcher lock poisoned")
+            .is_some()
+        {
+            return;
+        }
+        // Prime the baseline before returning: a write landing between
+        // the caller's return and the first tick must count as foreign,
+        // not be folded into the baseline.
+        let primed = self
+            .db
+            .call(|conn| foreign_change_scan(conn, ChangeState::default()).0)
+            .await
+            .unwrap_or_default();
+        let weak = Arc::downgrade(self);
+        let interval = Duration::from_millis(self.config.change_watch_interval_ms.max(10));
+        let task = tokio::spawn(async move {
+            let mut state = primed;
+            let mut last_change = Instant::now();
+            loop {
+                let period = if last_change.elapsed() > Duration::from_secs(30) {
+                    interval.max(Duration::from_secs(1))
+                } else {
+                    interval
+                };
+                tokio::time::sleep(period).await;
+                let Some(node) = weak.upgrade() else { break };
+                let taken = std::mem::take(&mut state);
+                let Ok((next, changed, projection)) = node
+                    .db
+                    .call(move |conn| foreign_change_scan(conn, taken))
+                    .await
+                else {
+                    break;
+                };
+                state = next;
+                if changed {
+                    last_change = Instant::now();
+                    node.on_foreign_change(projection);
+                }
+            }
+        });
+        let mut guard = self.watcher.lock().expect("watcher lock poisoned");
+        if guard.is_some() {
+            // Raced with another starter; keep theirs.
+            task.abort();
+            return;
+        }
+        *guard = Some(ChangeWatcher { task });
+    }
+
+    /// Stops the foreign-write watcher, if running.
+    pub fn stop_change_watcher(&self) {
+        self.watcher.lock().expect("watcher lock poisoned").take();
+    }
+
+    /// True while the foreign-write watcher runs.
+    pub fn is_watching_changes(&self) -> bool {
+        self.watcher
+            .lock()
+            .expect("watcher lock poisoned")
+            .is_some()
+    }
+
+    fn on_foreign_change(&self, projection_changed: bool) {
+        let mut tables = self.entrainments.subscribed_tables();
+        for t in OBSERVED_TABLES {
+            if !tables.iter().any(|x| x == t) {
+                tables.push(t.to_string());
+            }
+        }
+        let observer = self
+            .table_observer
+            .lock()
+            .expect("table observer lock poisoned")
+            .clone();
+        for t in &tables {
+            self.entrainments.signal_table(t);
+            if let Some(f) = &observer {
+                f(t);
+            }
+        }
+        if projection_changed {
+            self.entrainments
+                .signal_point(resonator_protocol::vocab::PROJECTION_CHANGED);
         }
     }
 
@@ -193,6 +444,39 @@ impl Node {
             .blob_importer
             .lock()
             .expect("blob importer lock poisoned") = Some(f);
+    }
+
+    /// Registers the blob fetch hook the remote mod-install path uses to
+    /// pull an installer's wasm. Replaces any previous fetcher.
+    pub fn set_blob_fetcher(&self, f: BlobFetcher) {
+        *self
+            .blob_fetcher
+            .lock()
+            .expect("blob fetcher lock poisoned") = Some(f);
+    }
+
+    /// Registers the mods-host reload hook. Replaces any previous one.
+    pub fn set_mod_reloader(&self, f: ModReloader) {
+        *self
+            .mod_reloader
+            .lock()
+            .expect("mod reloader lock poisoned") = Some(f);
+    }
+
+    /// The registered blob fetcher, if any (the mod-install handler).
+    fn blob_fetcher(&self) -> Option<BlobFetcher> {
+        self.blob_fetcher
+            .lock()
+            .expect("blob fetcher lock poisoned")
+            .clone()
+    }
+
+    /// The registered mods reloader, if any.
+    fn mod_reloader(&self) -> Option<ModReloader> {
+        self.mod_reloader
+            .lock()
+            .expect("mod reloader lock poisoned")
+            .clone()
     }
 
     /// Registers the handler serving modulations beyond the builtins
@@ -250,21 +534,34 @@ impl Node {
         let observer = self.table_observer.clone();
         self.db
             .call(move |conn| {
+                // The update hook fires per row, before COMMIT; signalling
+                // there lets a consumer on another connection re-read a
+                // pre-commit snapshot and see nothing, and vibrates for
+                // writes that roll back. So: collect here, fan out at
+                // commit, forget on rollback. All three run on the db
+                // thread and touch no sqlite state.
+                let pending: Arc<Mutex<Vec<String>>> = Arc::default();
+                let update_pending = pending.clone();
                 let _ = conn.update_hook(Some(
                     move |_a: rusqlite::hooks::Action, _db: &str, table: &str, _rowid: i64| {
-                        if table == "_projection" || table == "_policy" {
-                            ent.signal_point(resonator_protocol::vocab::PROJECTION_CHANGED);
-                        }
-                        ent.signal_table(table);
-                        let extra = observer
-                            .lock()
-                            .expect("table observer lock poisoned")
-                            .clone();
-                        if let Some(f) = extra {
-                            f(table);
+                        let mut p = update_pending.lock().expect("pending tables lock");
+                        if !p.iter().any(|t| t == table) {
+                            p.push(table.to_string());
                         }
                     },
                 ));
+                let commit_pending = pending.clone();
+                let _ = conn.commit_hook(Some(move || -> bool {
+                    let tables =
+                        std::mem::take(&mut *commit_pending.lock().expect("pending tables lock"));
+                    for table in &tables {
+                        fanout(&ent, &observer, table);
+                    }
+                    false
+                }));
+                let _ = conn.rollback_hook(Some(move || {
+                    pending.lock().expect("pending tables lock").clear();
+                }));
             })
             .await
     }
@@ -317,6 +614,12 @@ impl Node {
                 self.serve_projection_lane(peer, st.id, st.signal, stream, Lane::Remote)
                     .await
             }
+            // The system graph is the projection's RDF sibling: same
+            // pre-gate position, per-table read filtering inside.
+            EnvelopeObject::Query(st) if mod_matches(crate::system::SYSTEM_MOD, &st.modulation) => {
+                self.serve_system_lane(peer, st.id, st.signal, stream, Lane::Remote)
+                    .await
+            }
             EnvelopeObject::Entrain(e) => {
                 self.serve_entrain_lane(peer, e, stream, Lane::Remote).await
             }
@@ -339,7 +642,11 @@ impl Node {
                             .await;
                     }
                 };
-                if mod_matches("chat", &request.modulation) {
+                if mod_matches("mod-install", &request.modulation) {
+                    self.serve_mod_install(peer, request, stream).await
+                } else if mod_matches("pages", &request.modulation) {
+                    self.serve_pages(peer, request, stream).await
+                } else if mod_matches("chat", &request.modulation) {
                     self.serve_chat(peer, request, stream).await
                 } else if mod_matches("sparql", &request.modulation) {
                     self.serve_sparql(peer, request, stream).await
@@ -413,6 +720,10 @@ impl Node {
                 self.serve_projection_lane(peer, st.id, st.signal, stream, Lane::Owner)
                     .await
             }
+            EnvelopeObject::Query(st) if mod_matches(crate::system::SYSTEM_MOD, &st.modulation) => {
+                self.serve_system_lane(peer, st.id, st.signal, stream, Lane::Owner)
+                    .await
+            }
             EnvelopeObject::Entrain(e) => {
                 self.serve_entrain_lane(peer, e, stream, Lane::Owner).await
             }
@@ -446,7 +757,11 @@ impl Node {
                             .await;
                     }
                 };
-                if mod_matches("chat", &request.modulation) {
+                if mod_matches("mod-install", &request.modulation) {
+                    self.serve_mod_install_owner(peer, request, stream).await
+                } else if mod_matches("pages", &request.modulation) {
+                    self.serve_pages(peer, request, stream).await
+                } else if mod_matches("chat", &request.modulation) {
                     self.serve_chat_owner(peer, request, stream).await
                 } else if mod_matches("sparql", &request.modulation) {
                     self.serve_sparql_owner(peer, request, stream).await
@@ -750,6 +1065,115 @@ impl Node {
         }
     }
 
+    /// The `system` modulation (crate::system): signal `graph` answers
+    /// the caller's view of the node's own state as Graph frames, one
+    /// audit row per fetch. Generated on read; nothing is written.
+    async fn serve_system_lane<S: RequestStream>(
+        &self,
+        peer: &str,
+        id: String,
+        signal: String,
+        stream: &mut S,
+        lane: Lane,
+    ) -> Result<(), NodeError> {
+        if signal.trim() != crate::system::GRAPH_SIGNAL {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::ProtocolError,
+                format!(
+                    "unknown system signal {:?}; the system modulation serves `graph`",
+                    signal.trim()
+                ),
+            )
+            .await;
+        }
+        let peer_owned = peer.to_string();
+        let req_id = id.clone();
+        let built = self
+            .db
+            .call(move |conn| {
+                let built =
+                    crate::system::build_system_graph(conn, &peer_owned, lane == Lane::Owner);
+                let (decision, reason) = match &built {
+                    Ok((triples, sections)) => (
+                        "allow",
+                        format!(
+                            "system graph: {} triples (peers {}, policy {}, modulations {}, \
+                             rooms {}, {} points)",
+                            triples.len(),
+                            sections.peers,
+                            sections.policy,
+                            sections.modulations,
+                            sections.rooms,
+                            sections.points
+                        ),
+                    ),
+                    Err(e) => ("deny", format!("system graph failed: {e}")),
+                };
+                let (direction, decided_by) = match lane {
+                    Lane::Owner => ("local", "owner"),
+                    Lane::Remote => ("in", "node"),
+                };
+                audit_direct_dir(
+                    conn,
+                    direction,
+                    &peer_owned,
+                    &req_id,
+                    "system graph",
+                    decision,
+                    decided_by,
+                    &reason,
+                );
+                built
+            })
+            .await?;
+        let (triples, _sections) = match built {
+            Ok(b) => b,
+            Err(e) => {
+                return send_error(stream, Some(id), ErrorCode::EngineError, e.to_string()).await;
+            }
+        };
+        let total = triples.len() as i64;
+        let mut seq: i64 = 0;
+        let mut chunk: Vec<oxrdf::Triple> = Vec::new();
+        let mut chunk_bytes = 0usize;
+        for t in triples {
+            chunk_bytes += triple_estimate(&t);
+            chunk.push(t);
+            if chunk.len() >= 512 || chunk_bytes >= self.config.frame_byte_budget {
+                stream
+                    .send(&EnvelopeObject::Graph(Graph {
+                        id: id.clone(),
+                        seq,
+                        payload: std::mem::take(&mut chunk),
+                    }))
+                    .await?;
+                seq += 1;
+                chunk_bytes = 0;
+            }
+        }
+        if !chunk.is_empty() || seq == 0 {
+            stream
+                .send(&EnvelopeObject::Graph(Graph {
+                    id: id.clone(),
+                    seq,
+                    payload: chunk,
+                }))
+                .await?;
+        }
+        stream
+            .send(&EnvelopeObject::Done(Done {
+                id,
+                row_count: Some(total),
+                affected_rows: None,
+                last_insert_rowid: None,
+                truncated: false,
+            }))
+            .await?;
+        Ok(())
+    }
+
     /// Entrainment (projection protocol sec 5). Gate, acknowledge with a
     /// bare Done, then forward signals as Vibrations until the client
     /// damps (in-band `rsntr:Damp` or stream close) or a stalled send
@@ -955,12 +1379,25 @@ impl Node {
             } => (command, content_type),
         };
 
+        // An empty command means the bytes come from the host, not from a
+        // shell (crate::media): the only way a phone serves its camera.
+        if command.trim().is_empty() {
+            return self
+                .serve_host_media(&name, &id, content_type, stream)
+                .await;
+        }
+
         let mut source = tokio::process::Command::new("sh");
         source
             .arg("-c")
             .arg(&command)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
+            // Captured rather than inherited: a source that fails to
+            // start says why on stderr, and the caller is the one who
+            // needs to hear it. Without this the daemon log holds the
+            // reason and the client sees an empty feed.
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         // Give the source its own process group, so ending the feed can
         // take down the whole `sh -c` pipeline, not just the shell.
@@ -980,16 +1417,19 @@ impl Node {
             }
         };
         let mut stdout = child.stdout.take().expect("stdout was requested as piped");
-
-        stream
-            .send(&EnvelopeObject::Media(resonator_protocol::Media {
-                id: id.clone(),
-                content_type,
-            }))
-            .await?;
+        // Drained concurrently: a source that writes more than a pipe
+        // buffer of diagnostics would otherwise block on its own stderr.
+        // Only the tail is kept; it is for a human reading an error.
+        let stderr_tail = Self::spawn_stderr_tail(child.stderr.take());
 
         use tokio::io::AsyncReadExt;
         let mut buf = vec![0u8; 64 * 1024];
+        // The header says the feed started, so it waits for proof: the
+        // first byte. A source that dies before producing one is a
+        // failure, and answering it with a header and a clean end (which
+        // is what this did) is indistinguishable from a feed that simply
+        // finished.
+        let mut started = false;
         let outcome = loop {
             // Select on the client's closure too: a silent source (a camera
             // refusing a session) must not keep a feed for a departed
@@ -1012,6 +1452,15 @@ impl Node {
                     ));
                 }
             };
+            if !started {
+                started = true;
+                stream
+                    .send(&EnvelopeObject::Media(resonator_protocol::Media {
+                        id: id.clone(),
+                        content_type: content_type.clone(),
+                    }))
+                    .await?;
+            }
             // A failed send means the client hung up; stop feeding.
             if let Err(e) = stream.send_raw(&buf[..n]).await {
                 debug!(source = %name, error = %e, "media client went away");
@@ -1027,12 +1476,136 @@ impl Node {
             unsafe { libc::kill(-pgid, libc::SIGTERM) };
         }
         let _ = child.start_kill();
-        let _ = child.wait().await;
+        let status = child.wait().await.ok();
         #[cfg(unix)]
         if let Some(pgid) = pgid {
             unsafe { libc::kill(-pgid, libc::SIGKILL) };
         }
+
+        // A source that never produced a byte failed, whatever its exit
+        // status says: the caller asked for a feed and got nothing, and
+        // the reason is on its stderr. Say so instead of ending quietly.
+        if outcome.is_ok() && !started {
+            let why = stderr_tail.await.unwrap_or_default();
+            let detail = if why.trim().is_empty() {
+                match status {
+                    Some(s) if !s.success() => format!("it exited with {s}"),
+                    Some(_) => "it exited without writing anything".to_string(),
+                    None => "it could not be reaped".to_string(),
+                }
+            } else {
+                format!("it wrote no data and reported: {}", why.trim())
+            };
+            warn!(source = %name, %detail, "media source produced no data");
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::EngineError,
+                format!("media source {name:?} produced no data: {detail}"),
+            )
+            .await;
+        }
         outcome
+    }
+
+    /// Drains a child's stderr in the background, keeping the tail for a
+    /// diagnostic. Resolves when the pipe closes.
+    fn spawn_stderr_tail(
+        stderr: Option<tokio::process::ChildStderr>,
+    ) -> tokio::task::JoinHandle<String> {
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let Some(mut stderr) = stderr else {
+                return String::new();
+            };
+            /// Enough for a failing encoder's last words, bounded so a
+            /// chatty source cannot grow this without limit.
+            const TAIL_BYTES: usize = 2048;
+            let mut kept: Vec<u8> = Vec::new();
+            let mut buf = vec![0u8; 4096];
+            while let Ok(n) = stderr.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                kept.extend_from_slice(&buf[..n]);
+                if kept.len() > TAIL_BYTES {
+                    let cut = kept.len() - TAIL_BYTES;
+                    kept.drain(..cut);
+                }
+            }
+            String::from_utf8_lossy(&kept).into_owned()
+        })
+    }
+
+    /// Streams a media source the embedding host publishes. Identical on
+    /// the wire to a command-backed source: a `rsntr:Media` header then
+    /// raw bytes. A viewer that cannot keep up misses chunks rather than
+    /// stalling the source, which is what keeps a live feed live.
+    async fn serve_host_media<S: RequestStream>(
+        &self,
+        name: &str,
+        id: &str,
+        declared_type: String,
+        stream: &mut S,
+    ) -> Result<(), NodeError> {
+        let Some(mut feed) = self.media_feeds.subscribe(name) else {
+            return send_error(
+                stream,
+                Some(id.to_string()),
+                ErrorCode::EngineError,
+                format!(
+                    "media source {name:?} is host-provided (its `_media` command is empty)                      but nothing is publishing it right now"
+                ),
+            )
+            .await;
+        };
+        // The live feed knows its codec; the row is the declaration.
+        let content_type = self
+            .media_feeds
+            .content_type(name)
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or(declared_type);
+        stream
+            .send(&EnvelopeObject::Media(resonator_protocol::Media {
+                id: id.to_string(),
+                content_type,
+            }))
+            .await?;
+
+        let mut skipped_total: u64 = 0;
+        loop {
+            let chunk = tokio::select! {
+                c = feed.next() => c,
+                _ = stream.closed() => {
+                    debug!(source = %name, "host media client closed the stream");
+                    break;
+                }
+            };
+            match chunk {
+                crate::media::FeedChunk::Bytes { bytes, skipped } => {
+                    if skipped > 0 {
+                        skipped_total += skipped;
+                        debug!(
+                            source = %name,
+                            skipped,
+                            "viewer fell behind; resumed at the live edge"
+                        );
+                    }
+                    if let Err(e) = stream.send_raw(&bytes).await {
+                        debug!(source = %name, error = %e, "host media client went away");
+                        break;
+                    }
+                }
+                crate::media::FeedChunk::Ended => {
+                    debug!(source = %name, "host withdrew the feed");
+                    break;
+                }
+            }
+        }
+        if skipped_total > 0 {
+            debug!(source = %name, skipped_total, "feed ended after dropping chunks for this viewer");
+        }
+        Ok(())
     }
 
     /// The builtin `audio-duplex` modulation (envelope doc sec 4.3): a
@@ -1268,6 +1841,566 @@ impl Node {
             unsafe { libc::kill(-pgid, libc::SIGKILL) };
         }
         outcome
+    }
+
+    /// The `mod-install` modulation (remote lane): a policy-gated peer
+    /// installs/updates/removes a wasm mod. The wasm is fetched from the
+    /// requesting peer over iroh-blobs (it dwarfs the frame budget); the
+    /// registry's load rules (sha, abi, descriptor-name, caps<=needs) are
+    /// enforced by the hot reload, so a refused mod is disabled and the
+    /// reason returned. See docs/mod-install.md.
+    async fn serve_mod_install<S: RequestStream>(
+        &self,
+        peer: &str,
+        request: Request,
+        stream: &mut S,
+    ) -> Result<(), NodeError> {
+        use crate::mod_install as mi;
+        let id = request.id_string();
+        // The one-Text-param blob-import affordance is owner-lane only.
+        if !request.params.is_empty() {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::ProtocolError,
+                "the mod-install blob-import parameter is served only on the owner channel"
+                    .to_string(),
+            )
+            .await;
+        }
+        let req = match mi::parse(&request.signal) {
+            Ok(r) => r,
+            Err(e) => return send_error(stream, Some(id), ErrorCode::ProtocolError, e).await,
+        };
+
+        // Gate on the db thread (one audit row per attempt). An
+        // unmatched install parks in `_inbox` and answers the stable
+        // "pending human decision" reason (docs/mod-install.md): the
+        // owner approves with `inbox answer allow --grant ...` and the
+        // installer retries.
+        let gate = {
+            let peer = peer.to_string();
+            let id = id.clone();
+            let name = req.name.clone();
+            let signal = request.signal.clone();
+            let caps = if req.verb == mi::Verb::Remove {
+                Vec::new()
+            } else {
+                req.caps.clone()
+            };
+            self.db
+                .call(
+                    move |conn| match mi::gate(conn, &peer, &id, &name, &caps, &signal) {
+                        mi::Gate::UnknownPeer => Err("unknown-peer".to_string()),
+                        mi::Gate::Denied { reason } => Err(reason),
+                        mi::Gate::Pending => {
+                            Err(resonator_authenticator::PENDING_REASON.to_string())
+                        }
+                        mi::Gate::Allowed => Ok(()),
+                    },
+                )
+                .await?
+        };
+        if let Err(reason) = gate {
+            if reason == "unknown-peer" {
+                return send_denied(
+                    stream,
+                    Some(id),
+                    "unknown peer: only rsntr:Knock is accepted".to_string(),
+                )
+                .await;
+            }
+            return send_denied(stream, Some(id), reason).await;
+        }
+
+        if req.verb == mi::Verb::Remove {
+            let name = req.name.clone();
+            self.db.call(move |conn| mi::remove(conn, &name)).await??;
+            if let Err(e) = self.reload_mods().await {
+                return send_error(stream, Some(id), ErrorCode::EngineError, e).await;
+            }
+            return self
+                .answer_mod_applied(id, &req.name, "removed", stream)
+                .await;
+        }
+
+        // Install: fetch, verify, upsert, reload.
+        let Some(hash) = req.hash.clone() else {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::ProtocolError,
+                "a mod-install carries an rsntr:hash naming the wasm blob".to_string(),
+            )
+            .await;
+        };
+        let Some(fetcher) = self.blob_fetcher() else {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::EngineError,
+                "no blob fetcher is wired on this node".to_string(),
+            )
+            .await;
+        };
+        let wasm = match fetcher(peer.to_string(), hash, req.addrs.clone()).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return send_error(
+                    stream,
+                    Some(id),
+                    ErrorCode::EngineError,
+                    format!("fetching the wasm from you failed: {e}"),
+                )
+                .await;
+            }
+        };
+        if wasm.len() > mi::MAX_WASM_BYTES {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::LimitExceeded,
+                format!(
+                    "the wasm is {} bytes; the ceiling is {}",
+                    wasm.len(),
+                    mi::MAX_WASM_BYTES
+                ),
+            )
+            .await;
+        }
+        if let Some(declared) = req.bytes
+            && declared != wasm.len() as u64
+        {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::ProtocolError,
+                format!(
+                    "rsntr:bytes says {declared} but the fetched blob is {}",
+                    wasm.len()
+                ),
+            )
+            .await;
+        }
+
+        let sha = mi::sha256_hex(&wasm);
+        let eff_timeout = req
+            .timeout_ms
+            .map(|t| t.min(self.config.max_duration_ms))
+            .unwrap_or(self.config.max_duration_ms);
+        let eff_memory = req
+            .memory_mb
+            .unwrap_or(mi::DEFAULT_MOD_MEMORY_MB)
+            .min(self.config.max_mod_memory_mb);
+        let caps_json = serde_json::to_string(&req.caps).unwrap_or_else(|_| "[]".into());
+        let limits_json = format!("{{\"timeout_ms\":{eff_timeout},\"memory_mb\":{eff_memory}}}");
+
+        {
+            let name = req.name.clone();
+            let sha = sha.clone();
+            let caps_json = caps_json.clone();
+            let note = req.note.clone();
+            self.db
+                .call(move |conn| {
+                    mi::upsert(
+                        conn,
+                        &name,
+                        &wasm,
+                        &sha,
+                        &caps_json,
+                        &limits_json,
+                        note.as_deref(),
+                    )
+                })
+                .await??;
+        }
+
+        // Hot reload; a mod refused at load is disabled and reported.
+        let refused = match self.reload_mods().await {
+            Ok(list) => list,
+            Err(e) => return send_error(stream, Some(id), ErrorCode::EngineError, e).await,
+        };
+        if let Some((_, reason)) = refused.iter().find(|(n, _)| n == &req.name) {
+            let reason = reason.clone();
+            let name = req.name.clone();
+            self.db
+                .call(move |conn| mi::set_enabled(conn, &name, false))
+                .await??;
+            let _ = self.reload_mods().await;
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::EngineError,
+                format!(
+                    "mod {:?} was refused at load and disabled: {reason}",
+                    req.name
+                ),
+            )
+            .await;
+        }
+
+        // Answer a one-row summary the CLI renders.
+        stream
+            .send(&EnvelopeObject::Result(ResultHeader {
+                id: id.clone(),
+                columns: vec![
+                    "name".into(),
+                    "sha256".into(),
+                    "caps".into(),
+                    "timeout_ms".into(),
+                    "memory_mb".into(),
+                ],
+                decl_types: Vec::new(),
+            }))
+            .await?;
+        stream
+            .send(&EnvelopeObject::Row(vec![Row {
+                seq: 0,
+                cells: vec![
+                    ("name".into(), Value::Text(req.name.clone())),
+                    ("sha256".into(), Value::Text(sha)),
+                    ("caps".into(), Value::Text(caps_json)),
+                    ("timeout_ms".into(), Value::Integer(eff_timeout as i64)),
+                    ("memory_mb".into(), Value::Integer(eff_memory as i64)),
+                ],
+            }]))
+            .await?;
+        stream
+            .send(&EnvelopeObject::Done(Done {
+                id,
+                row_count: Some(1),
+                affected_rows: None,
+                last_insert_rowid: None,
+                truncated: false,
+            }))
+            .await?;
+        Ok(())
+    }
+
+    /// The owner-lane `mod-install`: only the blob-import affordance
+    /// (`rsntr mod push` delegating the import when its own daemon holds
+    /// the store lock). One Text param = the source path; the answer is
+    /// the blob hash. Everything else points at `rsntr mod add`.
+    async fn serve_mod_install_owner<S: RequestStream>(
+        &self,
+        _peer: &str,
+        request: Request,
+        stream: &mut S,
+    ) -> Result<(), NodeError> {
+        let id = request.id_string();
+        let path = match request.params.as_slice() {
+            [Value::Text(p)] => p.clone(),
+            [] => {
+                return send_error(
+                    stream,
+                    Some(id),
+                    ErrorCode::ModUnsupported,
+                    "install mods locally with `rsntr mod add`; the owner-lane mod-install \
+                     modulation only imports a wasm blob (one path parameter)"
+                        .to_string(),
+                )
+                .await;
+            }
+            _ => {
+                return send_error(
+                    stream,
+                    Some(id),
+                    ErrorCode::ProtocolError,
+                    "the owner-lane mod-install carries at most one parameter: the wasm \
+                     source path"
+                        .to_string(),
+                )
+                .await;
+            }
+        };
+        let Some(importer) = self
+            .blob_importer
+            .lock()
+            .expect("blob importer lock poisoned")
+            .clone()
+        else {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::EngineError,
+                "no blob store is wired on this node".to_string(),
+            )
+            .await;
+        };
+        let (hash, bytes) = match importer(std::path::PathBuf::from(path)).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                return send_error(
+                    stream,
+                    Some(id),
+                    ErrorCode::EngineError,
+                    format!("importing the wasm failed: {e}"),
+                )
+                .await;
+            }
+        };
+        stream
+            .send(&EnvelopeObject::Result(ResultHeader {
+                id: id.clone(),
+                columns: vec!["hash".into(), "bytes".into()],
+                decl_types: Vec::new(),
+            }))
+            .await?;
+        stream
+            .send(&EnvelopeObject::Row(vec![Row {
+                seq: 0,
+                cells: vec![
+                    ("hash".into(), Value::Text(format!("blake3:{hash}"))),
+                    ("bytes".into(), Value::Integer(bytes as i64)),
+                ],
+            }]))
+            .await?;
+        stream
+            .send(&EnvelopeObject::Done(Done {
+                id,
+                row_count: Some(1),
+                affected_rows: None,
+                last_insert_rowid: None,
+                truncated: false,
+            }))
+            .await?;
+        Ok(())
+    }
+
+    /// Runs the wired mods reloader; errors if none is wired.
+    async fn reload_mods(&self) -> Result<Vec<(String, String)>, String> {
+        let reloader = self
+            .mod_reloader()
+            .ok_or_else(|| "no mod reloader is wired on this node".to_string())?;
+        reloader().await
+    }
+
+    /// A `<verb>`-applied one-value answer (used by mod remove).
+    async fn answer_mod_applied<S: RequestStream>(
+        &self,
+        id: String,
+        name: &str,
+        verb: &str,
+        stream: &mut S,
+    ) -> Result<(), NodeError> {
+        stream
+            .send(&EnvelopeObject::Result(ResultHeader {
+                id: id.clone(),
+                columns: vec!["name".into(), "status".into()],
+                decl_types: Vec::new(),
+            }))
+            .await?;
+        stream
+            .send(&EnvelopeObject::Row(vec![Row {
+                seq: 0,
+                cells: vec![
+                    ("name".into(), Value::Text(name.to_string())),
+                    ("status".into(), Value::Text(verb.to_string())),
+                ],
+            }]))
+            .await?;
+        stream
+            .send(&EnvelopeObject::Done(Done {
+                id,
+                row_count: Some(1),
+                affected_rows: None,
+                last_insert_rowid: None,
+                truncated: false,
+            }))
+            .await?;
+        Ok(())
+    }
+
+    /// The `pages` modulation: serve an HTML page from the `pages` table
+    /// as a hologram (docs/hologram-protocol.md), the zero-toolchain path
+    /// for agents to publish UIs. Signal is `hologram <name>`. The read
+    /// is authorized as the calling peer via the sql-sqlite serving path,
+    /// so a page is fetchable exactly when the caller could read its row
+    /// ("the projection never lies"); a public page = a `('*','pages',
+    /// 'read','allow')` policy row.
+    async fn serve_pages<S: RequestStream>(
+        &self,
+        peer: &str,
+        request: Request,
+        stream: &mut S,
+    ) -> Result<(), NodeError> {
+        let id = request.id_string();
+        let signal = request.signal.trim();
+        let name = match signal.split_once(char::is_whitespace) {
+            Some(("hologram", rest)) if !rest.trim().is_empty() => rest.trim().to_string(),
+            _ => {
+                return send_error(
+                    stream,
+                    Some(id),
+                    ErrorCode::PointUnknown,
+                    "the pages modulation serves `hologram <name>`".to_string(),
+                )
+                .await;
+            }
+        };
+
+        // Peer gate, then the row read decided as the calling peer.
+        let outcome = {
+            let peer = peer.to_string();
+            let id = id.clone();
+            let chain = self.chain.clone();
+            let config = self.config.clone();
+            let name = name.clone();
+            self.db
+                .call(move |conn| {
+                    if !peer_known(conn, &peer) {
+                        return ModDbOutcome::Denied {
+                            reason: "unknown peer".to_string(),
+                        };
+                    }
+                    run_mod_statement(
+                        conn,
+                        &peer,
+                        &id,
+                        &chain,
+                        &config,
+                        "SELECT html, content_type FROM pages WHERE name = ?1",
+                        &[Value::Text(name)],
+                        false,
+                    )
+                })
+                .await?
+        };
+
+        let (html, content_type) = match outcome {
+            ModDbOutcome::Rows { columns, mut rows } => {
+                if rows.is_empty() {
+                    return send_error(
+                        stream,
+                        Some(id),
+                        ErrorCode::PointUnknown,
+                        format!("no page named {name:?}"),
+                    )
+                    .await;
+                }
+                let col = |want: &str| columns.iter().position(|c| c == want);
+                let (hi, ci) = (col("html"), col("content_type"));
+                let row = rows.remove(0);
+                let cell = |i: Option<usize>| -> String {
+                    match i.and_then(|i| row.get(i)) {
+                        Some(rusqlite::types::Value::Text(t)) => t.clone(),
+                        _ => String::new(),
+                    }
+                };
+                let html = cell(hi);
+                let mut ct = cell(ci);
+                if ct.is_empty() {
+                    ct = "text/html; charset=utf-8".to_string();
+                }
+                (html, ct)
+            }
+            ModDbOutcome::Denied { reason } => {
+                if reason == "unknown peer" {
+                    return send_denied(
+                        stream,
+                        Some(id),
+                        "unknown peer: only rsntr:Knock is accepted".to_string(),
+                    )
+                    .await;
+                }
+                return send_denied(stream, Some(id), reason).await;
+            }
+            ModDbOutcome::Error { message } => {
+                return send_error(stream, Some(id), ErrorCode::EngineError, message).await;
+            }
+            ModDbOutcome::Executed { .. } => {
+                return send_error(
+                    stream,
+                    Some(id),
+                    ErrorCode::EngineError,
+                    "unexpected write result for a page read".to_string(),
+                )
+                .await;
+            }
+        };
+
+        let bytes = html.as_bytes();
+        // Bound the document against the response byte budget (base64
+        // inflates 4/3), matching the hologram protocol's ceiling.
+        let ceiling = (self.config.max_response_bytes as usize) * 3 / 4;
+        if bytes.len() > ceiling {
+            return send_error(
+                stream,
+                Some(id),
+                ErrorCode::LimitExceeded,
+                format!(
+                    "page {name:?} is {} bytes; the ceiling is {ceiling}",
+                    bytes.len()
+                ),
+            )
+            .await;
+        }
+
+        // Hologram header, then Chunk frames (128 KiB raw slices), then
+        // Done. Both classes ride as Generic frames (envelope doc sec 10).
+        use base64::Engine as _;
+        stream
+            .send(&EnvelopeObject::Generic(resonator_protocol::Generic {
+                class: "Hologram".to_string(),
+                props: vec![
+                    (
+                        pages_iri("contentType"),
+                        oxrdf::Literal::new_simple_literal(content_type).into(),
+                    ),
+                    (
+                        pages_iri("size"),
+                        oxrdf::Literal::new_typed_literal(
+                            bytes.len().to_string(),
+                            oxrdf::vocab::xsd::INTEGER,
+                        )
+                        .into(),
+                    ),
+                    (
+                        pages_iri("name"),
+                        oxrdf::Literal::new_simple_literal(name.clone()).into(),
+                    ),
+                ],
+            }))
+            .await?;
+        const RAW_CHUNK: usize = 128 * 1024;
+        let mut chunks = 0i64;
+        for (i, slice) in bytes.chunks(RAW_CHUNK).enumerate() {
+            let data = base64::engine::general_purpose::STANDARD.encode(slice);
+            stream
+                .send(&EnvelopeObject::Generic(resonator_protocol::Generic {
+                    class: "Chunk".to_string(),
+                    props: vec![
+                        (
+                            pages_iri("seq"),
+                            oxrdf::Literal::new_typed_literal(
+                                (i as i64).to_string(),
+                                oxrdf::vocab::xsd::INTEGER,
+                            )
+                            .into(),
+                        ),
+                        (
+                            pages_iri("data"),
+                            oxrdf::Literal::new_typed_literal(
+                                data,
+                                oxrdf::vocab::xsd::BASE_64_BINARY,
+                            )
+                            .into(),
+                        ),
+                    ],
+                }))
+                .await?;
+            chunks += 1;
+        }
+        stream
+            .send(&EnvelopeObject::Done(Done {
+                id,
+                row_count: Some(chunks),
+                affected_rows: None,
+                last_insert_rowid: None,
+                truncated: false,
+            }))
+            .await?;
+        Ok(())
     }
 
     /// The builtin `chat` modulation (docs/chat-protocol.md): the signal
@@ -1922,6 +3055,28 @@ fn screen_request(
         }
     };
 
+    // Reserved-table guard: `_modulations` is installed only through the
+    // audited, caps-ceilinged `mod-install` modulation, never by direct
+    // DML on the remote lane, even for a peer holding a '*' write grant
+    // (footprint.rs bans DDL but not reserved-table DML). Reads stay
+    // allowed.
+    if footprint.kind != ActionKind::Read && footprint.tables.contains_key("_modulations") {
+        let reason = "direct writes to _modulations are not allowed;              install mods via the mod-install modulation"
+            .to_string();
+        audit_full(
+            conn,
+            peer,
+            &id,
+            &req.signal,
+            "{}",
+            "deny",
+            "node",
+            Some(&reason),
+            0,
+        );
+        return Verdict::Banned { reason };
+    }
+
     // 3. Chain decide; the node itself writes the audit row.
     let action = footprint.kind.default_action();
     let start = Instant::now();
@@ -2216,7 +3371,7 @@ fn execute_mod_inner(
         }
     }
     let is_write = approved.footprint.kind == ActionKind::Write;
-    let tx = conn.transaction().map_err(engine_err)?;
+    let tx = begin_tx(conn, is_write).map_err(engine_err)?;
     let deny_reason: Arc<Mutex<Option<String>>> = Arc::default();
     tx.authorizer(Some(enforce_authorizer(
         approved.clone(),
@@ -2560,12 +3715,14 @@ fn weigh_knock(
                 Some("knock parked for the owner"),
                 duration,
             );
-            park_knock(conn, peer, &id, message);
+            let id = park_knock(conn, peer, &id, message);
             KnockReply::Decision {
+                reason: Some(format!(
+                    "your knock is parked for the owner's decision (pending id {id})"
+                )),
                 id,
                 decision: "pending".to_string(),
                 decided_by: "node".to_string(),
-                reason: Some("your knock is parked for the owner's decision".to_string()),
             }
         }
         Decision::Deny { reason } => {
@@ -2600,12 +3757,14 @@ fn weigh_knock(
                 Some("knock parked (chain escalated)"),
                 duration,
             );
-            park_knock(conn, peer, &id, message);
+            let id = park_knock(conn, peer, &id, message);
             KnockReply::Decision {
+                reason: Some(format!(
+                    "your knock is parked for the owner's decision (pending id {id})"
+                )),
                 id,
                 decision: "pending".to_string(),
                 decided_by: "node".to_string(),
-                reason: Some("your knock is parked for the owner's decision".to_string()),
             }
         }
     }
@@ -2625,19 +3784,22 @@ fn admit_peer(conn: &Connection, peer: &str, id: &str) {
 
 /// Parks a knock in `_inbox` for the owner. Knocks carry no SQL, so the
 /// message rides in `params`. At most one pending row per peer: knocking
-/// again across windows does not stack up.
-fn park_knock(conn: &Connection, peer: &str, id: &str, message: &str) {
-    let already: bool = conn
+/// again across windows does not stack up, and the answer names the
+/// row already pending, so a re-knock is a status check (its Decision
+/// carries the same id every time until the owner answers).
+fn park_knock(conn: &Connection, peer: &str, id: &str, message: &str) -> String {
+    let pending: Option<String> = conn
         .query_row(
-            "SELECT 1 FROM _inbox WHERE peer = ?1 AND decision IS NULL AND sql = ''",
+            "SELECT request_id FROM _inbox \
+             WHERE peer = ?1 AND decision IS NULL AND sql = '' \
+             ORDER BY received_at, request_id LIMIT 1",
             [peer],
-            |_| Ok(()),
+            |r| r.get(0),
         )
         .optional()
-        .map(|o| o.is_some())
-        .unwrap_or(false);
-    if already {
-        return;
+        .unwrap_or(None);
+    if let Some(existing) = pending {
+        return existing;
     }
     let res = conn.execute(
         "INSERT INTO _inbox (request_id, peer, sql, params, received_at) \
@@ -2647,6 +3809,7 @@ fn park_knock(conn: &Connection, peer: &str, id: &str, message: &str) {
     if let Err(e) = res {
         warn!(error = %e, "failed to park knock in _inbox");
     }
+    id.to_string()
 }
 
 /// The persisted per-key + global token bucket. Grants (and spends one
@@ -2818,12 +3981,33 @@ fn run_execute(conn: &mut Connection, job: ExecJob, ftx: mpsc::Sender<EnvelopeOb
                     "wall-clock deadline elapsed; statement interrupted and rolled back"
                         .to_string(),
                 )
+            } else if crate::db::is_busy(&e) {
+                (
+                    ErrorCode::EngineError,
+                    format!(
+                        "database busy: another process held the write lock longer than \
+                         {:?}; retry",
+                        crate::db::BUSY_TIMEOUT
+                    ),
+                )
             } else {
                 (ErrorCode::EngineError, e.to_string())
             };
             let _ = timed_out; // flag kept for symmetry/diagnostics
             push_frame_lossy(&ftx, error_frame(&job.id, code, &reason));
         }
+    }
+}
+
+/// Opens the request transaction: immediate for writes, so the write
+/// lock is taken before the `_applied` read and a concurrent writer in
+/// another process queues on the busy timeout instead of turning the
+/// later upgrade into a snapshot conflict; deferred for reads.
+fn begin_tx(conn: &mut Connection, is_write: bool) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    if is_write {
+        conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    } else {
+        conn.transaction()
     }
 }
 
@@ -2835,7 +4019,7 @@ fn execute_in_tx(
     steps_exceeded: &Arc<AtomicBool>,
 ) -> Result<Emitted, Halt> {
     let is_write = job.approved.footprint.kind == ActionKind::Write;
-    let tx = conn.transaction().map_err(Halt::Sqlite)?;
+    let tx = begin_tx(conn, is_write).map_err(Halt::Sqlite)?;
 
     // Idempotency: a retransmitted write is answered out of `_applied`
     // without being applied a second time.
@@ -3140,6 +4324,12 @@ fn push_frame_lossy(ftx: &mpsc::Sender<EnvelopeObject>, obj: EnvelopeObject) {
     if ftx.blocking_send(obj).is_err() {
         debug!("response channel closed while sending final frame");
     }
+}
+
+/// A `rsntr:` predicate NamedNode for the pages hologram frames.
+fn pages_iri(local: &str) -> oxrdf::NamedNode {
+    oxrdf::NamedNode::new(format!("{}{local}", resonator_protocol::vocab::RSNTR_NS))
+        .expect("rsntr predicate IRIs are valid")
 }
 
 async fn send_denied<S: RequestStream>(

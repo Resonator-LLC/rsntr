@@ -62,6 +62,8 @@ async fn bind_provider(store_dir: &Path, allowed: Option<PeerId>) -> Arc<IrohTra
             store_dir: store_dir.to_path_buf(),
             gate,
         }),
+        publish: false,
+        bind_ports: Default::default(),
     };
     let (transport, _rx) = IrohTransport::bind(config).await.expect("bind provider");
     transport

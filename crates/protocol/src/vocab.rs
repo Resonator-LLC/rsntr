@@ -119,6 +119,11 @@ pub mod prop {
     pub const ROOM: NamedNodeRef<'static> = rsntr_iri!("room");
     pub const BODY: NamedNodeRef<'static> = rsntr_iri!("body");
     pub const ATTACHMENT: NamedNodeRef<'static> = rsntr_iri!("attachment");
+    /// Threading: the id of the message this one is about (chat protocol
+    /// sec 2; open-world, older nodes ignore it).
+    pub const RE: NamedNodeRef<'static> = rsntr_iri!("re");
+    /// A free-form tag on a message (repeatable), e.g. `topic:deploy`.
+    pub const TAG: NamedNodeRef<'static> = rsntr_iri!("tag");
 
     // Projection vocabulary (projection protocol sec 2).
     pub const OFFERS: NamedNodeRef<'static> = rsntr_iri!("offers");

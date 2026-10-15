@@ -55,9 +55,9 @@ pub struct OwnerChannel {
 }
 
 enum Inner {
-    /// Dials `<dir>/rsntr.sock` freshly per request (the socket protocol
-    /// is one request per connection).
-    #[cfg(unix)]
+    /// Dials the serving process freshly per request (the owner channel
+    /// is one request per connection): the unix socket or loopback TCP
+    /// (crate::owner).
     Socket { dir: PathBuf },
     /// The in-process pipeline: same construction as `rsntr serve`,
     /// minus the transport.
@@ -69,37 +69,38 @@ impl OwnerChannel {
     pub async fn open(dir: &Path, prefer: Prefer) -> Result<Self> {
         match prefer {
             Prefer::Socket => {
-                #[cfg(unix)]
-                {
-                    // Probe dial; the server tolerates a frameless close.
-                    match crate::owner_socket::connect(dir).await {
-                        Ok(_probe) => Ok(Self {
-                            inner: Inner::Socket {
-                                dir: dir.to_path_buf(),
-                            },
-                        }),
-                        Err(e) => bail!(
-                            "no node is serving {} (control socket: {e}); \
+                // Probe dial; the server tolerates a frameless close.
+                match crate::owner::connect(dir).await {
+                    Ok(_probe) => Ok(Self::socket(dir)),
+                    Err(e) => {
+                        let holder = crate::lease::holder(dir)
+                            .map(|h| format!("; the serving lease is held by {} (pid {}) but its owner channel is unavailable", h.app.id, h.pid))
+                            .unwrap_or_default();
+                        bail!(
+                            "no node is serving {} (owner channel: {e}{holder}); \
                              start `rsntr serve` or drop --socket",
                             dir.display()
-                        ),
+                        )
                     }
                 }
-                #[cfg(not(unix))]
-                bail!("the control socket is not available on this platform; use --local")
             }
             Prefer::Local => Self::local(dir),
             Prefer::Auto => {
-                #[cfg(unix)]
-                if let Ok(_probe) = crate::owner_socket::connect(dir).await {
-                    return Ok(Self {
-                        inner: Inner::Socket {
-                            dir: dir.to_path_buf(),
-                        },
-                    });
+                if crate::owner::probe(dir).await {
+                    return Ok(Self::socket(dir));
                 }
                 Self::local(dir)
             }
+        }
+    }
+
+    /// The owner-channel transport to the process serving `dir`, without
+    /// probing first (each request dials).
+    pub fn socket(dir: &Path) -> Self {
+        Self {
+            inner: Inner::Socket {
+                dir: dir.to_path_buf(),
+            },
         }
     }
 
@@ -143,17 +144,15 @@ impl OwnerChannel {
     /// streaming dispatch, e.g. entrainment callbacks.
     pub fn node(&self) -> Option<&Arc<Node>> {
         match &self.inner {
-            #[cfg(unix)]
             Inner::Socket { .. } => None,
             Inner::Local { node } => Some(node),
         }
     }
 
-    /// True when requests ride the control socket (and therefore execute
-    /// on the serving process's live connection).
+    /// True when requests ride the owner channel to a serving process
+    /// (and therefore execute on its live connection).
     pub fn is_socket(&self) -> bool {
         match &self.inner {
-            #[cfg(unix)]
             Inner::Socket { .. } => true,
             Inner::Local { .. } => false,
         }
@@ -164,12 +163,10 @@ impl OwnerChannel {
     /// response correlation).
     pub async fn send(&self, envelope: &EnvelopeObject, id: &str) -> Result<QueryOutcome> {
         match &self.inner {
-            #[cfg(unix)]
             Inner::Socket { dir } => {
-                let conn = crate::owner_socket::connect(dir)
+                let mut stream = crate::owner::connect(dir)
                     .await
-                    .with_context(|| format!("dialing the control socket in {}", dir.display()))?;
-                let mut stream = crate::owner_socket::client_stream(conn);
+                    .with_context(|| format!("dialing the owner channel of {}", dir.display()))?;
                 stream
                     .send(envelope)
                     .await

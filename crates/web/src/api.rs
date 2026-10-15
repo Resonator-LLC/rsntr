@@ -328,9 +328,9 @@ pub(crate) async fn peer_get(
                         .unwrap_or(Json::Null)
                 };
                 let addrs = match cell("addrs") {
-                    Json::String(raw) => {
-                        serde_json::from_str::<Vec<String>>(&raw).map(Json::from).unwrap_or(Json::Null)
-                    }
+                    Json::String(raw) => serde_json::from_str::<Vec<String>>(&raw)
+                        .map(Json::from)
+                        .unwrap_or(Json::Null),
                     _ => Json::Null,
                 };
                 json!({
@@ -970,5 +970,327 @@ pub(crate) async fn csv_post(
             "rows_inserted": report.rows_inserted,
         })),
         Err(f) => failure_response(&f, None),
+    }
+}
+
+// ---------------------------------------------------------------------
+// GET /api/ticket, GET /api/ticket.svg, POST /api/peer (pairing)
+// ---------------------------------------------------------------------
+
+/// The live dialing ticket, waiting briefly for a direct address so the
+/// ticket pastes (or scans) straight into a remote peer add — the same
+/// readiness loop as the CLI's `ready_ticket`.
+async fn live_ticket(state: &WebState) -> Result<String, ApiFailure> {
+    let Some(transport) = state.transport.as_ref() else {
+        return Err(ApiFailure::bad_request(
+            "this node serves no iroh transport; there is no ticket to share",
+        ));
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let t = transport.ticket();
+        if matches!(resonator_transport::parse_ticket(&t), Ok((_, addrs)) if !addrs.is_empty()) {
+            return Ok(t);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(t);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+pub(crate) async fn ticket_get(State(state): State<Arc<WebState>>) -> Response {
+    match live_ticket(&state).await {
+        Ok(ticket) => ok_json(json!({
+            "ok": true,
+            "endpoint_id": state.node_id,
+            "ticket": ticket,
+        })),
+        Err(f) => failure_response(&f, None),
+    }
+}
+
+/// The ticket as a QR code (SVG): scanned by another device's camera
+/// into its add-contact form. Rides the session cookie like every other
+/// media/img fetch (an <img> cannot set headers).
+pub(crate) async fn ticket_svg(State(state): State<Arc<WebState>>) -> Response {
+    let ticket = match live_ticket(&state).await {
+        Ok(t) => t,
+        Err(f) => return failure_response(&f, None),
+    };
+    let code = match qrcode::QrCode::new(ticket.as_bytes()) {
+        Ok(c) => c,
+        Err(e) => {
+            return failure_response(
+                &ApiFailure::internal(format!("encoding the ticket as a QR code: {e}")),
+                None,
+            );
+        }
+    };
+    let svg = code
+        .render::<qrcode::render::svg::Color>()
+        .quiet_zone(true)
+        .min_dimensions(240, 240)
+        .build();
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "image/svg+xml"),
+            ("cache-control", "no-store"),
+        ],
+        svg,
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct PeerAddBody {
+    /// A dialing ticket or a 64-hex endpoint id.
+    target: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// Admits a peer from a pasted ticket or endpoint id: the web mirror of
+/// `rsntr peer add` (store::peer_add), running the same upsert through
+/// the owner channel. Admission alone authorizes nothing for the peer —
+/// it lets THIS node dial THEM; their side decides what this node may do.
+pub(crate) async fn peer_post(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    let json_body = match read_json_body(&headers, body).await {
+        Ok(j) => j,
+        Err(resp) => return resp,
+    };
+    let parsed: PeerAddBody = match serde_json::from_value(json_body) {
+        Ok(p) => p,
+        Err(e) => {
+            return failure_response(
+                &ApiFailure::bad_request(format!("expected {{\"target\", \"name\"?}}: {e}")),
+                None,
+            );
+        }
+    };
+    let target = parsed.target.trim();
+    let (id, addrs) = match target.parse::<resonator_transport::PeerId>() {
+        Ok(id) => (id, Vec::new()),
+        Err(_) => match resonator_transport::parse_ticket(target) {
+            Ok(pair) => pair,
+            Err(e) => {
+                return failure_response(
+                    &ApiFailure::bad_request(format!(
+                        "neither a 64-hex endpoint id nor a ticket: {e}"
+                    )),
+                    None,
+                );
+            }
+        },
+    };
+    let id_hex = id.to_string();
+    if id_hex == state.node_id {
+        return failure_response(
+            &ApiFailure::bad_request("that is this node's own endpoint id"),
+            None,
+        );
+    }
+    let addrs_strings: Vec<String> = addrs.iter().map(|a| a.to_string()).collect();
+    let addrs_json = if addrs_strings.is_empty() {
+        Value::Null
+    } else {
+        match serde_json::to_string(&addrs_strings) {
+            Ok(s) => Value::Text(s),
+            Err(e) => return failure_response(&ApiFailure::internal(e.to_string()), None),
+        }
+    };
+    let name = match parsed.name.as_deref().map(str::trim) {
+        Some("") | None => Value::Null,
+        Some(n) => Value::Text(n.to_string()),
+    };
+    // store::peer_add's upsert, except a missing name or address list
+    // keeps what the row already holds instead of erasing it.
+    let (_id, collected) = run_owner(
+        &state,
+        RequestKind::Execute,
+        "sql-sqlite",
+        "INSERT INTO _peers (endpoint_id, name, addrs, added_at) \
+         VALUES (?1, ?2, ?3, datetime('now')) \
+         ON CONFLICT (endpoint_id) DO UPDATE SET \
+           name = COALESCE(?2, name), addrs = COALESCE(?3, addrs)"
+            .to_string(),
+        vec![Value::Text(id_hex.clone()), name, addrs_json],
+    )
+    .await;
+    match collected {
+        Ok(_) => ok_json(json!({
+            "ok": true,
+            "endpoint_id": id_hex,
+            "addrs": addrs_strings,
+        })),
+        Err(f) => failure_response(&f, None),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Inbox: the owner's pending approval queue (knocks + parked requests)
+// ---------------------------------------------------------------------
+
+/// `GET /api/inbox`: the pending `_inbox` rows, classified for a UI.
+/// Each row is `{request_id, peer, kind, action, summary, received_at}`:
+/// `kind` is "knock" (empty sql) or "request"; `action` is the parked
+/// action for a request ("mod-install", "write", ...); `summary` is a
+/// short human line derived from the sql/params.
+pub(crate) async fn inbox_list(State(state): State<Arc<WebState>>) -> Response {
+    let rows = state
+        .node
+        .db()
+        .call(|conn| -> rusqlite::Result<Vec<Json>> {
+            let mut stmt = conn.prepare(
+                "SELECT request_id, peer, sql, params, received_at \
+                 FROM _inbox WHERE decision IS NULL \
+                 ORDER BY received_at, request_id",
+            )?;
+            let out = stmt
+                .query_map([], |r| {
+                    let request_id: String = r.get(0)?;
+                    let peer: String = r.get(1)?;
+                    let sql: String = r.get(2)?;
+                    let params: String = r.get(3)?;
+                    let received_at: String = r.get(4)?;
+                    Ok(inbox_row_json(request_id, peer, sql, params, received_at))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(out)
+        })
+        .await;
+    match rows {
+        Ok(Ok(inbox)) => ok_json(json!({ "ok": true, "inbox": inbox })),
+        Ok(Err(e)) => failure_response(&ApiFailure::internal(e.to_string()), None),
+        Err(e) => failure_response(&ApiFailure::internal(e.to_string()), None),
+    }
+}
+
+/// Classifies one `_inbox` row into the UI shape.
+fn inbox_row_json(
+    request_id: String,
+    peer: String,
+    sql: String,
+    params: String,
+    received_at: String,
+) -> Json {
+    if sql.is_empty() {
+        // A knock: params is the plain "knock: <message>" text.
+        let msg = params
+            .strip_prefix("knock: ")
+            .unwrap_or(&params)
+            .to_string();
+        return json!({
+            "request_id": request_id,
+            "peer": peer,
+            "kind": "knock",
+            "action": "knock",
+            "summary": msg,
+            "received_at": received_at,
+        });
+    }
+    // A parked request: params is ParkedParams JSON.
+    let action = serde_json::from_str::<Json>(&params)
+        .ok()
+        .and_then(|p| p.get("action").and_then(|a| a.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "request".to_string());
+    json!({
+        "request_id": request_id,
+        "peer": peer,
+        "kind": "request",
+        "action": action,
+        "summary": summarize_request(&action, &sql),
+        "received_at": received_at,
+    })
+}
+
+/// A short human line for a parked request from its action and sql.
+fn summarize_request(action: &str, sql: &str) -> String {
+    if action == "mod-install" {
+        // The sql is the mod-install turtle; pull the rsntr:name.
+        if let Some(rest) = sql.split("rsntr:name").nth(1)
+            && let Some(open) = rest.find('"')
+            && let Some(close) = rest[open + 1..].find('"')
+        {
+            let name = &rest[open + 1..open + 1 + close];
+            let verb = if sql.contains("ModRemove") {
+                "remove the mod"
+            } else {
+                "install the mod"
+            };
+            return format!("{verb} {name:?}");
+        }
+        return "install a mod".to_string();
+    }
+    let one_line: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let head: String = one_line.chars().take(90).collect();
+    if head.len() < one_line.len() {
+        format!("{head}...")
+    } else {
+        head
+    }
+}
+
+#[derive(Deserialize)]
+struct InboxAnswerBody {
+    request_id: String,
+    allow: bool,
+    #[serde(default)]
+    remember: bool,
+    #[serde(default)]
+    grants: Vec<String>,
+}
+
+/// `POST /api/inbox/answer`: answer one pending row. Runs the canonical
+/// `answer_inbox` on the serving connection so the decision cache and
+/// any grants are live for the requester's retry.
+pub(crate) async fn inbox_answer(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    let json_body = match read_json_body(&headers, body).await {
+        Ok(j) => j,
+        Err(resp) => return resp,
+    };
+    let req: InboxAnswerBody = match serde_json::from_value(json_body) {
+        Ok(p) => p,
+        Err(e) => {
+            return failure_response(
+                &ApiFailure::bad_request(format!(
+                    "expected {{\"request_id\", \"allow\", \"remember\"?, \"grants\"?}}: {e}"
+                )),
+                None,
+            );
+        }
+    };
+    let result = state
+        .node
+        .db()
+        .call(move |conn| {
+            resonator_authenticator::answer_inbox(
+                conn,
+                &req.request_id,
+                req.allow,
+                req.remember,
+                &req.grants,
+            )
+        })
+        .await;
+    match result {
+        Ok(Ok(ans)) => ok_json(json!({
+            "ok": true,
+            "peer": ans.peer,
+            "knock": ans.knock,
+            "remembered": ans.remembered,
+            "granted": ans.granted,
+        })),
+        Ok(Err(e)) => failure_response(&ApiFailure::bad_request(e.to_string()), None),
+        Err(e) => failure_response(&ApiFailure::internal(e.to_string()), None),
     }
 }

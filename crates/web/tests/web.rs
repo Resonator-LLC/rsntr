@@ -1054,8 +1054,16 @@ async fn deep_link_paths_serve_the_shell() {
     let base = format!("http://{}", server.addr());
     let client = reqwest::Client::new();
 
-    for path in ["/o/local/proj", "/o/abcd/holo/cameras", "/o/x/proj/urn%3Ax%3Aadmin"] {
-        let r = client.get(format!("{base}{path}")).send().await.expect(path);
+    for path in [
+        "/o/local/proj",
+        "/o/abcd/holo/cameras",
+        "/o/x/proj/urn%3Ax%3Aadmin",
+    ] {
+        let r = client
+            .get(format!("{base}{path}"))
+            .send()
+            .await
+            .expect(path);
         assert_eq!(r.status(), 200, "{path}");
         assert!(r.text().await.expect("body").contains("<html"), "{path}");
     }

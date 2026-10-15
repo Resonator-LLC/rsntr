@@ -495,7 +495,9 @@ fn normalize_statement_id(id: &str) -> String {
 }
 
 /// `POST /request`: one `rsntr:Query`/`rsntr:Execute` in, the response
-/// frames streamed out.
+/// frames streamed out. With `?peer=`, one `rsntr:Knock` may ride the
+/// same lane: the web client's way to introduce this node to a stranger
+/// (connection-protocol.md sec 4); the answer frames relay back as-is.
 pub(crate) async fn request(
     State(state): State<Arc<WebState>>,
     Query(params): Query<PeerParam>,
@@ -519,11 +521,29 @@ pub(crate) async fn request(
             st.id = normalize_statement_id(&st.id);
             EnvelopeObject::Execute(st)
         }
+        EnvelopeObject::Knock(mut k) => {
+            if peer.is_none() {
+                return frames_error(
+                    StatusCode::BAD_REQUEST,
+                    "protocol-error",
+                    "a knock introduces this node to a peer; it needs ?peer=",
+                    None,
+                );
+            }
+            k.id = Some(
+                k.id.as_deref()
+                    .map(normalize_statement_id)
+                    .unwrap_or_else(|| ulid::Ulid::new().to_string()),
+            );
+            EnvelopeObject::Knock(k)
+        }
         other => {
             return frames_error(
                 StatusCode::BAD_REQUEST,
                 "protocol-error",
-                format!("/request carries rsntr:Query or rsntr:Execute only, got {other:?}"),
+                format!(
+                    "/request carries rsntr:Query, rsntr:Execute, or rsntr:Knock only, got {other:?}"
+                ),
                 None,
             );
         }

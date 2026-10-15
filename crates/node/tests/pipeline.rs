@@ -276,20 +276,25 @@ async fn allowed_read_streams_result_rows_done() {
 }
 
 #[tokio::test]
-async fn policy_gap_falls_to_tail_deny() {
+async fn policy_gap_parks_for_the_owner() {
     let node = test_node(NodeConfig::default()).await;
     admit(&node, PEER).await;
-    // No policy rows at all: the policy tier escalates, the tail denies.
+    // No policy rows at all: the policy tier escalates and the human
+    // tier (in the default chain since the approval flow) parks the
+    // statement for the owner, answering the stable pending reason.
     let (q, _) = query("sql-sqlite", "SELECT id FROM notes");
     let (out, _) = drive(&node, PEER, q, vec![]).await;
     match &out.frames()[0] {
         EnvelopeObject::Denied(d) => {
-            assert!(d.reason.as_deref().unwrap().contains("no decider"));
+            assert_eq!(
+                d.reason.as_deref(),
+                Some(resonator_authenticator::PENDING_REASON)
+            );
         }
         other => panic!("expected Denied, got {other:?}"),
     }
     let audits = audit_rows(&node).await;
-    assert_eq!(audits.last().unwrap().1, "default");
+    assert_eq!(audits.last().unwrap().1, "human");
 }
 
 #[tokio::test]
@@ -937,10 +942,23 @@ async fn media_policy_does_not_grant_audio_duplex() {
     let (out, _) = drive_duplex(&node, PEER, q, vec![]).await;
     assert!(matches!(out.frames()[0], EnvelopeObject::Denied(_)));
 
-    // And the duplex row still serves plain one-way media.
-    let (q, _) = query("media", "echo");
-    let (out, _) = drive(&node, PEER, q, vec![]).await;
+    // And a duplex row still serves plain one-way media. It needs a
+    // source that speaks unprompted: one-way media gives the source no
+    // stdin, so `cat` above would sit there with nothing to echo, and a
+    // feed that produces nothing is now reported as the failure it is
+    // rather than announced with a header it cannot honour.
+    duplex_source(
+        &node,
+        "talker",
+        "printf hi",
+        Some("application/octet-stream"),
+    )
+    .await;
+    allow(&node, &peer_hex(), "talker", "media").await;
+    let (q, _) = query("media", "talker");
+    let (out, raw) = drive(&node, PEER, q, vec![]).await;
     assert!(matches!(out.frames()[0], EnvelopeObject::Media(_)));
+    assert_eq!(raw, b"hi");
 }
 
 #[tokio::test]

@@ -30,7 +30,7 @@ pub use envelope::{
     AudioDuplex, Damp, Decision, Denied, Done, Entrain, EnvelopeObject, EnvelopeParser,
     ErrorEnvelope, Generic, Graph, Hello, Help, Knock, Media, Point, PointField, PointKind,
     Presence, Projection, ResultHeader, Row, Statement, Vibration, decode_column_name,
-    encode_column_name,
+    encode_column_name, estimate_row_bytes,
 };
 pub use error::{ErrorCode, ProtocolError};
 pub use frame::{

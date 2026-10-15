@@ -53,8 +53,17 @@ enum Command {
     /// Start the serving node as a daemon (log in <dir>/rsntr.log) and
     /// print its summary; --foreground runs it in the terminal instead.
     /// An uninitialized directory is initialized first.
+    ///
+    /// The UDP port is ephemeral by default and changes on every
+    /// restart. Set RSNTR_BIND_PORT (and RSNTR_BIND_PORT_V6 for IPv6,
+    /// which is pinned separately) to keep it, which is what a firewall
+    /// rule naming the port needs. A pinned port already in use stops
+    /// the node with an error rather than quietly taking another one.
     Serve {
         /// Node directory (from `rsntr init`; created when missing).
+        /// Defaults to $RSNTR_NODE, else `.` when it holds rsntr.db,
+        /// else the per-user node (`rsntr node dir`).
+        #[arg(default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
         /// Bind localhost only, no relays, no address lookup services.
         #[arg(long)]
@@ -82,15 +91,39 @@ enum Command {
     /// SIGKILL after 10s). Idempotent.
     Stop {
         /// Node directory.
-        #[arg(default_value = ".")]
+        #[arg(default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Report whether a node directory is being served, plus its
     /// endpoint id, addresses, ticket, peer count, and pending inbox.
     Status {
         /// Node directory.
-        #[arg(default_value = ".")]
+        #[arg(default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
+        /// Answer only "is it serving": exit 0 when it is, 1 when it is
+        /// not or cannot be determined. For readiness probes and
+        /// supervisors, where a plain `status` exits 0 for a dead node
+        /// because the command itself succeeded.
+        #[arg(long)]
+        serving: bool,
+    },
+    /// Print a systemd unit that serves a node directory at boot
+    /// (`serve <dir> --foreground`, restart on failure) plus the install
+    /// recipe on stderr. Writes nothing itself.
+    #[cfg(unix)]
+    InstallService {
+        /// Node directory.
+        #[arg(default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Force a per-user unit (~/.config/systemd/user, `systemctl
+        /// --user`, with `loginctl enable-linger`). The default already
+        /// picks this for a node under your home directory.
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
+        /// Force a system unit (/etc/systemd/system, sudo, `User=`),
+        /// even for a node under your home directory.
+        #[arg(long)]
+        system: bool,
     },
     /// Event hooks: commands the serving daemon runs when something new
     /// arrives (a chat message, an inbox knock), JSON event on stdin.
@@ -102,6 +135,23 @@ enum Command {
     /// SELECT/ASK print rows; CONSTRUCT/DESCRIBE print triples; updates
     /// (INSERT DATA etc.) ride an Execute.
     Sparql(SparqlArgs),
+    /// The node's own state as RDF: peers, policy rules, modulations,
+    /// rooms, and the projection points you may use, as one graph.
+    System {
+        #[command(subcommand)]
+        command: SystemCommand,
+    },
+    /// The apps sharing this node and the tables each declares
+    /// (docs/shared-node.md).
+    Apps {
+        #[command(subcommand)]
+        command: AppsCommand,
+    },
+    /// The node directory commands use when -d is omitted.
+    Node {
+        #[command(subcommand)]
+        command: NodeCommand,
+    },
     /// Load or dump RDF as Turtle, locally or against a peer.
     Turtle {
         #[command(subcommand)]
@@ -126,7 +176,7 @@ enum Command {
     /// Print this node's endpoint id.
     Id {
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Print a dialing ticket from a short-lived endpoint. Prefer the
@@ -217,6 +267,93 @@ enum Command {
         /// security, intro); the whole manual when omitted.
         topic: Option<String>,
     },
+    /// Block until the next unseen event (an incoming chat message or a
+    /// knock/escalation in the inbox), print ONE JSON line, advance a
+    /// durable cursor, exit 0 (3 on timeout). The agent wake primitive:
+    /// call it in a loop. Needs the daemon only once caught up.
+    #[cfg(unix)]
+    Await {
+        /// Cursor file (default <dir>/rsntr.await-cursor). One awaiter
+        /// per cursor file; keep it on a local filesystem.
+        #[arg(long)]
+        cursor_file: Option<PathBuf>,
+        /// Give up after this many seconds (0 = block indefinitely).
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// On a first run, replay chat history too. Without it a first
+        /// run starts chat at now but still replays every inbox row
+        /// awaiting a decision (open knocks, parked requests).
+        #[arg(long)]
+        from_start: bool,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// Publish, list, fetch, or remove HTML pages served as holograms by
+    /// the `pages` modulation (docs/hologram-protocol.md).
+    Page {
+        #[command(subcommand)]
+        command: PageCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PageCommand {
+    /// Publish (or replace) a page from an HTML file.
+    Publish {
+        /// Page name, fetched as `hologram <name>`.
+        name: String,
+        /// The HTML file.
+        file: PathBuf,
+        /// MIME type served in the hologram header.
+        #[arg(long, default_value = "text/html; charset=utf-8")]
+        content_type: String,
+        /// Publish to this peer's `pages` table (needs a write grant).
+        #[arg(long)]
+        peer: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// List local pages.
+    List {
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// Remove a page (local or on a peer with --peer).
+    Rm {
+        name: String,
+        /// Remove from this peer instead of the local node.
+        #[arg(long)]
+        peer: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Fetch a page as a hologram and reassemble it (bytes to -o or
+    /// stdout). Doubles as the hologram test client.
+    Fetch {
+        name: String,
+        /// Fetch from this peer instead of the local node.
+        #[arg(long)]
+        peer: Option<String>,
+        /// Write the HTML here; stdout when omitted.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -229,34 +366,34 @@ enum HookCommand {
         /// The command, run with `sh -c` by the serving daemon.
         command: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// List registered hooks.
     List {
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Remove a hook by id.
     Rm {
         id: i64,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Enable a hook by id.
     Enable {
         id: i64,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Disable a hook by id.
     Disable {
         id: i64,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -276,7 +413,7 @@ struct SparqlArgs {
     #[arg(long)]
     timeout_ms: Option<i64>,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -284,11 +421,68 @@ struct SparqlArgs {
 }
 
 #[derive(Subcommand)]
+enum NodeCommand {
+    /// Print the default node directory and where it comes from
+    /// ($RSNTR_NODE, the current directory holding rsntr.db, or the
+    /// per-user default), and whether it is initialized.
+    Dir,
+}
+
+#[derive(Subcommand)]
+enum AppsCommand {
+    /// Every app registered in the node: id, name, version, platform,
+    /// declared tables, first/last seen.
+    List {
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// Register an app and declare one of its tables (the table must
+    /// exist; the comment describes it for every other app and tool).
+    Declare {
+        /// The app id (reverse-DNS, e.g. org.example.notebook).
+        app_id: String,
+        /// The table the app owns (convention: prefixed with the app's slug).
+        table: String,
+        /// What the table is for (becomes its _comments description).
+        comment: String,
+        /// Display name (defaults to the id).
+        #[arg(long)]
+        name: Option<String>,
+        /// The app's version string.
+        #[arg(long)]
+        version: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum SystemCommand {
+    /// Fetch the system graph (Turtle triples on stdout; --json gives a
+    /// triple list). Local by default; --peer reads a peer's, filtered
+    /// by the `read` policy it grants you per table.
+    Graph {
+        /// Read this peer's system graph instead of the own node's.
+        #[arg(long)]
+        peer: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum TurtleCommand {
     /// Load a Turtle document into the RDF store, as chunked idempotent
     /// INSERT DATA updates.
     Load {
-        /// The Turtle file.
+        /// The Turtle file; `-` reads stdin (pipe `rsntr system graph`
+        /// or `turtle dump` output straight in).
         file: PathBuf,
         /// Load into this peer's store (needs `write` policy there).
         #[arg(long)]
@@ -297,7 +491,7 @@ enum TurtleCommand {
         #[arg(long, default_value_t = rsntr::rdfcmd::DEFAULT_CHUNK_BYTES)]
         chunk_bytes: usize,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
         /// Dial without relays or lookup services (requires stored addrs).
         #[arg(long)]
@@ -310,7 +504,7 @@ enum TurtleCommand {
         #[arg(long)]
         peer: Option<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
         /// Dial without relays or lookup services (requires stored addrs).
         #[arg(long)]
@@ -335,20 +529,20 @@ enum PipeCommand {
         #[arg(long)]
         note: Option<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// List registered pipe endpoints.
     List {
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Remove a pipe endpoint.
     Rm {
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Open a peer's pipe: stdin goes up the wire, the reply stream
@@ -359,7 +553,7 @@ enum PipeCommand {
         /// The pipe name (as registered on the peer).
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
         /// Dial without relays or lookup services (requires stored addrs).
         #[arg(long)]
@@ -371,7 +565,7 @@ enum PipeCommand {
         /// The pipe name callers will open.
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -399,8 +593,16 @@ enum ChatCommand {
         /// BlobRef (bytes fetched out of band).
         #[arg(long)]
         file: Option<PathBuf>,
+        /// Reply threading: the id of the message this one answers
+        /// (carried as rsntr:re; older peers ignore it).
+        #[arg(long)]
+        re: Option<String>,
+        /// Tag the message (repeatable), e.g. --tag topic:deploy
+        /// (carried as rsntr:tag; at most 16, 128 bytes each).
+        #[arg(long = "tag")]
+        tags: Vec<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Local read of the message log for one peer or room, newest
@@ -415,12 +617,18 @@ enum ChatCommand {
         /// cursor for incremental reads.
         #[arg(long)]
         since: Option<String>,
+        /// Only replies to this message id (rsntr:re).
+        #[arg(long)]
+        re: Option<String>,
+        /// Only messages carrying this tag (rsntr:tag).
+        #[arg(long)]
+        tag: Option<String>,
         /// Keep spilled big bodies as preview + blobref instead of
         /// fetching and inlining the full text.
         #[arg(long)]
         no_inline: bool,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Block until an incoming message arrives (for one target, or any
@@ -437,7 +645,7 @@ enum ChatCommand {
         #[arg(long)]
         no_inline: bool,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Entrain the local inbox point (self-dial the serving node) and
@@ -446,7 +654,7 @@ enum ChatCommand {
         /// A peer (petname or 64-hex endpoint id) or a room (name or IRI).
         target: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Room commands (creator-hosted rooms).
@@ -463,7 +671,7 @@ enum RoomCommand {
         /// Display name (not unique).
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Host only: admit an already-admitted peer to a room.
@@ -473,7 +681,7 @@ enum RoomCommand {
         /// The peer (petname or 64-hex endpoint id), already in _peers.
         peer: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Member side: record <peer> as the host of <room-iri> locally.
@@ -486,7 +694,21 @@ enum RoomCommand {
         #[arg(long)]
         name: Option<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// Every room this node knows: hosted (with roster size) or joined.
+    List {
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// The roster of a room (host side; a member keeps none locally).
+    Members {
+        /// The room (name or IRI).
+        room: String,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -499,7 +721,7 @@ enum InboxCommand {
         #[arg(long)]
         all: bool,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Answer a pending row: a statement answer feeds the decision
@@ -520,7 +742,7 @@ enum InboxCommand {
         #[arg(long = "grant", value_name = "TABLE=ACTION")]
         grants: Vec<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -535,7 +757,7 @@ struct FetchArgs {
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -551,7 +773,7 @@ enum CsvCommand {
         /// Output file; stdout when omitted.
         file: Option<PathBuf>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Import RFC 4180 CSV into a table (header line required; the
@@ -566,7 +788,7 @@ enum CsvCommand {
         #[arg(long)]
         create: bool,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -583,8 +805,63 @@ enum PeerCommand {
         /// Optional direct socket addresses, e.g. 127.0.0.1:4433.
         addrs: Vec<SocketAddr>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
+    },
+    /// Forget a peer: its row, its allow and price rules, cached
+    /// decisions and room memberships go, and messages still waiting to
+    /// reach it are cancelled. Deny rules and history (chat, audit,
+    /// receipts) are kept. Streams it already has open run until it
+    /// disconnects; any new request from it is refused at once.
+    #[command(visible_alias = "rm")]
+    Remove {
+        /// A petname from `_peers` or a 64-hex endpoint id. A petname
+        /// shared by several peers is refused: use the id.
+        name: String,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// List admitted peers with presence evidence (last beacon seen) and
+    /// undelivered outbox counts.
+    List {
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+    },
+    /// One peer's evidence: last seen, stored addrs, outbox breakdown;
+    /// --probe dials it (bounded) to answer reachable/unreachable.
+    Status {
+        /// The peer: a petname from `_peers` or a 64-hex endpoint id.
+        name: String,
+        /// Dial the peer now (a help query, 7s bound) and report.
+        #[arg(long)]
+        probe: bool,
+        /// Answer only "did it answer just now": dials as --probe does,
+        /// exits 0 when the peer answered and 1 when it did not or
+        /// cannot be reached. For readiness checks and supervisors,
+        /// where a plain `peer status --probe` exits 0 for a peer that
+        /// is down, because the probe itself succeeded.
+        #[arg(long)]
+        reachable: bool,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Dial a peer once and merge the addresses the live connection
+    /// observes into its stored dial hints (ports change every serve run).
+    Refresh {
+        /// The peer: a petname from `_peers` or a 64-hex endpoint id.
+        name: String,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
     },
 }
 
@@ -612,7 +889,7 @@ enum MediaCommand {
     /// List registered media sources.
     List {
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Allow a peer (petname, endpoint id, or *) to open a source (name or *).
@@ -622,7 +899,7 @@ enum MediaCommand {
         /// The source name from `_media`, or `*` for all sources.
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -643,41 +920,78 @@ enum ModCommand {
         #[arg(long)]
         note: Option<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// List registered mods.
     List {
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Enable a mod (takes effect at the next `rsntr serve` start).
     Enable {
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
     /// Disable a mod.
     Disable {
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
-    /// Remove a mod row.
+    /// Remove a mod row (locally, or from a peer with --peer).
     Rm {
         name: String,
+        /// Remove from this peer instead of the local node (needs a
+        /// mod-install grant there).
+        #[arg(long)]
+        peer: Option<String>,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Install/update a mod on a PEER: import the wasm locally, then send
+    /// the mod-install request (the peer fetches it back over iroh-blobs
+    /// and hot-reloads). Needs a `<name>=mod-install` grant there, plus a
+    /// `<name>=mod-cap:<cap>` grant per requested capability.
+    Push {
+        /// Target peer: a petname from `_peers` or a 64-hex endpoint id.
+        peer: String,
+        /// Modulation name the mod serves (must match its descriptor).
+        name: String,
+        /// The plugin wasm file.
+        file: PathBuf,
+        /// Request a capability (db_read, db_write, clock); repeatable.
+        #[arg(long = "cap")]
+        caps: Vec<String>,
+        /// Requested wall-clock ceiling in ms (clamped by the target).
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// Requested memory ceiling in MiB (clamped by the target).
+        #[arg(long)]
+        memory_mb: Option<u64>,
+        /// Optional note.
+        #[arg(long)]
+        note: Option<String>,
+        /// Node directory.
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
+        dir: PathBuf,
+        /// Dial without relays or lookup services (requires stored addrs).
+        #[arg(long)]
+        offline: bool,
     },
     /// Load the stored wasm and print its descriptor.
     Describe {
         name: String,
         /// Node directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
         dir: PathBuf,
     },
 }
@@ -689,7 +1003,7 @@ struct KnockArgs {
     /// Who you are and what you want; lands in the owner's inbox.
     message: String,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -712,7 +1026,7 @@ struct QueryArgs {
     #[arg(long)]
     timeout_ms: Option<i64>,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -726,7 +1040,7 @@ struct HelpArgs {
     /// Optional drill-down topic (e.g. modulations, tables, knock).
     topic: Option<String>,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -749,7 +1063,7 @@ struct ProjectionArgs {
     #[arg(long = "field")]
     fields: Vec<String>,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -763,7 +1077,7 @@ struct EntrainArgs {
     /// The Sympathetic point's IRI (from the peer's projection).
     point: String,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -777,11 +1091,17 @@ struct WatchArgs {
     /// The media source name (as registered on the peer, e.g. nvr/39).
     source: String,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
     offline: bool,
+    /// Give up if the feed has not produced its first byte within this
+    /// many seconds (0 waits forever). A live source that has nothing
+    /// to say for half a minute is not starting; this turns an open
+    /// that would hang into exit 3.
+    #[arg(long, default_value_t = 30)]
+    first_byte_timeout: u64,
 }
 
 #[derive(Args)]
@@ -791,7 +1111,7 @@ struct TalkArgs {
     /// The audio-duplex source name (as registered on the peer).
     source: String,
     /// Node directory.
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value_os_t = rsntr::store::cli_default_dir())]
     dir: PathBuf,
     /// Dial without relays or lookup services (requires stored addrs).
     #[arg(long)]
@@ -799,10 +1119,35 @@ struct TalkArgs {
 }
 
 fn main() -> ExitCode {
+    // stdout is a pipe more often than not (`| head`, `| jq -e`, a pager
+    // quit); a consumer that stops reading must not turn into a panic
+    // and exit 101. Rust ignores SIGPIPE, so the write fails with EPIPE
+    // and `println!` panics: turn exactly that panic into a quiet exit 0.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if msg.contains("Broken pipe") {
+            std::process::exit(0);
+        }
+        default_hook(info);
+    }));
     // Default: warnings only, none of iroh's shutdown-path noise;
     // RUST_LOG overrides for debugging. Logs go to stderr; stdout is data.
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,iroh=off"));
+    //
+    // iroh is off because it is chatty, with one exception. The relay
+    // actor reports when another endpoint carrying our own id takes over
+    // our relay session, which leaves this node deaf to relayed traffic
+    // until that endpoint goes away, and reports the recovery after. Those
+    // two lines are the only way to see the window after the fact, so they
+    // are worth their noise (docs/relay-identity-sharing.md).
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("warn,iroh=off,iroh::socket::transports::relay=info")
+    });
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -890,31 +1235,7 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
             }
             Ok(EXIT_OK)
         }
-        Command::Peer {
-            command:
-                PeerCommand::Add {
-                    name,
-                    target,
-                    addrs,
-                    dir,
-                },
-        } => {
-            let (id, stored) = store::peer_add_with(&dir, prefer, &name, &target, &addrs)?;
-            if json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "name": name,
-                        "endpoint_id": id.to_string(),
-                        "addrs": stored.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
-                    })
-                );
-            } else {
-                println!("added peer {name} ({id})");
-            }
-            Ok(EXIT_OK)
-        }
+        Command::Peer { command } => cmd_peer(command, json, prefer),
         Command::Media { command } => match command {
             MediaCommand::Add {
                 dir,
@@ -1010,7 +1331,37 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
         #[cfg(unix)]
         Command::Stop { dir } => runtime()?.block_on(cmd_stop(dir, json)),
         #[cfg(unix)]
-        Command::Status { dir } => runtime()?.block_on(cmd_status(dir, json)),
+        Command::Status { dir, serving } => runtime()?.block_on(cmd_status(dir, json, serving)),
+        #[cfg(unix)]
+        Command::InstallService { dir, user, system } => {
+            // Neither flag: let the directory decide, because a node
+            // under a home is a person's and wants the per-user form.
+            let choice = match (user, system) {
+                (true, _) => Some(true),
+                (_, true) => Some(false),
+                _ => None,
+            };
+            let unit = rsntr::detach::install_service(&dir, choice)?;
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "unit_name": unit.unit_name,
+                        "unit_path": unit.unit_path.display().to_string(),
+                        "unit": unit.unit,
+                        "recipe": unit.recipe,
+                    })
+                );
+            } else {
+                print!("{}", unit.unit);
+                eprintln!("# install ({}):", unit.unit_path.display());
+                for step in &unit.recipe {
+                    eprintln!("#   {step}");
+                }
+            }
+            Ok(EXIT_OK)
+        }
         #[cfg(not(unix))]
         Command::Stop { .. } | Command::Status { .. } => {
             anyhow::bail!("this command needs unix (the control socket)")
@@ -1018,6 +1369,33 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
         Command::Hook { command } => runtime()?.block_on(cmd_hook(command, json, prefer)),
         Command::Sparql(args) => runtime()?.block_on(cmd_sparql(args, json, prefer)),
         Command::Turtle { command } => runtime()?.block_on(cmd_turtle(command, json, prefer)),
+        Command::System { command } => runtime()?.block_on(cmd_system(command, json, prefer)),
+        Command::Apps { command } => runtime()?.block_on(cmd_apps(command, json, prefer)),
+        Command::Node {
+            command: NodeCommand::Dir,
+        } => {
+            let (dir, source) = rsntr::store::resolve_default_dir();
+            let initialized = rsntr::store::db_path(&dir).exists();
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "dir": dir.display().to_string(),
+                        "source": source.as_str(),
+                        "initialized": initialized,
+                    })
+                );
+            } else {
+                println!(
+                    "{} ({}{})",
+                    dir.display(),
+                    source.as_str(),
+                    if initialized { "" } else { ", not initialized" }
+                );
+            }
+            Ok(EXIT_OK)
+        }
         #[cfg(unix)]
         Command::Pipe { command } => runtime()?.block_on(cmd_pipe(command, json, prefer)),
         #[cfg(unix)]
@@ -1049,6 +1427,8 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
                 text,
                 body_file,
                 file,
+                re,
+                tags,
                 dir,
             } => {
                 let text = match (text, body_file) {
@@ -1066,12 +1446,15 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
                     (None, None) => anyhow::bail!("give a message text or --body-file <path>"),
                     (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
                 };
-                runtime()?.block_on(cmd_chat_send(dir, target, text, file, json, prefer))
+                let opts = rsntr::chat::SendOptions { re, tags };
+                runtime()?.block_on(cmd_chat_send(dir, target, text, file, opts, json, prefer))
             }
             ChatCommand::Log {
                 target,
                 limit,
                 since,
+                re,
+                tag,
                 no_inline,
                 dir,
             } => runtime()?.block_on(cmd_chat_log(
@@ -1079,6 +1462,7 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
                 &target,
                 limit,
                 since.as_deref(),
+                rsntr::chat::LogFilter { re, tag },
                 no_inline,
                 json,
             )),
@@ -1096,6 +1480,14 @@ fn run(command: Command, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
         Command::Inbox { command } => runtime()?.block_on(cmd_inbox(command, json, prefer)),
         Command::Fetch(args) => runtime()?.block_on(cmd_fetch(args, json)),
         Command::Guide { topic } => cmd_guide(topic.as_deref(), json),
+        Command::Page { command } => runtime()?.block_on(cmd_page(command, json, prefer)),
+        #[cfg(unix)]
+        Command::Await {
+            cursor_file,
+            timeout,
+            from_start,
+            dir,
+        } => runtime()?.block_on(cmd_await(dir, cursor_file, timeout, from_start)),
         Command::Knock(args) => runtime()?.block_on(cmd_knock(args, json)),
         Command::Query(args) => runtime()?.block_on(cmd_query(args, json)),
         Command::Help(args) => runtime()?.block_on(cmd_help(args, json)),
@@ -1221,16 +1613,53 @@ fn cmd_mod(command: ModCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32
         }
         ModCommand::Enable { name, dir } => cmd_mod_toggle(&dir, &name, true, json, prefer),
         ModCommand::Disable { name, dir } => cmd_mod_toggle(&dir, &name, false, json, prefer),
-        ModCommand::Rm { name, dir } => {
-            if !rsntr::modcmd::mod_rm(&dir, prefer, &name)? {
-                anyhow::bail!("no mod named {name:?}");
+        ModCommand::Rm {
+            name,
+            peer,
+            dir,
+            offline,
+        } => match peer {
+            None => {
+                if !rsntr::modcmd::mod_rm(&dir, prefer, &name)? {
+                    anyhow::bail!("no mod named {name:?}");
+                }
+                if json {
+                    println!("{}", json!({ "ok": true, "name": name, "removed": true }));
+                } else {
+                    println!("mod {name} removed");
+                }
+                Ok(EXIT_OK)
             }
-            if json {
-                println!("{}", json!({ "ok": true, "name": name, "removed": true }));
-            } else {
-                println!("mod {name} removed");
+            Some(peer) => {
+                let report = runtime()?.block_on(rsntr::modcmd::mod_remove_remote(
+                    &dir, &peer, &name, offline,
+                ))?;
+                Ok(print_report(&report, json))
             }
-            Ok(EXIT_OK)
+        },
+        ModCommand::Push {
+            peer,
+            name,
+            file,
+            caps,
+            timeout_ms,
+            memory_mb,
+            note,
+            dir,
+            offline,
+        } => {
+            let report = runtime()?.block_on(rsntr::modcmd::mod_push(
+                &dir,
+                &peer,
+                &name,
+                &file,
+                &caps,
+                timeout_ms,
+                memory_mb,
+                note.as_deref(),
+                offline,
+            ))?;
+            Ok(print_report(&report, json))
         }
         ModCommand::Describe { name, dir } => {
             let timeout = resonator_node::NodeConfig::default().max_duration_ms;
@@ -1261,6 +1690,493 @@ fn cmd_mod(command: ModCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32
                     println!("topics: {}", d.topics.join(", "));
                 }
                 println!("{}", d.help_text);
+            }
+            Ok(EXIT_OK)
+        }
+    }
+}
+
+/// Prints a remote page-write denial like `print_report` does for
+/// query denials: exit 2, reason preserved, `pending` marked.
+fn print_page_denied(d: &rsntr::pagecmd::PageDenied, json: bool) -> i32 {
+    if json {
+        println!(
+            "{}",
+            json!({ "ok": false, "denied": d.reason, "pending": d.pending })
+        );
+    } else {
+        // One phrasing for a parked request across the whole tool, so
+        // "denied" never has to mean two things depending on which
+        // command printed it.
+        eprintln!("{}", output::denied_line(Some(&d.reason)));
+    }
+    EXIT_DENIED
+}
+
+async fn cmd_page(command: PageCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    use rsntr::pagecmd;
+    match command {
+        PageCommand::Publish {
+            name,
+            file,
+            content_type,
+            peer,
+            dir,
+            offline,
+        } => {
+            let html = std::fs::read_to_string(&file)
+                .with_context(|| format!("reading {}", file.display()))?;
+            let outcome = pagecmd::page_publish(
+                &dir,
+                prefer,
+                &name,
+                &html,
+                &content_type,
+                peer.as_deref(),
+                offline,
+            )
+            .await?;
+            match outcome {
+                pagecmd::PublishOutcome::Published {
+                    name,
+                    bytes,
+                    chunks,
+                } => {
+                    if json {
+                        println!(
+                            "{}",
+                            json!({ "ok": true, "name": name, "bytes": bytes, "chunks": chunks })
+                        );
+                    } else {
+                        println!("published {name} ({bytes} bytes, {chunks} chunk(s))");
+                    }
+                    Ok(EXIT_OK)
+                }
+                pagecmd::PublishOutcome::Denied(d) => Ok(print_page_denied(&d, json)),
+            }
+        }
+        PageCommand::List { dir } => {
+            let rows = pagecmd::page_list(&dir, prefer).await?;
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "pages": rows.iter().map(|p| json!({
+                            "name": p.name,
+                            "content_type": p.content_type,
+                            "bytes": p.bytes,
+                            "updated_at": p.updated_at,
+                        })).collect::<Vec<_>>(),
+                    })
+                );
+            } else {
+                for p in rows {
+                    println!(
+                        "{}\t{}\t{} bytes\t{}",
+                        p.name, p.content_type, p.bytes, p.updated_at
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        PageCommand::Rm {
+            name,
+            peer,
+            dir,
+            offline,
+        } => {
+            let matched =
+                match pagecmd::page_rm(&dir, prefer, &name, peer.as_deref(), offline).await? {
+                    Ok(matched) => matched,
+                    Err(d) => return Ok(print_page_denied(&d, json)),
+                };
+            // A delete that matched nothing removed nothing. This
+            // printed "page <name> removed" and `"removed": true` for a
+            // name that was never there, which is the answer to "did
+            // the statement run" and not to the one being asked; on
+            // --peer especially, where a typo in the name and a page
+            // still being served look identical and the reader has no
+            // other window on that node. Every sibling rm (hook, mod,
+            // pipe) already says "no such"; this one now does too.
+            if matched == Some(0) {
+                anyhow::bail!(
+                    "no page named {name:?}{}",
+                    peer.map(|p| format!(" on {p}")).unwrap_or_default()
+                );
+            }
+            if json {
+                println!("{}", json!({ "ok": true, "name": name, "removed": true }));
+            } else {
+                println!("page {name} removed");
+            }
+            Ok(EXIT_OK)
+        }
+        PageCommand::Fetch {
+            name,
+            peer,
+            output,
+            dir,
+            offline,
+        } => {
+            use std::io::Write;
+            match peer {
+                Some(peer) => match client::run_pages_fetch(&dir, &peer, &name, offline).await? {
+                    client::PagesOutcome::Page {
+                        content_type,
+                        bytes,
+                    } => {
+                        match output {
+                            Some(path) => {
+                                std::fs::write(&path, &bytes)
+                                    .with_context(|| format!("writing {}", path.display()))?;
+                                if json {
+                                    println!(
+                                        "{}",
+                                        json!({ "ok": true, "name": name, "content_type": content_type, "bytes": bytes.len() })
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "fetched {} bytes to {}",
+                                        bytes.len(),
+                                        path.display()
+                                    );
+                                }
+                            }
+                            None => {
+                                std::io::stdout()
+                                    .write_all(&bytes)
+                                    .context("writing the page")?;
+                                if json {
+                                    eprintln!("{}", json!({ "ok": true, "bytes": bytes.len() }));
+                                }
+                            }
+                        }
+                        Ok(EXIT_OK)
+                    }
+                    client::PagesOutcome::Denied(d) => {
+                        let reason = d.reason.unwrap_or_default();
+                        if json {
+                            println!(
+                                "{}",
+                                json!({ "ok": false, "error": { "code": "denied", "reason": reason } })
+                            );
+                        } else {
+                            eprintln!("denied: {reason}");
+                        }
+                        Ok(EXIT_DENIED)
+                    }
+                    client::PagesOutcome::Failed(e) => {
+                        let reason = e.reason.unwrap_or_default();
+                        if json {
+                            println!(
+                                "{}",
+                                json!({ "ok": false, "error": { "code": e.code, "reason": reason } })
+                            );
+                        } else {
+                            eprintln!("error [{}]: {reason}", e.code);
+                        }
+                        Ok(rsntr::output::error_exit_code(&e.code))
+                    }
+                },
+                None => {
+                    // Local fetch: a direct owner-channel read of the row.
+                    let outcome = rsntr::sqlcmd::run_sql(
+                        &dir,
+                        &format!(
+                            "SELECT html FROM pages WHERE name = '{}'",
+                            name.replace('\'', "''")
+                        ),
+                        prefer,
+                    )?;
+                    let html = outcome.rows.and_then(|(cols, rows, _)| {
+                        let i = cols.iter().position(|c| c == "html")?;
+                        let row = rows.into_iter().next()?;
+                        row.cells.into_iter().find(|(n, _)| n == &cols[i]).and_then(
+                            |(_, v)| match v {
+                                resonator_protocol::Value::Text(t) => Some(t),
+                                _ => None,
+                            },
+                        )
+                    });
+                    match html {
+                        Some(text) => {
+                            match output {
+                                Some(path) => std::fs::write(&path, &text)
+                                    .with_context(|| format!("writing {}", path.display()))?,
+                                None => print!("{text}"),
+                            }
+                            Ok(EXIT_OK)
+                        }
+                        None => {
+                            eprintln!("no page named {name:?}");
+                            Ok(EXIT_ERROR)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn cmd_await(
+    dir: PathBuf,
+    cursor_file: Option<PathBuf>,
+    timeout: u64,
+    from_start: bool,
+) -> Result<i32> {
+    use rsntr::awaitcmd;
+    let path = awaitcmd::cursor_path(&dir, cursor_file.as_deref());
+    let _lock = awaitcmd::CursorLock::acquire(&path)?;
+    let cursor = match awaitcmd::load_cursor(&path)? {
+        Some(c) => c,
+        None => awaitcmd::initial_cursor(&dir, from_start)?,
+    };
+    let window = (timeout > 0).then(|| std::time::Duration::from_secs(timeout));
+    let started = std::time::Instant::now();
+    match awaitcmd::await_event(&dir, cursor, window).await? {
+        awaitcmd::AwaitOutcome::Event(event, next) => {
+            // At-least-once: print, then persist.
+            println!("{event}");
+            awaitcmd::save_cursor(&path, &next)?;
+            Ok(EXIT_OK)
+        }
+        awaitcmd::AwaitOutcome::Timeout(next) => {
+            println!(
+                "{}",
+                json!({
+                    "event": "timeout",
+                    "waited_secs": started.elapsed().as_secs(),
+                    "cursor": next.json(),
+                })
+            );
+            awaitcmd::save_cursor(&path, &next)?;
+            Ok(rsntr::EXIT_TIMEOUT)
+        }
+    }
+}
+
+fn peer_info_json(p: &store::PeerInfo) -> serde_json::Value {
+    json!({
+        "name": p.name,
+        "endpoint_id": p.endpoint_id,
+        "last_seen": p.last_seen,
+        "last_seen_age_secs": p.last_seen_age_secs,
+        "presence": presence_text(p),
+        "addr_count": p.addr_count,
+        "pending_outbox": p.pending_outbox,
+    })
+}
+
+/// Presence as evidence, never a verdict: beacons are single-hop gossip
+/// and often absent, so "never" means "no beacon received", not "down".
+fn presence_text(p: &store::PeerInfo) -> String {
+    match p.last_seen_age_secs {
+        Some(age) => format!("seen {age}s ago"),
+        None => "never (no beacon received)".to_string(),
+    }
+}
+
+/// How long `peer status --probe` / `--reachable` waits for the dial.
+const PEER_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(7);
+
+/// Dials a peer once (a help round trip, bounded) and says whether it
+/// answered, with the reason when it did not.
+///
+/// Any protocol-level answer proves the peer is up, a denial included:
+/// something over there parsed our frame and replied. Only a dial
+/// failure or a silent deadline is "down".
+fn probe_peer(dir: &std::path::Path, name: &str, offline: bool) -> Result<(bool, Option<String>)> {
+    let reached = runtime()?.block_on(async {
+        tokio::time::timeout(
+            PEER_PROBE_TIMEOUT,
+            client::run_help(dir, name, None, offline),
+        )
+        .await
+    });
+    Ok(match reached {
+        Ok(Ok(_)) => (true, None),
+        Ok(Err(e)) => (false, Some(format!("{e:#}"))),
+        Err(_) => (
+            false,
+            Some(format!(
+                "no answer within {}s",
+                PEER_PROBE_TIMEOUT.as_secs()
+            )),
+        ),
+    })
+}
+
+fn cmd_peer(command: PeerCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    match command {
+        PeerCommand::Add {
+            name,
+            target,
+            addrs,
+            dir,
+        } => {
+            let (id, stored) = store::peer_add_with(&dir, prefer, &name, &target, &addrs)?;
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "name": name,
+                        "endpoint_id": id.to_string(),
+                        "addrs": stored.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                    })
+                );
+            } else {
+                println!("added peer {name} ({id})");
+            }
+            Ok(EXIT_OK)
+        }
+        PeerCommand::Remove { name, dir } => {
+            let r = rsntr::peercmd::peer_remove_with(&dir, prefer, &name)?;
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "endpoint_id": r.endpoint_id,
+                        "name": r.name,
+                        "removed": {
+                            "peer": r.peer,
+                            "policy": r.policy,
+                            "decisions": r.decisions,
+                            "room_memberships": r.room_memberships,
+                            "outbox_cancelled": r.outbox_cancelled,
+                        },
+                    })
+                );
+            } else {
+                let label = r.name.as_deref().unwrap_or("-");
+                let already = if r.peer == 0 {
+                    " (the peer row was already gone)"
+                } else {
+                    ""
+                };
+                println!(
+                    "removed peer {label} ({}){already}: {} rule(s), {} cached decision(s), \
+                     {} room membership(s), {} undelivered message(s) cancelled",
+                    r.endpoint_id, r.policy, r.decisions, r.room_memberships, r.outbox_cancelled
+                );
+            }
+            Ok(EXIT_OK)
+        }
+        PeerCommand::List { dir } => {
+            let conn = store::open_db(&dir)?;
+            let peers = store::peer_list(&conn)?;
+            if json {
+                println!(
+                    "{}",
+                    json!({ "ok": true, "peers": peers.iter().map(peer_info_json).collect::<Vec<_>>() })
+                );
+            } else {
+                for p in &peers {
+                    println!(
+                        "{}\t{}\t{}\t{} addr(s)\tpending {}",
+                        p.name.as_deref().unwrap_or("-"),
+                        &p.endpoint_id[..8],
+                        presence_text(p),
+                        p.addr_count,
+                        p.pending_outbox,
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        PeerCommand::Status {
+            name,
+            probe,
+            reachable,
+            dir,
+            offline,
+        } => {
+            // The predicate form, for the reason `status --serving`
+            // exists: `--probe` puts the answer in its output but exits
+            // 0 either way, because the probe itself succeeded, so
+            // `rsntr peer status alice --probe && ...` runs the `...`
+            // for a peer that is down. `ok` cannot carry it (fifty-odd
+            // commands share it, meaning "the command worked"), so the
+            // question gets its own flag and its own exit code.
+            if reachable {
+                let (up, why) = probe_peer(&dir, &name, offline)?;
+                if json {
+                    let mut v = json!({ "reachable": up });
+                    if let Some(why) = &why {
+                        v["reason"] = json!(why);
+                    }
+                    println!("{v}");
+                } else if let Some(why) = &why {
+                    eprintln!("{name} is unreachable: {why}");
+                }
+                return Ok(if up { EXIT_OK } else { EXIT_ERROR });
+            }
+            let mut status = {
+                let conn = store::open_db(&dir)?;
+                store::peer_status(&conn, &name)?
+            };
+            if probe {
+                status.reachable = Some(probe_peer(&dir, &name, offline)?.0);
+            }
+            if json {
+                let mut v = peer_info_json(&status.info);
+                v["ok"] = json!(true);
+                v["outbox"] = json!(
+                    status
+                        .outbox_by_status
+                        .iter()
+                        .map(|(s, n)| json!({ "status": s, "count": n }))
+                        .collect::<Vec<_>>()
+                );
+                v["reachable"] = json!(status.reachable);
+                println!("{v}");
+            } else {
+                let p = &status.info;
+                println!("{} ({})", p.name.as_deref().unwrap_or("-"), p.endpoint_id);
+                println!("presence: {}", presence_text(p));
+                println!("stored addrs: {}", p.addr_count);
+                for (s, n) in &status.outbox_by_status {
+                    println!("outbox {s}: {n}");
+                }
+                if let Some(r) = status.reachable {
+                    println!("reachable: {}", if r { "yes" } else { "no" });
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        PeerCommand::Refresh { name, dir, offline } => {
+            let r = runtime()?.block_on(client::refresh_peer(&dir, &name, offline))?;
+            let strs = |v: &[SocketAddr]| v.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+            if json {
+                println!(
+                    "{}",
+                    json!({
+                        "ok": true,
+                        "endpoint_id": r.endpoint_id,
+                        "before": strs(&r.before),
+                        "after": strs(&r.after),
+                        "observed": strs(&r.observed),
+                        "changed": r.before != r.after,
+                    })
+                );
+            } else {
+                println!(
+                    "{name} reachable; observed {}; stored addrs now: {}{}",
+                    if r.observed.is_empty() {
+                        "no direct address (relay path)".to_string()
+                    } else {
+                        strs(&r.observed).join(", ")
+                    },
+                    strs(&r.after).join(", "),
+                    if r.before == r.after {
+                        " (unchanged)"
+                    } else {
+                        ""
+                    }
+                );
             }
             Ok(EXIT_OK)
         }
@@ -1349,36 +2265,28 @@ async fn cmd_serve(
     };
     // The live ticket of the endpoint actually accepting connections:
     // same key, same port. (A minted `rsntr ticket` names a throwaway
-    // endpoint, which is only right when nothing is serving.)
+    // endpoint, which is only right when nothing is serving.) start_node
+    // already waited for it to be dialable (relay online, direct addrs
+    // offline) and published it as `_rsntr.serving_ticket`; the
+    // freshness task keeps that row current.
     let ticket = running
-        .ready_ticket(std::time::Duration::from_secs(3))
+        .ready_ticket(std::time::Duration::from_secs(if offline { 3 } else { 5 }))
         .await;
-    // The daemon's own record: pid file and published ticket, read by
-    // `rsntr stop`/`status` and the detach parent; removed on graceful
-    // shutdown.
+    // The daemon's own record: the pid file, read by `rsntr stop`/`status`
+    // and the detach parent; removed on graceful shutdown.
     #[cfg(unix)]
-    {
-        std::fs::write(
-            rsntr::detach::pid_path(&dir),
-            format!("{}\n", std::process::id()),
-        )
-        .with_context(|| "writing the pid file")?;
-        let t = ticket.clone();
-        running
-            .node()
-            .db()
-            .call(move |conn| {
-                resonator_node::set_rsntr(conn, rsntr::detach::SERVING_TICKET_KEY, &t)
-            })
-            .await
-            .ok();
-    }
+    std::fs::write(
+        rsntr::detach::pid_path(&dir),
+        format!("{}\n", std::process::id()),
+    )
+    .with_context(|| "writing the pid file")?;
     if json {
         let mut out = json!({
             "ok": true,
             "serving": dir.display().to_string(),
             "endpoint_id": running.peer_id().to_string(),
             "ticket": ticket,
+            "relay": running.has_relay(),
             "addrs": running
                 .direct_addrs()
                 .iter()
@@ -1398,6 +2306,12 @@ async fn cmd_serve(
         println!("ticket: {ticket}");
         for addr in running.direct_addrs() {
             println!("listening on {addr}");
+        }
+        if !offline && !running.has_relay() {
+            eprintln!(
+                "warning: no relay yet; the ticket dials on the local network only \
+                 (`rsntr status` shows when one is learned)"
+            );
         }
         if let Some(ws) = &web_server {
             println!("web interface: {}", ws.url());
@@ -1464,6 +2378,7 @@ async fn cmd_serve_detached(
             json!({
                 "ok": true,
                 "already_running": report.already_running,
+                "app": report.app,
                 "pid": report.pid,
                 "socket": report.socket.display().to_string(),
                 "endpoint_id": report.endpoint_id,
@@ -1473,12 +2388,17 @@ async fn cmd_serve_detached(
         );
     } else if report.already_running {
         println!(
-            "already serving {} (pid {})",
+            "already serving {} (pid {}{})",
             dir.display(),
             report
                 .pid
                 .map(|p| p.to_string())
-                .unwrap_or_else(|| "unknown".into())
+                .unwrap_or_else(|| "unknown".into()),
+            report
+                .app
+                .as_deref()
+                .map(|a| format!(", {a}"))
+                .unwrap_or_default()
         );
     } else {
         println!(
@@ -1523,7 +2443,35 @@ async fn cmd_stop(dir: PathBuf, json: bool) -> Result<i32> {
 }
 
 #[cfg(unix)]
-async fn cmd_status(dir: PathBuf, json: bool) -> Result<i32> {
+async fn cmd_status(dir: PathBuf, json: bool, serving_only: bool) -> Result<i32> {
+    // The predicate form exists because the ordinary one cannot answer
+    // this question with its exit code: `ok` and exit 0 mean "the state
+    // was determined", which is true of a node that is stopped, so a
+    // readiness probe written the obvious way calls a dead node healthy.
+    // Overloading `ok` here instead would leave it meaning one thing in
+    // this command and another in the fifty-odd that share it, and would
+    // make querying a stopped node an error, which it is not.
+    if serving_only {
+        let serving = match rsntr::detach::status(&dir).await {
+            Ok(s) => s.serving,
+            // Cannot tell is not healthy: for a supervisor the safe
+            // reading of an unanswerable question is "not serving".
+            Err(e) => {
+                if json {
+                    println!("{}", json!({ "serving": false, "reason": e.to_string() }));
+                } else {
+                    eprintln!("cannot determine: {e}");
+                }
+                return Ok(EXIT_ERROR);
+            }
+        };
+        if json {
+            println!("{}", json!({ "serving": serving }));
+        } else if !serving {
+            eprintln!("not serving {}", dir.display());
+        }
+        return Ok(if serving { EXIT_OK } else { EXIT_ERROR });
+    }
     let s = rsntr::detach::status(&dir).await?;
     if json {
         println!(
@@ -1534,6 +2482,10 @@ async fn cmd_status(dir: PathBuf, json: bool) -> Result<i32> {
                 "pid": s.pid,
                 "endpoint_id": s.endpoint_id,
                 "addrs": s.addrs,
+                "external_addrs": s.external_addrs,
+                "relay": s.relay,
+                "app": s.app,
+                "lease": s.lease,
                 "ticket": s.ticket,
                 "peers": s.peers,
                 "pending_inbox": s.pending_inbox,
@@ -1545,8 +2497,12 @@ async fn cmd_status(dir: PathBuf, json: bool) -> Result<i32> {
             dir.display(),
             if s.serving {
                 format!(
-                    "serving (pid {})",
-                    s.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into())
+                    "serving (pid {}{})",
+                    s.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+                    s.app
+                        .as_deref()
+                        .map(|a| format!(", {a}"))
+                        .unwrap_or_default()
                 )
             } else {
                 "not serving".to_string()
@@ -1555,6 +2511,22 @@ async fn cmd_status(dir: PathBuf, json: bool) -> Result<i32> {
         println!("endpoint id: {}", s.endpoint_id);
         if let Some(t) = &s.ticket {
             println!("ticket: {t}");
+        }
+        if s.serving {
+            println!("local addrs (loopback, self-dial): {}", s.addrs.join(", "));
+            println!(
+                "external addrs: {}{}",
+                if s.external_addrs.is_empty() {
+                    "none".to_string()
+                } else {
+                    s.external_addrs.join(", ")
+                },
+                match (s.relay, s.external_addrs.is_empty()) {
+                    (true, true) => " (relay-only)",
+                    (true, false) => " (plus relay)",
+                    (false, _) => " (no relay: local network only)",
+                }
+            );
         }
         println!("peers: {}, pending inbox: {}", s.peers, s.pending_inbox);
     }
@@ -1663,6 +2635,76 @@ async fn cmd_sparql(args: SparqlArgs, json: bool, prefer: rsntr::Prefer) -> Resu
     Ok(print_report(&report, json))
 }
 
+async fn cmd_apps(command: AppsCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    use rsntr::appscmd::{app_json, apps_declare, apps_list};
+    match command {
+        AppsCommand::List { dir } => {
+            let rows = apps_list(&dir)?;
+            if json {
+                println!(
+                    "{}",
+                    json!({ "ok": true, "apps": rows.iter().map(app_json).collect::<Vec<_>>() })
+                );
+            } else {
+                for r in &rows {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{} table(s){}",
+                        r.app_id,
+                        r.name,
+                        r.version.as_deref().unwrap_or("-"),
+                        r.platform,
+                        r.tables.len(),
+                        if r.tables.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {}", r.tables.join(", "))
+                        }
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        AppsCommand::Declare {
+            app_id,
+            table,
+            comment,
+            name,
+            version,
+            dir,
+        } => {
+            let app = resonator_node::AppInfo {
+                id: app_id,
+                name,
+                version,
+            };
+            let row = apps_declare(&dir, prefer, &app, &table, &comment).await?;
+            if json {
+                let mut v = app_json(&row);
+                v["ok"] = json!(true);
+                println!("{v}");
+            } else {
+                println!(
+                    "{} declares {} ({} table(s) total)",
+                    row.app_id,
+                    table,
+                    row.tables.len()
+                );
+            }
+            Ok(EXIT_OK)
+        }
+    }
+}
+
+async fn cmd_system(command: SystemCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
+    match command {
+        SystemCommand::Graph { peer, dir, offline } => {
+            let report =
+                rsntr::rdfcmd::system_graph(&dir, prefer, peer.as_deref(), offline).await?;
+            Ok(print_report(&report, json))
+        }
+    }
+}
+
 async fn cmd_turtle(command: TurtleCommand, json: bool, prefer: rsntr::Prefer) -> Result<i32> {
     match command {
         TurtleCommand::Load {
@@ -1672,8 +2714,17 @@ async fn cmd_turtle(command: TurtleCommand, json: bool, prefer: rsntr::Prefer) -
             dir,
             offline,
         } => {
-            let text = std::fs::read_to_string(&file)
-                .with_context(|| format!("reading {}", file.display()))?;
+            let text = if file.as_os_str() == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .context("reading the turtle document from stdin")?;
+                buf
+            } else {
+                std::fs::read_to_string(&file)
+                    .with_context(|| format!("reading {}", file.display()))?
+            };
             match rsntr::rdfcmd::turtle_load(
                 &dir,
                 prefer,
@@ -2039,6 +3090,7 @@ async fn cmd_inbox(command: InboxCommand, json: bool, prefer: rsntr::Prefer) -> 
                         "knock": report.knock,
                         "remembered": report.remembered,
                         "granted": report.granted,
+                        "deny_policy_written": report.deny_policy_written,
                     })
                 );
             } else {
@@ -2059,6 +3111,12 @@ async fn cmd_inbox(command: InboxCommand, json: bool, prefer: rsntr::Prefer) -> 
                                 report.granted.join(", ")
                             )
                         }
+                    } else if report.deny_policy_written {
+                        format!(
+                            "knock answered: {} denied; a (peer, '*', 'knock', 'deny') _policy \
+                             row now answers its knocks (delete the row to let it knock again)",
+                            report.peer
+                        )
                     } else {
                         format!("knock answered: {} denied", report.peer)
                     }
@@ -2130,10 +3188,7 @@ fn print_report(report: &client::QueryReport, json: bool) -> i32 {
             EXIT_OK
         }
         client::QueryOutcome::Denied(d) => {
-            eprintln!(
-                "denied: {}",
-                d.reason.as_deref().unwrap_or("(no reason given)")
-            );
+            eprintln!("{}", output::denied_line(d.reason.as_deref()));
             EXIT_DENIED
         }
         client::QueryOutcome::Failed(e) => {
@@ -2151,14 +3206,33 @@ async fn cmd_knock(args: KnockArgs, json: bool) -> Result<i32> {
     let report = client::knock(&args.dir, &args.peer, &args.message, args.offline).await?;
     match &report.decision {
         Some(d) => {
+            // "pending" is a knock parked in the peer's `_inbox` for its
+            // owner: nothing has been granted. This reported ok and exit
+            // 0, so `rsntr knock <peer> ... && rsntr query <peer> ...`
+            // read a parked knock as admission and went straight on to
+            // the request the peer then refuses. Every other parking
+            // command already answers a parked request with exit 2 and
+            // `"pending": true` (docs/agents.md, the exit-code table);
+            // knock was the one that did not.
+            let pending = d.decision == "pending";
+            let admitted = d.decision == "allow";
+            // The id worth naming is the peer's. A re-knock while a row
+            // is pending answers with the SAME `_inbox` row id and a
+            // fresh client-side ULID, and the row id is the one its
+            // owner types into `rsntr inbox answer`, which is what the
+            // manual says `id` is. Printing the client's own id named a
+            // row that exists nowhere.
+            let id = d.id.clone().unwrap_or_else(|| report.id.clone());
             if json {
                 println!(
                     "{}",
                     json!({
-                        "ok": d.decision != "deny",
-                        "id": report.id,
+                        "ok": admitted,
+                        "id": id,
+                        "request_id": report.id,
                         "decision": d.decision,
                         "decided_by": d.decided_by,
+                        "pending": pending,
                         "reason": d.reason,
                     })
                 );
@@ -2168,19 +3242,33 @@ async fn cmd_knock(args: KnockArgs, json: bool) -> Result<i32> {
                     .as_deref()
                     .map(|r| format!(" ({r})"))
                     .unwrap_or_default();
-                println!("knock {}: {}{}", report.id, d.decision, why);
+                if pending {
+                    // The peer's reason only restates the pending id,
+                    // which now leads the line; saying it twice buries
+                    // the part that matters, that nothing is granted.
+                    println!(
+                        "knock {id}: pending - parked for {}'s owner, nothing is granted yet\n\
+                         they answer it with `rsntr inbox answer {id} allow` on their node; \
+                         re-knock to check",
+                        args.peer
+                    );
+                } else {
+                    println!("knock {id}: {}{why}", d.decision);
+                }
             }
-            Ok(if d.decision == "deny" {
-                EXIT_DENIED
-            } else {
-                EXIT_OK
-            })
+            Ok(if admitted { EXIT_OK } else { EXIT_DENIED })
         }
         None => {
             if json {
                 println!(
                     "{}",
-                    json!({ "ok": false, "id": report.id, "decision": "silence" })
+                    json!({
+                        "ok": false,
+                        "id": report.id,
+                        "request_id": report.id,
+                        "decision": "silence",
+                        "pending": false,
+                    })
                 );
             } else {
                 println!(
@@ -2462,10 +3550,12 @@ async fn cmd_chat_send(
     target: String,
     text: String,
     file: Option<PathBuf>,
+    opts: rsntr::chat::SendOptions,
     json: bool,
     prefer: rsntr::Prefer,
 ) -> Result<i32> {
-    let report = rsntr::chat::chat_send_with(&dir, prefer, &target, &text, file.as_deref()).await?;
+    let report =
+        rsntr::chat::chat_send_opts(&dir, prefer, &target, &text, file.as_deref(), &opts).await?;
     if json {
         println!(
             "{}",
@@ -2474,11 +3564,14 @@ async fn cmd_chat_send(
                 "message_id": report.message_id,
                 "scope": report.scope,
                 "queued_to": report.queued_to,
+                "re": opts.re,
+                "tags": opts.tags,
                 "blob": report.blob.as_ref().map(|(hash, bytes)| json!({
                     "hash": hash,
                     "bytes": bytes,
                 })),
                 "spilled": report.spilled,
+                "delivery": "queued",
             })
         );
     } else {
@@ -2523,6 +3616,9 @@ fn chat_entry_json(entry: &rsntr::chat::LogEntry) -> serde_json::Value {
         "blob_name": entry.blob_name,
         "outgoing": entry.outgoing,
         "status": entry.status,
+        "delivered_at": entry.delivered_at,
+        "re": entry.re,
+        "tags": entry.tags,
     })
 }
 
@@ -2547,7 +3643,17 @@ fn chat_entry_line(entry: &rsntr::chat::LogEntry) -> String {
         .as_deref()
         .map(|n| format!(" (file: {n})"))
         .unwrap_or_default();
-    format!("{} {who}{status}: {}{blob}", entry.at, entry.body)
+    let re = entry
+        .re
+        .as_deref()
+        .map(|r| format!(" (re {r})"))
+        .unwrap_or_default();
+    let tags = if entry.tags.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", entry.tags.join(", "))
+    };
+    format!("{} {who}{status}{re}{tags}: {}{blob}", entry.at, entry.body)
 }
 
 async fn cmd_chat_log(
@@ -2555,10 +3661,11 @@ async fn cmd_chat_log(
     target: &str,
     limit: i64,
     since: Option<&str>,
+    filter: rsntr::chat::LogFilter,
     no_inline: bool,
     json: bool,
 ) -> Result<i32> {
-    let mut entries = rsntr::chat::chat_log(dir, target, limit, since)?;
+    let mut entries = rsntr::chat::chat_log_filtered(dir, target, limit, since, &filter)?;
     let inline_failed = if no_inline {
         Vec::new()
     } else {
@@ -2728,7 +3835,78 @@ fn cmd_chat_room(command: RoomCommand, json: bool, prefer: rsntr::Prefer) -> Res
             }
             Ok(EXIT_OK)
         }
+        RoomCommand::List { dir } => {
+            let rooms = rsntr::chat::room_list(&dir)?;
+            if json {
+                println!(
+                    "{}",
+                    json!({ "ok": true, "rooms": rooms.iter().map(room_info_json).collect::<Vec<_>>() })
+                );
+            } else {
+                for r in &rooms {
+                    println!(
+                        "{}\t{}\t{}",
+                        r.name,
+                        r.room_id,
+                        if r.hosting {
+                            format!("hosting, {} member(s)", r.member_count)
+                        } else {
+                            format!("host {}", &r.host[..8.min(r.host.len())])
+                        }
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        RoomCommand::Members { room, dir } => {
+            let (info, members) = rsntr::chat::room_members(&dir, &room)?;
+            if json {
+                let mut v = room_info_json(&info);
+                v["ok"] = json!(true);
+                v["members"] = json!(
+                    members
+                        .iter()
+                        .map(|m| json!({
+                            "member": m.member,
+                            "name": m.name,
+                            "added_at": m.added_at,
+                        }))
+                        .collect::<Vec<_>>()
+                );
+                println!("{v}");
+            } else {
+                println!(
+                    "{} ({}) {}",
+                    info.name,
+                    info.room_id,
+                    if info.hosting {
+                        "hosted here".to_string()
+                    } else {
+                        format!("hosted by {} (the host keeps the roster)", info.host)
+                    }
+                );
+                for m in &members {
+                    println!(
+                        "{}\t{}\tadded {}",
+                        m.name.as_deref().unwrap_or("-"),
+                        m.member,
+                        m.added_at
+                    );
+                }
+            }
+            Ok(EXIT_OK)
+        }
     }
+}
+
+fn room_info_json(r: &rsntr::chat::RoomInfo) -> serde_json::Value {
+    json!({
+        "room": r.room_id,
+        "name": r.name,
+        "host": r.host,
+        "hosting": r.hosting,
+        "member_count": r.member_count,
+    })
 }
 
 async fn cmd_fetch(args: FetchArgs, json: bool) -> Result<i32> {
@@ -2788,19 +3966,89 @@ async fn cmd_watch(args: WatchArgs, json: bool) -> Result<i32> {
     use std::io::Write;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    // Path reports ride their own channel so the feed channel stays
+    // pure bytes, and they arrive while the feed runs: a live source
+    // never ends, so a report only at close would never come.
+    let (ptx, mut prx) = tokio::sync::mpsc::channel::<resonator_transport::PathReport>(4);
     let task = {
         let dir = args.dir.clone();
         let peer = args.peer.clone();
         let source = args.source.clone();
         tokio::spawn(async move {
-            client::run_media_channel(&dir, &peer, &source, args.offline, tx).await
+            client::run_media_channel(&dir, &peer, &source, args.offline, tx, Some(ptx)).await
         })
+    };
+    let report_path = |p: &resonator_transport::PathReport| {
+        if json {
+            eprintln!(
+                "{}",
+                json!({ "path": {
+                    "relay": p.relay,
+                    "remote": p.remote,
+                    "rtt_ms": p.rtt_ms,
+                    "paths": p.paths,
+                    "direct": p.direct,
+                }})
+            );
+        } else {
+            eprintln!("path: {}", p.describe());
+        }
     };
 
     let mut out = std::io::stdout().lock();
     let mut bytes: u64 = 0;
     let mut code = EXIT_OK;
-    while let Some(chunk) = rx.recv().await {
+    // The deadline covers the open only: once anything has arrived the
+    // feed is alive and may be quiet for as long as it likes.
+    let first_byte = match args.first_byte_timeout {
+        0 => None,
+        s => Some(std::time::Duration::from_secs(s)),
+    };
+    let mut opened = false;
+    loop {
+        let next = match (opened, first_byte) {
+            (false, Some(limit)) => match tokio::time::timeout(limit, async {
+                loop {
+                    tokio::select! {
+                        biased;
+                        Some(p) = prx.recv() => report_path(&p),
+                        v = rx.recv() => break v,
+                    }
+                }
+            })
+            .await
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    let secs = limit.as_secs();
+                    if json {
+                        eprintln!(
+                            "{}",
+                            json!({ "ok": false, "error": { "code": "timeout", "reason":
+                                format!("no media from {:?} on {} within {secs}s",
+                                    args.source, args.peer) } })
+                        );
+                    } else {
+                        eprintln!(
+                            "timeout: {:?} on {} sent nothing within {secs}s \
+                             (--first-byte-timeout 0 waits forever)",
+                            args.source, args.peer
+                        );
+                    }
+                    code = rsntr::EXIT_TIMEOUT;
+                    break;
+                }
+            },
+            _ => loop {
+                tokio::select! {
+                    biased;
+                    Some(p) = prx.recv() => report_path(&p),
+                    v = rx.recv() => break v,
+                }
+            },
+        };
+        let Some(chunk) = next else { break };
+        opened = true;
         match chunk {
             client::MediaChunk::Header { content_type } => {
                 // Header to stderr: stdout is exclusively the byte feed.
@@ -2812,6 +4060,16 @@ async fn cmd_watch(args: WatchArgs, json: bool) -> Result<i32> {
             }
             client::MediaChunk::Data(chunk) => {
                 out.write_all(&chunk).context("writing the media feed")?;
+                // Flushed per chunk. Rust's stdout is a LineWriter with
+                // a 1024-byte buffer, so a 16 KB media read already goes
+                // straight through and this costs nothing there; what it
+                // fixes is the small chunk. A sub-1024-byte tail with no
+                // 0x0A in it would otherwise wait for the next chunk, and
+                // whatever sat unflushed was lost when the viewer stopped.
+                // Correctness, not throughput: measured, the buffering
+                // exposure is milliseconds, not the tenths of a second it
+                // is tempting to blame it for.
+                out.flush().context("flushing the media feed")?;
                 bytes += chunk.len() as u64;
             }
             client::MediaChunk::Denied(d) => {
@@ -2843,7 +4101,30 @@ async fn cmd_watch(args: WatchArgs, json: bool) -> Result<i32> {
         }
     }
     out.flush().context("flushing the media feed")?;
-    task.await.context("joining the watch task")??;
+    // How the feed actually travelled, read from the connection that
+    // carried it. This is the directness answer for a measurement; the
+    // `relay` field of `rsntr status` is about this node's own address
+    // set and says nothing about any connection.
+    let path = if code == rsntr::EXIT_TIMEOUT {
+        // Giving up means giving up: the reader is still blocked on a
+        // source that has nothing to say, and joining it would wait
+        // exactly as long as the deadline existed to avoid.
+        task.abort();
+        None
+    } else {
+        task.await.context("joining the watch task")??
+    };
+    // Anything the sampler queued but never got to report.
+    let mut last_reported = None;
+    while let Ok(p) = prx.try_recv() {
+        report_path(&p);
+        last_reported = Some(p);
+    }
+    if let Some(p) = &path
+        && last_reported.as_ref() != Some(p)
+    {
+        report_path(p);
+    }
     if code == EXIT_OK {
         if json {
             eprintln!("{}", json!({ "ok": true, "bytes": bytes }));

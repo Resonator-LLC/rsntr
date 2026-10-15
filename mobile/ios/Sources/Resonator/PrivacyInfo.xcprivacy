@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The package declares its own required-reason API use so that
+	     every app embedding it inherits the declaration. App Store
+	     Connect checks these statically against the linked binary, so
+	     the obligation follows the code even into an app that links
+	     resonator and never starts a node. Declaring it once here is
+	     the difference between that being handled and every consumer
+	     rediscovering it from a rejection mail. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<!-- The package collects nothing for its authors: a node's data
+	     stays on the user's device and travels only to peers the user
+	     admits. An app that collects data of its own still declares
+	     that in its own manifest; this array speaks only for the
+	     package. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- SharedNode.swift keeps the security-scoped bookmark for a
+		     Files-app folder in the host app's own defaults, read back
+		     by the same app on the next launch. Nothing is written that
+		     another app can read. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<!-- Not from Swift: the Rust library linked by this package
+		     references stat, fstat, lstat and fstatat (SQLite's unix VFS
+		     and Rust's std::fs). The scan reads the app binary, so those
+		     count even though no Swift source names them. The files are
+		     the node's own database, WAL and blobs, which live either in
+		     the app container (C617.1) or in a folder the person chose
+		     through the document picker (3B52.1). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+				<string>3B52.1</string>
+			</array>
+		</dict>
+		<!-- Also from the Rust library: statfs and fstatfs, which SQLite
+		     uses to know whether a write can succeed rather than
+		     corrupting a database when the volume is full. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

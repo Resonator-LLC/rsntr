@@ -20,6 +20,9 @@
 //! - `2`: denied (the serving side's authenticator or policy said no)
 //! - `3`: timeout (the request's wall-clock deadline elapsed)
 
+pub mod appscmd;
+#[cfg(unix)]
+pub mod awaitcmd;
 pub mod channel;
 pub mod chat;
 pub mod client;
@@ -27,14 +30,25 @@ pub mod client;
 pub mod csvcmd;
 #[cfg(unix)]
 pub mod detach;
+/// `_rsntr` keys a serving node publishes (portable; `detach` is unix).
+pub mod detach_keys {
+    /// The `_rsntr` key holding the live ticket while a node serves.
+    pub const SERVING_TICKET_KEY: &str = "serving_ticket";
+}
+pub mod events;
 pub mod guide;
 pub mod hooks;
 pub mod inboxcmd;
+pub mod lease;
 #[cfg(feature = "mods")]
 pub mod modcmd;
 pub mod output;
+pub mod owner;
 #[cfg(unix)]
 pub mod owner_socket;
+pub mod owner_tcp;
+pub mod pagecmd;
+pub mod peercmd;
 #[cfg(unix)]
 pub mod pipecmd;
 pub mod rdfcmd;
@@ -45,14 +59,17 @@ pub mod teletype;
 
 pub use channel::{OwnerChannel, Prefer};
 pub use chat::{
-    LogEntry, SendReport, Target, WaitReport, WatchEvent, chat_init, chat_log, chat_send,
-    chat_wait, chat_watch, inline_spilled, resolve_target, room_add, room_create, room_join,
+    LogEntry, LogFilter, RoomInfo, RoomMember, SendOptions, SendReport, Target, WaitReport,
+    WatchEvent, chat_init, chat_log, chat_log_filtered, chat_send, chat_send_opts, chat_wait,
+    chat_watch, inline_spilled, resolve_target, room_add, room_create, room_join, room_list,
+    room_members,
 };
 pub use client::{
     EntrainItem, FetchOutcome, MediaChunk, ProjectionOutcome, QueryOutcome, QueryReport,
     classify_sparql, classify_sql, run_entrain, run_fetch, run_help, run_media_channel,
     run_projection, run_query, run_statement,
 };
+pub use lease::{AppInfo, LeaseError, LeaseInfo, ServeLease};
 pub use output::{render_row, render_value};
 pub use serve::{RunningNode, start_node};
 pub use store::{

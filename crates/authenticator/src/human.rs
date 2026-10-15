@@ -51,7 +51,11 @@ impl Tier for HumanTier {
     ) -> Decision {
         // Footprint-less requests (knock, media, entrain) have their own
         // park/deny flows in the node; this tier only parks statements.
-        if statement.is_empty() {
+        // A knock carries its message as the statement text, so the
+        // action guard matters: without it a chain listing "human" would
+        // park knocks here as statement rows and answer "deny" instead
+        // of the knock path's "pending" Decision.
+        if statement.is_empty() || action == "knock" {
             return Decision::Escalate;
         }
         if footprint.has_denied() {
@@ -64,6 +68,7 @@ impl Tier for HumanTier {
         let pending: Result<Option<()>, _> = conn
             .query_row(
                 "SELECT 1 FROM _inbox WHERE peer = ?1 AND decision IS NULL \
+                   AND sql <> '' \
                    AND json_extract(params, '$.fingerprint') = ?2",
                 (peer, &fp),
                 |_| Ok(()),
@@ -126,6 +131,8 @@ pub struct InboxAnswer {
     pub knock: bool,
     /// The `_policy` table names written by remember (empty otherwise).
     pub remembered: Vec<String>,
+    /// The `table=action` grants written on an allow (empty otherwise).
+    pub granted: Vec<String>,
 }
 
 /// Answer-flow failure; a plain message for CLI/UI display.
@@ -156,12 +163,18 @@ impl From<rusqlite::Error> for AnswerError {
 /// - for a parked knock (empty `sql`), an allow admits the peer into
 ///   `_peers`.
 ///
+/// On an allow, each `grants` entry (`"table=action"`) is written as an
+/// idempotent `_policy` allow row -- the explicit path for cross-peer
+/// installs, where the owner grants e.g. `cameras=mod-install` and
+/// `cameras=mod-cap:db_read` so the requester's retry passes.
+///
 /// The CLI mirrors this flow as owner-channel envelopes.
 pub fn answer_inbox(
     conn: &Connection,
     request_id: &str,
     allow: bool,
     remember: bool,
+    grants: &[String],
 ) -> Result<InboxAnswer, AnswerError> {
     let row: Option<(String, String, String, Option<String>)> = conn
         .query_row(
@@ -179,12 +192,25 @@ pub fn answer_inbox(
         )));
     }
     let decision_str = if allow { "allow" } else { "deny" };
+    // Validate a statement row's params BEFORE marking it decided, so a
+    // malformed row is rejected intact rather than left decided-but-
+    // unapplied.
+    let parked: Option<ParkedParams> = if sql.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_str(&params).map_err(|e| {
+            AnswerError(format!(
+                "inbox row {request_id} has unreadable params ({e}); answer it with plain SQL"
+            ))
+        })?)
+    };
     conn.execute(
         "UPDATE _inbox SET decision = ?1, decided_by = 'human' WHERE request_id = ?2",
         (decision_str, request_id),
     )?;
 
     if sql.is_empty() {
+        let mut granted = Vec::new();
         if allow {
             conn.execute(
                 "INSERT OR IGNORE INTO _peers (endpoint_id, added_at, notes) \
@@ -195,19 +221,17 @@ pub fn answer_inbox(
                     format!("admitted via inbox {request_id}"),
                 ),
             )?;
+            granted = write_grants(conn, &peer, request_id, grants)?;
         }
         return Ok(InboxAnswer {
             peer,
             knock: true,
             remembered: Vec::new(),
+            granted,
         });
     }
 
-    let parked: ParkedParams = serde_json::from_str(&params).map_err(|e| {
-        AnswerError(format!(
-            "inbox row {request_id} has unreadable params ({e}); answer it with plain SQL"
-        ))
-    })?;
+    let parked = parked.expect("statement rows parsed above");
     record_decision(
         conn,
         &peer,
@@ -240,11 +264,48 @@ pub fn answer_inbox(
             remembered.push(table);
         }
     }
+    let granted = if allow {
+        write_grants(conn, &peer, request_id, grants)?
+    } else {
+        Vec::new()
+    };
     Ok(InboxAnswer {
         peer,
         knock: false,
         remembered,
+        granted,
     })
+}
+
+/// Writes one idempotent `_policy` allow row per `table=action` grant.
+fn write_grants(
+    conn: &Connection,
+    peer: &str,
+    request_id: &str,
+    grants: &[String],
+) -> Result<Vec<String>, AnswerError> {
+    let mut granted = Vec::new();
+    for grant in grants {
+        let Some((table, action)) = grant.split_once('=') else {
+            return Err(AnswerError(format!(
+                "grant {grant:?}: expected table=action (e.g. 'cameras=mod-install')"
+            )));
+        };
+        conn.execute(
+            "INSERT INTO _policy (peer_or_group, table_name, action, effect, note) \
+             SELECT ?1, ?2, ?3, 'allow', ?4 \
+             WHERE NOT EXISTS (SELECT 1 FROM _policy \
+                WHERE peer_or_group = ?1 AND table_name = ?2 AND action = ?3 AND effect = 'allow')",
+            (
+                peer,
+                table,
+                action,
+                format!("granted with inbox answer {request_id}"),
+            ),
+        )?;
+        granted.push(grant.clone());
+    }
+    Ok(granted)
 }
 
 /// Current UTC time in RFC 3339 form with second precision (matching
@@ -390,7 +451,7 @@ mod tests {
 
         let ids = pending_ids(&conn);
         assert_eq!(ids.len(), 1);
-        let answered = answer_inbox(&conn, &ids[0], true, false).unwrap();
+        let answered = answer_inbox(&conn, &ids[0], true, false, &[]).unwrap();
         assert_eq!(answered.peer, "alice");
         assert!(!answered.knock);
         assert!(answered.remembered.is_empty());
@@ -407,9 +468,9 @@ mod tests {
         assert_eq!(d.decision, Decision::Allow);
 
         // Answering twice is refused.
-        assert!(answer_inbox(&conn, &ids[0], true, false).is_err());
+        assert!(answer_inbox(&conn, &ids[0], true, false, &[]).is_err());
         // Unknown ids are refused.
-        assert!(answer_inbox(&conn, "nope", true, false).is_err());
+        assert!(answer_inbox(&conn, "nope", true, false, &[]).is_err());
     }
 
     #[test]
@@ -427,7 +488,7 @@ mod tests {
             "SELECT body FROM notes WHERE id = 1",
         );
         let ids = pending_ids(&conn);
-        answer_inbox(&conn, &ids[0], false, false).unwrap();
+        answer_inbox(&conn, &ids[0], false, false, &[]).unwrap();
 
         let d = chain.decide(
             &conn,
@@ -457,7 +518,7 @@ mod tests {
         assert_eq!(d.decided_by, "human");
 
         let ids = pending_ids(&conn);
-        let answered = answer_inbox(&conn, &ids[0], true, true).unwrap();
+        let answered = answer_inbox(&conn, &ids[0], true, true, &[]).unwrap();
         assert_eq!(answered.remembered, vec!["notes".to_string()]);
 
         let (peer, table, action, effect): (String, String, String, String) = conn
@@ -504,7 +565,7 @@ mod tests {
             [now_rfc3339()],
         )
         .unwrap();
-        let answered = answer_inbox(&conn, "k1", true, false).unwrap();
+        let answered = answer_inbox(&conn, "k1", true, false, &[]).unwrap();
         assert!(answered.knock);
         let admitted: i64 = conn
             .query_row(

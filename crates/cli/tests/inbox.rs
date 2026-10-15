@@ -124,3 +124,112 @@ async fn inbox_list_and_answer_ride_the_owner_channel() {
     assert_eq!(all.len(), 2);
     assert!(all.iter().all(|r| r.decision.as_deref() == Some("allow")));
 }
+
+/// The rejected answer must leave nothing behind.
+///
+/// `inbox answer` validated its input where it needed it, which was
+/// after the row had been marked answered and, on a knock, after the
+/// peer was already in `_peers`. A typo'd `--grant` ('notes:read' for
+/// 'notes=read', and the actions themselves contain colons) exited 1
+/// naming the typo, having admitted the stranger with no grants at all,
+/// and refused the obvious retry as "already decided". The error is
+/// true about the step that failed and wrong about everything the
+/// reader takes from it - on the one command that lets a stranger in.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rejected_answer_admits_nobody() {
+    let tmp = TempDir::new("inbox-reject");
+    store::init_dir(tmp.path()).expect("init");
+    let stranger = "cc".repeat(32);
+    {
+        let conn = store::open_db(tmp.path()).expect("open");
+        conn.execute(
+            "INSERT INTO _inbox (request_id, peer, sql, params, received_at) \
+             VALUES ('k-typo', ?1, '', 'knock: let me in', '2026-01-01T00:00:00Z')",
+            [&stranger],
+        )
+        .unwrap();
+        // A statement row whose params this command cannot read.
+        conn.execute(
+            "INSERT INTO _inbox (request_id, peer, sql, params, received_at) \
+             VALUES ('s-bad', ?1, 'INSERT INTO notes VALUES (1)', 'not json', \
+                     '2026-01-01T00:00:01Z')",
+            [&stranger],
+        )
+        .unwrap();
+    }
+
+    let pending = |id: &str| -> bool {
+        let conn = store::open_db(tmp.path()).expect("open");
+        conn.query_row(
+            "SELECT decision IS NULL FROM _inbox WHERE request_id = ?1",
+            [id],
+            |r| r.get::<_, bool>(0),
+        )
+        .expect("row")
+    };
+    let admitted = || -> i64 {
+        let conn = store::open_db(tmp.path()).expect("open");
+        conn.query_row(
+            "SELECT count(*) FROM _peers WHERE endpoint_id = ?1",
+            [&stranger],
+            |r| r.get(0),
+        )
+        .expect("count")
+    };
+    let policies = || -> i64 {
+        let conn = store::open_db(tmp.path()).expect("open");
+        conn.query_row(
+            "SELECT count(*) FROM _policy WHERE peer_or_group = ?1",
+            [&stranger],
+            |r| r.get(0),
+        )
+        .expect("count")
+    };
+
+    // A malformed grant on a knock allow.
+    let err = inboxcmd::inbox_answer_with(
+        tmp.path(),
+        Prefer::Local,
+        "k-typo",
+        true,
+        false,
+        &["notes:read".to_string()],
+    )
+    .await
+    .expect_err("a malformed grant is refused");
+    assert!(err.to_string().contains("table=action"), "{err}");
+    assert!(pending("k-typo"), "the row is still open");
+    assert_eq!(admitted(), 0, "nobody was let in");
+    assert_eq!(policies(), 0, "no grant was written");
+
+    // The obvious retry, with the grant spelled right, now works.
+    let report = inboxcmd::inbox_answer_with(
+        tmp.path(),
+        Prefer::Local,
+        "k-typo",
+        true,
+        false,
+        &["notes=read".to_string()],
+    )
+    .await
+    .expect("the corrected answer applies");
+    assert!(report.knock && report.decision == "allow", "{report:?}");
+    assert_eq!(report.granted, vec!["notes=read".to_string()], "{report:?}");
+    assert_eq!(admitted(), 1, "now admitted");
+    assert_eq!(policies(), 1, "and granted");
+
+    // Same rule for a statement row this command cannot read.
+    let err = inboxcmd::inbox_answer_with(
+        tmp.path(),
+        Prefer::Local,
+        "s-bad",
+        true,
+        false,
+        &["notes=write".to_string()],
+    )
+    .await
+    .expect_err("unreadable params are refused");
+    assert!(err.to_string().contains("unreadable params"), "{err}");
+    assert!(pending("s-bad"), "the row is still open");
+    assert_eq!(policies(), 1, "and its grant was not written either");
+}

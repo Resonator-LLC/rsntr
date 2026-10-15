@@ -64,6 +64,30 @@ pub struct ResultHeader {
     pub decl_types: Vec<String>,
 }
 
+/// Rough encoded size of one row, for deciding where to split a batch
+/// across frames.
+///
+/// An over-estimate by design: base64 inflates a blob by 4/3, and the
+/// caller has a frame budget well inside [`crate::MAX_FRAME_LEN`], so
+/// guessing high costs an extra frame and guessing low costs a failed
+/// send. The constants match the SQL path's own estimate so both produce
+/// the same batching for the same data.
+pub fn estimate_row_bytes(row: &Row) -> usize {
+    let mut est = 32; // per-row envelope overhead
+    for (name, value) in &row.cells {
+        est += name.len() + 12;
+        est += match value {
+            Value::Null => 0,
+            Value::Integer(_) => 20,
+            Value::Real(_) => 26,
+            Value::Text(t) => t.len() + 16,
+            Value::Blob(b) => b.len() * 4 / 3 + 32,
+            Value::BlobRef { hash, .. } => hash.len() + 64,
+        };
+    }
+    est
+}
+
 /// One `rsntr:Row` subject out of a row-batch frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {

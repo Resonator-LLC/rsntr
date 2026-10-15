@@ -28,6 +28,19 @@ pub enum NodeError {
     /// The SPARQL engine reported an error outside request execution.
     #[error("sparql error: {0}")]
     Sparql(String),
+
+    /// The database was migrated by a newer build than this one: its
+    /// declared minimum reader version is above what this build knows.
+    #[error(
+        "this database requires resonator schema {required}; this build supports {supported}: \
+         update the app"
+    )]
+    SchemaTooNew { required: i64, supported: i64 },
+
+    /// Another process held the write lock longer than the busy timeout
+    /// during setup (open/migration).
+    #[error("database busy: another process held the write lock longer than {0:?}")]
+    Busy(std::time::Duration),
 }
 
 impl From<resonator_sparql::Error> for NodeError {

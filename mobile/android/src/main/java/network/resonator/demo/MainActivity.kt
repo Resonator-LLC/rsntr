@@ -1,48 +1,57 @@
-// Minimal Activity exercising the uniffi bindings: node in the app's
-// files dir, one local SQL write, one entrained Sympathetic point whose
-// vibrations append to the screen. Every Node call blocks: keep them
-// off the main thread.
+// Minimal Activity exercising the uniffi bindings on the device's shared
+// node (docs/shared-node.md): every app of this vendor with the same
+// signing key and `android:sharedUserId` opens the same directory under
+// the host package's no_backup files; whoever is started serves it.
+// One local SQL write, one declared table, one entrained Sympathetic
+// point whose vibrations append to the screen (writes by the other apps
+// vibrate too). Every Node call blocks: keep them on the handle's
+// executor.
 package network.resonator.demo
 
 import android.app.Activity
 import android.os.Bundle
 import android.widget.ScrollView
 import android.widget.TextView
-import java.io.File
-import java.util.concurrent.Executors
+import network.resonator.SharedNode
+import uniffi.resonator_ffi.AppInfo
 import uniffi.resonator_ffi.FfiValue
-import uniffi.resonator_ffi.Node
+import uniffi.resonator_ffi.TableDecl
 import uniffi.resonator_ffi.VibrationListener
 
 class MainActivity : Activity(), VibrationListener {
-    private val worker = Executors.newSingleThreadExecutor()
     private lateinit var log: TextView
-    private var node: Node? = null
+    private var shared: SharedNode.Handle? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         log = TextView(this)
         setContentView(ScrollView(this).apply { addView(log) })
 
-        worker.execute {
+        // The host package of the family (this demo hosts its own).
+        val handle = SharedNode.open(this, AppInfo("network.resonator.demo", "Resonator Demo", "0.1"))
+        shared = handle
+        handle.onResume = { n ->
+            // Entrainments end on suspend; this runs on the executor.
+            runCatching { n.entrain("urn:demo:notes-changed", this) }
+        }
+        handle.executor.execute {
             try {
-                val dir = File(filesDir, "resonator-node").absolutePath
-                val n = Node(dir, false)
-                node = n
-                append("endpoint: ${n.endpointId()}")
+                val n = handle.node
+                append("endpoint: ${n.endpointId()}; dir: ${handle.directory}")
                 n.localExecute(
-                    "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)",
+                    "CREATE TABLE IF NOT EXISTS demo_notes (id INTEGER PRIMARY KEY, body TEXT)",
                     listOf(),
                 )
+                n.declareTables(listOf(TableDecl("demo_notes", "notes typed in the demo app")))
                 n.localExecute(
                     "INSERT OR IGNORE INTO _projection (point_iri, kind, label, resource) " +
-                        "VALUES ('urn:demo:notes-changed', 'sympathetic', 'notes changed', 'notes')",
+                        "VALUES ('urn:demo:notes-changed', 'sympathetic', 'notes changed', 'demo_notes')",
                     listOf(),
                 )
                 n.entrain("urn:demo:notes-changed", this)
-                append("entrained urn:demo:notes-changed; writing a note...")
+                append("entrained urn:demo:notes-changed; serving: ${n.servingInfo()?.appId ?: "nobody"}")
                 n.localExecute(
-                    "INSERT INTO notes (body) VALUES (?1)",
+                    "INSERT INTO demo_notes (body) VALUES (?1)",
                     listOf(FfiValue.Text("hello from android")),
                 )
             } catch (e: Exception) {
@@ -65,7 +74,6 @@ class MainActivity : Activity(), VibrationListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        worker.execute { node?.stop() }
-        worker.shutdown()
+        shared?.close()
     }
 }

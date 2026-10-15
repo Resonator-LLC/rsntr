@@ -347,6 +347,9 @@ fn router(state: Arc<WebState>) -> Router {
             get(streams::stream_get).post(streams::stream_post),
         )
         .route("/api/meta", get(api::meta))
+        .route("/api/ticket", get(api::ticket_get))
+        .route("/api/ticket.svg", get(api::ticket_svg))
+        .route("/api/peer", post(api::peer_post))
         .route("/api/peer/{id}", get(api::peer_get))
         .route("/api/table/{name}", get(api::table_get))
         .route("/api/table/{name}/rows", post(api::row_insert))
@@ -354,6 +357,8 @@ fn router(state: Arc<WebState>) -> Router {
             "/api/table/{name}/rows/{rowid}",
             axum::routing::patch(api::row_update).delete(api::row_delete),
         )
+        .route("/api/inbox", get(api::inbox_list))
+        .route("/api/inbox/answer", post(api::inbox_answer))
         .route("/api/sql", post(api::sql))
         .route("/api/sparql", post(api::sparql))
         .route("/api/turtle", post(api::turtle))

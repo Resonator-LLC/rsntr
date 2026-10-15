@@ -399,6 +399,22 @@ fileprivate class UniffiHandleMap<T> {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -532,7 +548,7 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 /**
  * A live entrainment; dropping it does NOT damp (the session is held by
- * the runtime until `damp()` or node shutdown).
+ * the runtime until `damp()`, node shutdown, or `close()`).
  */
 public protocol EntrainmentProtocol : AnyObject {
     
@@ -551,7 +567,7 @@ public protocol EntrainmentProtocol : AnyObject {
 
 /**
  * A live entrainment; dropping it does NOT damp (the session is held by
- * the runtime until `damp()` or node shutdown).
+ * the runtime until `damp()`, node shutdown, or `close()`).
  */
 open class Entrainment:
     EntrainmentProtocol {
@@ -682,7 +698,8 @@ public func FfiConverterTypeEntrainment_lower(_ value: Entrainment) -> UnsafeMut
 
 /**
  * A resonator node: one directory holding the sqlite database and the
- * ed25519 key. Constructing initializes the directory when needed.
+ * ed25519 key, possibly shared with other apps. Constructing
+ * initializes the directory when needed.
  */
 public protocol NodeProtocol : AnyObject {
     
@@ -691,6 +708,11 @@ public protocol NodeProtocol : AnyObject {
      * or a 64-hex endpoint id. Returns the peer's endpoint id.
      */
     func addPeer(name: String, ticketOrId: String) throws  -> String
+    
+    /**
+     * Every app registered in the node.
+     */
+    func apps() throws  -> [AppRecord]
     
     /**
      * Scaffolds chat on this node (tables, projection points, policy);
@@ -707,14 +729,33 @@ public protocol NodeProtocol : AnyObject {
     /**
      * Sends a chat message to `target` (peer petname, 64-hex id, room
      * name, or room IRI). The send is an `_outbox` enqueue; delivery
-     * happens while this node serves.
+     * happens while some process serves the directory.
      */
     func chatSend(target: String, text: String) throws  -> SendReceipt
+    
+    /**
+     * Ends every entrainment (`on_end("closed")`) and drops the
+     * in-process pipeline, so this `Node` holds no database handle.
+     * Serving is untouched; see [`suspend`](Self::suspend). Idempotent.
+     */
+    func close() 
+    
+    /**
+     * Where a call would go right now.
+     */
+    func currentRoute() throws  -> RouteKind
     
     /**
      * Path to the node's sqlite database (WAL; readable while serving).
      */
     func dbPath()  -> String
+    
+    /**
+     * Declares tables this app owns (they must exist): a `_comments`
+     * description each plus the ownership record, so other apps and
+     * peers can discover them. Needs a node opened with `AppInfo`.
+     */
+    func declareTables(tables: [TableDecl]) throws 
     
     /**
      * This node's 64-hex endpoint id.
@@ -725,14 +766,30 @@ public protocol NodeProtocol : AnyObject {
      * Entrains a Sympathetic `point` (its IRI, from `_projection`):
      * `listener.on_vibration` fires on every signal until `damp()` or
      * `on_end`. Owner lane: any registered Sympathetic point works, no
-     * policy filter. Blocks until the node acknowledges.
+     * policy filter. Routed like every call: pushed by this process's
+     * serving pipeline, by the other process serving the directory
+     * (over the owner channel), or by this `Node`'s in-process pipeline.
+     * Blocks until the node acknowledges.
      */
     func entrain(point: String, listener: VibrationListener) throws  -> Entrainment
     
     /**
-     * Whether this node is currently serving.
+     * Whether this process is currently serving the directory.
      */
     func isServing()  -> Bool
+    
+    /**
+     * True when another process serves the directory.
+     */
+    func isSharedServing()  -> Bool
+    
+    /**
+     * Knocks on `peer` (petname, ticket, or 64-hex id) with `message`:
+     * the one frame an unadmitted key may send. `allow` means this node
+     * is now in the peer's `_peers` table and may talk normally. A
+     * stranger the peer's policy refuses outright answers `Denied`.
+     */
+    func knock(peer: String, message: String) throws  -> KnockResult
     
     /**
      * [`local_query`] forced to a write (`rsntr:Execute`).
@@ -754,11 +811,33 @@ public protocol NodeProtocol : AnyObject {
     func queryPeer(peer: String, signal: String, modulation: String, params: [FfiValue], timeoutMs: Int64?) throws  -> QueryResult
     
     /**
-     * Starts serving on the crate's background runtime; returns the
-     * direct socket addresses. Subsequent calls route to the serving
-     * pipeline, so remote writes vibrate local entrainments.
+     * Comes back after [`suspend`](Self::suspend): takes the serving
+     * lease when the policy is `ServeIfFree` and nobody holds it (a
+     * held lease is not an error), refreshes the app's `last_seen`, and
+     * reports who serves now (`None` when nobody does). Pipelines
+     * rebuild lazily on the next call; re-entrain what matters.
+     */
+    func resume() throws  -> ServingInfo?
+    
+    /**
+     * Starts serving on the crate's background runtime (takes the
+     * directory's serving lease); returns the direct socket addresses.
+     * `AlreadyServing` names the process that holds the lease.
      */
     func serve() throws  -> [String]
+    
+    /**
+     * Starts the web console on an ephemeral loopback port. Requires
+     * `serve()` first. Returns the entry URL with the capability token
+     * in the fragment, ready for a WebView to load. `rotate_token`
+     * mints a replacement `rsntr.web-token`.
+     */
+    func serveWeb(rotateToken: Bool) throws  -> String
+    
+    /**
+     * Who holds the directory's serving lease right now, if anyone.
+     */
+    func servingInfo()  -> ServingInfo?
     
     /**
      * Runs a SPARQL text against this node's own store (owner channel).
@@ -768,9 +847,28 @@ public protocol NodeProtocol : AnyObject {
     func sparql(query: String) throws  -> QueryResult
     
     /**
-     * Stops serving (a no-op when not serving).
+     * Stops serving (a no-op when not serving): releases the lease, the
+     * endpoint, the blob store, and the serving connection. The web
+     * console, which holds clones of the serving pipeline, goes down
+     * first.
      */
     func stop() 
+    
+    /**
+     * Stops the web console only (a no-op when it is not serving).
+     */
+    func stopWeb() 
+    
+    /**
+     * Lets go of the directory entirely: the web console, serving (the
+     * lease, endpoint, blob store, serving connection), every
+     * entrainment, and the in-process pipeline. After this the process
+     * holds no handle on the node directory, which is what an app must
+     * be able to say before it is suspended (iOS terminates a suspended
+     * app holding locks on files outside its own container). Never
+     * waits for a running callback.
+     */
+    func suspend() 
     
     /**
      * A shareable dialing ticket for the live serving endpoint, waiting
@@ -780,16 +878,23 @@ public protocol NodeProtocol : AnyObject {
     func ticket(waitMs: UInt64) throws  -> String
     
     /**
-     * Nudges the outbox worker to scan `_outbox` now. No-op when not
-     * serving.
+     * Nudges the outbox worker to scan `_outbox` now. No-op when this
+     * process is not serving (another server notices the write itself).
      */
     func wakeOutbox() 
+    
+    /**
+     * The console entry URL (fragment token included) while the web
+     * console serves, `None` otherwise.
+     */
+    func webUrl()  -> String?
     
 }
 
 /**
  * A resonator node: one directory holding the sqlite database and the
- * ed25519 key. Constructing initializes the directory when needed.
+ * ed25519 key, possibly shared with other apps. Constructing
+ * initializes the directory when needed.
  */
 open class Node:
     NodeProtocol {
@@ -830,7 +935,8 @@ open class Node:
     }
     /**
      * Opens (initializing on first use) the node directory. `offline`
-     * binds serving to localhost with no relays (tests, LAN demos).
+     * binds serving to localhost with no relays (tests, LAN demos). The
+     * app stays unregistered; see [`open`](Self::open).
      */
 public convenience init(dir: String, offline: Bool)throws  {
     let pointer =
@@ -852,6 +958,23 @@ public convenience init(dir: String, offline: Bool)throws  {
     }
 
     
+    /**
+     * Opens (initializing on first use) a possibly shared node
+     * directory as `app`, registering it in `_apps`, with the serving
+     * policy `resume()` follows. Safe for several apps starting on one
+     * empty directory at once (one identity results).
+     */
+public static func `open`(dir: String, offline: Bool, app: AppInfo?, policy: ServePolicy)throws  -> Node {
+    return try  FfiConverterTypeNode.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_constructor_node_open(
+        FfiConverterString.lower(dir),
+        FfiConverterBool.lower(offline),
+        FfiConverterOptionTypeAppInfo.lower(app),
+        FfiConverterTypeServePolicy.lower(policy),$0
+    )
+})
+}
+    
 
     
     /**
@@ -863,6 +986,16 @@ open func addPeer(name: String, ticketOrId: String)throws  -> String {
     uniffi_resonator_ffi_fn_method_node_add_peer(self.uniffiClonePointer(),
         FfiConverterString.lower(name),
         FfiConverterString.lower(ticketOrId),$0
+    )
+})
+}
+    
+    /**
+     * Every app registered in the node.
+     */
+open func apps()throws  -> [AppRecord] {
+    return try  FfiConverterSequenceTypeAppRecord.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_method_node_apps(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -893,13 +1026,34 @@ open func chatLog(scope: String?, limit: Int64)throws  -> [ChatMessage] {
     /**
      * Sends a chat message to `target` (peer petname, 64-hex id, room
      * name, or room IRI). The send is an `_outbox` enqueue; delivery
-     * happens while this node serves.
+     * happens while some process serves the directory.
      */
 open func chatSend(target: String, text: String)throws  -> SendReceipt {
     return try  FfiConverterTypeSendReceipt.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_resonator_ffi_fn_method_node_chat_send(self.uniffiClonePointer(),
         FfiConverterString.lower(target),
         FfiConverterString.lower(text),$0
+    )
+})
+}
+    
+    /**
+     * Ends every entrainment (`on_end("closed")`) and drops the
+     * in-process pipeline, so this `Node` holds no database handle.
+     * Serving is untouched; see [`suspend`](Self::suspend). Idempotent.
+     */
+open func close() {try! rustCall() {
+    uniffi_resonator_ffi_fn_method_node_close(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Where a call would go right now.
+     */
+open func currentRoute()throws  -> RouteKind {
+    return try  FfiConverterTypeRouteKind.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_method_node_current_route(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -912,6 +1066,18 @@ open func dbPath() -> String {
     uniffi_resonator_ffi_fn_method_node_db_path(self.uniffiClonePointer(),$0
     )
 })
+}
+    
+    /**
+     * Declares tables this app owns (they must exist): a `_comments`
+     * description each plus the ownership record, so other apps and
+     * peers can discover them. Needs a node opened with `AppInfo`.
+     */
+open func declareTables(tables: [TableDecl])throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_method_node_declare_tables(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeTableDecl.lower(tables),$0
+    )
+}
 }
     
     /**
@@ -928,7 +1094,10 @@ open func endpointId()throws  -> String {
      * Entrains a Sympathetic `point` (its IRI, from `_projection`):
      * `listener.on_vibration` fires on every signal until `damp()` or
      * `on_end`. Owner lane: any registered Sympathetic point works, no
-     * policy filter. Blocks until the node acknowledges.
+     * policy filter. Routed like every call: pushed by this process's
+     * serving pipeline, by the other process serving the directory
+     * (over the owner channel), or by this `Node`'s in-process pipeline.
+     * Blocks until the node acknowledges.
      */
 open func entrain(point: String, listener: VibrationListener)throws  -> Entrainment {
     return try  FfiConverterTypeEntrainment.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
@@ -940,11 +1109,36 @@ open func entrain(point: String, listener: VibrationListener)throws  -> Entrainm
 }
     
     /**
-     * Whether this node is currently serving.
+     * Whether this process is currently serving the directory.
      */
 open func isServing() -> Bool {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_resonator_ffi_fn_method_node_is_serving(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * True when another process serves the directory.
+     */
+open func isSharedServing() -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_resonator_ffi_fn_method_node_is_shared_serving(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Knocks on `peer` (petname, ticket, or 64-hex id) with `message`:
+     * the one frame an unadmitted key may send. `allow` means this node
+     * is now in the peer's `_peers` table and may talk normally. A
+     * stranger the peer's policy refuses outright answers `Denied`.
+     */
+open func knock(peer: String, message: String)throws  -> KnockResult {
+    return try  FfiConverterTypeKnockResult.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_method_node_knock(self.uniffiClonePointer(),
+        FfiConverterString.lower(peer),
+        FfiConverterString.lower(message),$0
     )
 })
 }
@@ -993,13 +1187,51 @@ open func queryPeer(peer: String, signal: String, modulation: String, params: [F
 }
     
     /**
-     * Starts serving on the crate's background runtime; returns the
-     * direct socket addresses. Subsequent calls route to the serving
-     * pipeline, so remote writes vibrate local entrainments.
+     * Comes back after [`suspend`](Self::suspend): takes the serving
+     * lease when the policy is `ServeIfFree` and nobody holds it (a
+     * held lease is not an error), refreshes the app's `last_seen`, and
+     * reports who serves now (`None` when nobody does). Pipelines
+     * rebuild lazily on the next call; re-entrain what matters.
+     */
+open func resume()throws  -> ServingInfo? {
+    return try  FfiConverterOptionTypeServingInfo.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_method_node_resume(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Starts serving on the crate's background runtime (takes the
+     * directory's serving lease); returns the direct socket addresses.
+     * `AlreadyServing` names the process that holds the lease.
      */
 open func serve()throws  -> [String] {
     return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_resonator_ffi_fn_method_node_serve(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Starts the web console on an ephemeral loopback port. Requires
+     * `serve()` first. Returns the entry URL with the capability token
+     * in the fragment, ready for a WebView to load. `rotate_token`
+     * mints a replacement `rsntr.web-token`.
+     */
+open func serveWeb(rotateToken: Bool)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_resonator_ffi_fn_method_node_serve_web(self.uniffiClonePointer(),
+        FfiConverterBool.lower(rotateToken),$0
+    )
+})
+}
+    
+    /**
+     * Who holds the directory's serving lease right now, if anyone.
+     */
+open func servingInfo() -> ServingInfo? {
+    return try!  FfiConverterOptionTypeServingInfo.lift(try! rustCall() {
+    uniffi_resonator_ffi_fn_method_node_serving_info(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -1018,10 +1250,37 @@ open func sparql(query: String)throws  -> QueryResult {
 }
     
     /**
-     * Stops serving (a no-op when not serving).
+     * Stops serving (a no-op when not serving): releases the lease, the
+     * endpoint, the blob store, and the serving connection. The web
+     * console, which holds clones of the serving pipeline, goes down
+     * first.
      */
 open func stop() {try! rustCall() {
     uniffi_resonator_ffi_fn_method_node_stop(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Stops the web console only (a no-op when it is not serving).
+     */
+open func stopWeb() {try! rustCall() {
+    uniffi_resonator_ffi_fn_method_node_stop_web(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Lets go of the directory entirely: the web console, serving (the
+     * lease, endpoint, blob store, serving connection), every
+     * entrainment, and the in-process pipeline. After this the process
+     * holds no handle on the node directory, which is what an app must
+     * be able to say before it is suspended (iOS terminates a suspended
+     * app holding locks on files outside its own container). Never
+     * waits for a running callback.
+     */
+open func suspend() {try! rustCall() {
+    uniffi_resonator_ffi_fn_method_node_suspend(self.uniffiClonePointer(),$0
     )
 }
 }
@@ -1040,13 +1299,24 @@ open func ticket(waitMs: UInt64)throws  -> String {
 }
     
     /**
-     * Nudges the outbox worker to scan `_outbox` now. No-op when not
-     * serving.
+     * Nudges the outbox worker to scan `_outbox` now. No-op when this
+     * process is not serving (another server notices the write itself).
      */
 open func wakeOutbox() {try! rustCall() {
     uniffi_resonator_ffi_fn_method_node_wake_outbox(self.uniffiClonePointer(),$0
     )
 }
+}
+    
+    /**
+     * The console entry URL (fragment token included) while the web
+     * console serves, `None` otherwise.
+     */
+open func webUrl() -> String? {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_resonator_ffi_fn_method_node_web_url(self.uniffiClonePointer(),$0
+    )
+})
 }
     
 
@@ -1118,9 +1388,11 @@ public protocol VibrationListener : AnyObject {
     func onVibration(point: String, seq: Int64, at: String?) 
     
     /**
-     * The entrainment ended (damp confirmed, node shut down, or the
-     * consumer was too slow); no further callbacks follow. `reason` is
-     * `None` for a clean end.
+     * The entrainment ended (damp confirmed, node shut down, the
+     * serving process went away, the consumer was too slow, or this
+     * `Node` closed); no further callbacks follow. `reason` is `None`
+     * for a clean end, `"closed"` after `close()`/`suspend()`, and
+     * `"server gone; re-entrain"` when the serving process left.
      */
     func onEnd(reason: String?) 
     
@@ -1193,9 +1465,11 @@ open func onVibration(point: String, seq: Int64, at: String?) {try! rustCall() {
 }
     
     /**
-     * The entrainment ended (damp confirmed, node shut down, or the
-     * consumer was too slow); no further callbacks follow. `reason` is
-     * `None` for a clean end.
+     * The entrainment ended (damp confirmed, node shut down, the
+     * serving process went away, the consumer was too slow, or this
+     * `Node` closed); no further callbacks follow. `reason` is `None`
+     * for a clean end, `"closed"` after `close()`/`suspend()`, and
+     * `"server gone; re-entrain"` when the serving process left.
      */
 open func onEnd(reason: String?) {try! rustCall() {
     uniffi_resonator_ffi_fn_method_vibrationlistener_on_end(self.uniffiClonePointer(),
@@ -1338,6 +1612,214 @@ public func FfiConverterTypeVibrationListener_lift(_ pointer: UnsafeMutableRawPo
 #endif
 public func FfiConverterTypeVibrationListener_lower(_ value: VibrationListener) -> UnsafeMutableRawPointer {
     return FfiConverterTypeVibrationListener.lower(value)
+}
+
+
+/**
+ * Who an app is (recorded in the serving lease and in `_apps`).
+ */
+public struct AppInfo {
+    /**
+     * Reverse-DNS id or a slug (`org.example.notebook`).
+     */
+    public var id: String
+    public var name: String?
+    public var version: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Reverse-DNS id or a slug (`org.example.notebook`).
+         */id: String, name: String?, version: String?) {
+        self.id = id
+        self.name = name
+        self.version = version
+    }
+}
+
+
+
+extension AppInfo: Equatable, Hashable {
+    public static func ==(lhs: AppInfo, rhs: AppInfo) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.version != rhs.version {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(name)
+        hasher.combine(version)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppInfo {
+        return
+            try AppInfo(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                version: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppInfo_lift(_ buf: RustBuffer) throws -> AppInfo {
+    return try FfiConverterTypeAppInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppInfo_lower(_ value: AppInfo) -> RustBuffer {
+    return FfiConverterTypeAppInfo.lower(value)
+}
+
+
+/**
+ * One `_apps` row.
+ */
+public struct AppRecord {
+    public var appId: String
+    public var name: String
+    public var version: String?
+    public var libVersion: String
+    public var platform: String
+    public var tables: [String]
+    public var firstSeen: String
+    public var lastSeen: String
+    public var note: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(appId: String, name: String, version: String?, libVersion: String, platform: String, tables: [String], firstSeen: String, lastSeen: String, note: String?) {
+        self.appId = appId
+        self.name = name
+        self.version = version
+        self.libVersion = libVersion
+        self.platform = platform
+        self.tables = tables
+        self.firstSeen = firstSeen
+        self.lastSeen = lastSeen
+        self.note = note
+    }
+}
+
+
+
+extension AppRecord: Equatable, Hashable {
+    public static func ==(lhs: AppRecord, rhs: AppRecord) -> Bool {
+        if lhs.appId != rhs.appId {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.version != rhs.version {
+            return false
+        }
+        if lhs.libVersion != rhs.libVersion {
+            return false
+        }
+        if lhs.platform != rhs.platform {
+            return false
+        }
+        if lhs.tables != rhs.tables {
+            return false
+        }
+        if lhs.firstSeen != rhs.firstSeen {
+            return false
+        }
+        if lhs.lastSeen != rhs.lastSeen {
+            return false
+        }
+        if lhs.note != rhs.note {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(appId)
+        hasher.combine(name)
+        hasher.combine(version)
+        hasher.combine(libVersion)
+        hasher.combine(platform)
+        hasher.combine(tables)
+        hasher.combine(firstSeen)
+        hasher.combine(lastSeen)
+        hasher.combine(note)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRecord {
+        return
+            try AppRecord(
+                appId: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                version: FfiConverterOptionString.read(from: &buf), 
+                libVersion: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                tables: FfiConverterSequenceString.read(from: &buf), 
+                firstSeen: FfiConverterString.read(from: &buf), 
+                lastSeen: FfiConverterString.read(from: &buf), 
+                note: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.appId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterString.write(value.libVersion, into: &buf)
+        FfiConverterString.write(value.platform, into: &buf)
+        FfiConverterSequenceString.write(value.tables, into: &buf)
+        FfiConverterString.write(value.firstSeen, into: &buf)
+        FfiConverterString.write(value.lastSeen, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRecord_lift(_ buf: RustBuffer) throws -> AppRecord {
+    return try FfiConverterTypeAppRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRecord_lower(_ value: AppRecord) -> RustBuffer {
+    return FfiConverterTypeAppRecord.lower(value)
 }
 
 
@@ -1543,6 +2025,94 @@ public func FfiConverterTypeFfiRow_lower(_ value: FfiRow) -> RustBuffer {
 
 
 /**
+ * The answer to a knock (connection-protocol.md section 4). `decision`
+ * is `"allow"` (admitted — talk normally now), `"pending"` (parked for
+ * the owner), `"deny"`, or `None` when the peer answered nothing at all
+ * (knocks are rate-limited and dropped in silence).
+ */
+public struct KnockResult {
+    public var id: String
+    public var decision: String?
+    public var decidedBy: String?
+    public var reason: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, decision: String?, decidedBy: String?, reason: String?) {
+        self.id = id
+        self.decision = decision
+        self.decidedBy = decidedBy
+        self.reason = reason
+    }
+}
+
+
+
+extension KnockResult: Equatable, Hashable {
+    public static func ==(lhs: KnockResult, rhs: KnockResult) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.decision != rhs.decision {
+            return false
+        }
+        if lhs.decidedBy != rhs.decidedBy {
+            return false
+        }
+        if lhs.reason != rhs.reason {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(decision)
+        hasher.combine(decidedBy)
+        hasher.combine(reason)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKnockResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KnockResult {
+        return
+            try KnockResult(
+                id: FfiConverterString.read(from: &buf), 
+                decision: FfiConverterOptionString.read(from: &buf), 
+                decidedBy: FfiConverterOptionString.read(from: &buf), 
+                reason: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KnockResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.decision, into: &buf)
+        FfiConverterOptionString.write(value.decidedBy, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKnockResult_lift(_ buf: RustBuffer) throws -> KnockResult {
+    return try FfiConverterTypeKnockResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKnockResult_lower(_ value: KnockResult) -> RustBuffer {
+    return FfiConverterTypeKnockResult.lower(value)
+}
+
+
+/**
  * A successful query/execute: rows plus the `rsntr:Done` trailer facts.
  * A sparql CONSTRUCT/DESCRIBE answers with `turtle` set and no rows.
  */
@@ -1738,6 +2308,182 @@ public func FfiConverterTypeSendReceipt_lower(_ value: SendReceipt) -> RustBuffe
 }
 
 
+/**
+ * Who holds the directory's serving lease.
+ */
+public struct ServingInfo {
+    public var pid: UInt32
+    public var appId: String
+    public var appName: String?
+    public var appVersion: String?
+    public var startedAt: String
+    /**
+     * True when this very process holds it.
+     */
+    public var isSelf: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pid: UInt32, appId: String, appName: String?, appVersion: String?, startedAt: String, 
+        /**
+         * True when this very process holds it.
+         */isSelf: Bool) {
+        self.pid = pid
+        self.appId = appId
+        self.appName = appName
+        self.appVersion = appVersion
+        self.startedAt = startedAt
+        self.isSelf = isSelf
+    }
+}
+
+
+
+extension ServingInfo: Equatable, Hashable {
+    public static func ==(lhs: ServingInfo, rhs: ServingInfo) -> Bool {
+        if lhs.pid != rhs.pid {
+            return false
+        }
+        if lhs.appId != rhs.appId {
+            return false
+        }
+        if lhs.appName != rhs.appName {
+            return false
+        }
+        if lhs.appVersion != rhs.appVersion {
+            return false
+        }
+        if lhs.startedAt != rhs.startedAt {
+            return false
+        }
+        if lhs.isSelf != rhs.isSelf {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(pid)
+        hasher.combine(appId)
+        hasher.combine(appName)
+        hasher.combine(appVersion)
+        hasher.combine(startedAt)
+        hasher.combine(isSelf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServingInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServingInfo {
+        return
+            try ServingInfo(
+                pid: FfiConverterUInt32.read(from: &buf), 
+                appId: FfiConverterString.read(from: &buf), 
+                appName: FfiConverterOptionString.read(from: &buf), 
+                appVersion: FfiConverterOptionString.read(from: &buf), 
+                startedAt: FfiConverterString.read(from: &buf), 
+                isSelf: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ServingInfo, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.pid, into: &buf)
+        FfiConverterString.write(value.appId, into: &buf)
+        FfiConverterOptionString.write(value.appName, into: &buf)
+        FfiConverterOptionString.write(value.appVersion, into: &buf)
+        FfiConverterString.write(value.startedAt, into: &buf)
+        FfiConverterBool.write(value.isSelf, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServingInfo_lift(_ buf: RustBuffer) throws -> ServingInfo {
+    return try FfiConverterTypeServingInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServingInfo_lower(_ value: ServingInfo) -> RustBuffer {
+    return FfiConverterTypeServingInfo.lower(value)
+}
+
+
+/**
+ * A table an app declares as its own, with its description.
+ */
+public struct TableDecl {
+    public var name: String
+    public var comment: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, comment: String) {
+        self.name = name
+        self.comment = comment
+    }
+}
+
+
+
+extension TableDecl: Equatable, Hashable {
+    public static func ==(lhs: TableDecl, rhs: TableDecl) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.comment != rhs.comment {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(comment)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableDecl: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableDecl {
+        return
+            try TableDecl(
+                name: FfiConverterString.read(from: &buf), 
+                comment: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableDecl, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.comment, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableDecl_lift(_ buf: RustBuffer) throws -> TableDecl {
+    return try FfiConverterTypeTableDecl.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableDecl_lower(_ value: TableDecl) -> RustBuffer {
+    return FfiConverterTypeTableDecl.lower(value)
+}
+
+
 public enum FfiError {
 
     
@@ -1751,6 +2497,13 @@ public enum FfiError {
      * The serving side's authenticator or policy said no.
      */
     case Denied(reason: String
+    )
+    /**
+     * Another process holds the directory's serving lease; `holder`
+     * names it when its record is readable. Not an error for an app
+     * that is content to be a client: use the owner channel.
+     */
+    case AlreadyServing(holder: ServingInfo?
     )
 }
 
@@ -1774,6 +2527,9 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
         case 2: return .Denied(
             reason: try FfiConverterString.read(from: &buf)
             )
+        case 3: return .AlreadyServing(
+            holder: try FfiConverterOptionTypeServingInfo.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1794,6 +2550,11 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
         case let .Denied(reason):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(reason, into: &buf)
+            
+        
+        case let .AlreadyServing(holder):
+            writeInt(&buf, Int32(3))
+            FfiConverterOptionTypeServingInfo.write(holder, into: &buf)
             
         }
     }
@@ -1909,6 +2670,162 @@ extension FfiValue: Equatable, Hashable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Where a call would go right now.
+ */
+
+public enum RouteKind {
+    
+    /**
+     * This process serves the directory.
+     */
+    case serving
+    /**
+     * Another process serves it; the owner channel carries the call.
+     */
+    case socket
+    /**
+     * Nobody serves it; this `Node`'s in-process pipeline.
+     */
+    case local
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRouteKind: FfiConverterRustBuffer {
+    typealias SwiftType = RouteKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RouteKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .serving
+        
+        case 2: return .socket
+        
+        case 3: return .local
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RouteKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .serving:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .socket:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .local:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRouteKind_lift(_ buf: RustBuffer) throws -> RouteKind {
+    return try FfiConverterTypeRouteKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRouteKind_lower(_ value: RouteKind) -> RustBuffer {
+    return FfiConverterTypeRouteKind.lower(value)
+}
+
+
+
+extension RouteKind: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * What `resume()` does about serving.
+ */
+
+public enum ServePolicy {
+    
+    /**
+     * Take the lease when nobody holds it (the foreground app serves).
+     */
+    case serveIfFree
+    /**
+     * Never serve; always a client of whoever does (or in-process).
+     */
+    case clientOnly
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServePolicy: FfiConverterRustBuffer {
+    typealias SwiftType = ServePolicy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServePolicy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .serveIfFree
+        
+        case 2: return .clientOnly
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ServePolicy, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .serveIfFree:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .clientOnly:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServePolicy_lift(_ buf: RustBuffer) throws -> ServePolicy {
+    return try FfiConverterTypeServePolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServePolicy_lower(_ value: ServePolicy) -> RustBuffer {
+    return FfiConverterTypeServePolicy.lower(value)
+}
+
+
+
+extension ServePolicy: Equatable, Hashable {}
+
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1960,6 +2877,54 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppInfo: FfiConverterRustBuffer {
+    typealias SwiftType = AppInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeServingInfo: FfiConverterRustBuffer {
+    typealias SwiftType = ServingInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeServingInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeServingInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1977,6 +2942,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [AppRecord]
+
+    public static func write(_ value: [AppRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppRecord.read(from: &buf))
         }
         return seq
     }
@@ -2035,6 +3025,31 @@ fileprivate struct FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeTableDecl: FfiConverterRustBuffer {
+    typealias SwiftType = [TableDecl]
+
+    public static func write(_ value: [TableDecl], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableDecl.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableDecl] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableDecl]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableDecl.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiValue: FfiConverterRustBuffer {
     typealias SwiftType = [FfiValue]
 
@@ -2081,25 +3096,43 @@ private var initializationResult: InitializationResult = {
     if (uniffi_resonator_ffi_checksum_method_node_add_peer() != 25651) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_resonator_ffi_checksum_method_node_apps() != 50620) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_resonator_ffi_checksum_method_node_chat_init() != 21198) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_resonator_ffi_checksum_method_node_chat_log() != 40246) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_node_chat_send() != 29790) {
+    if (uniffi_resonator_ffi_checksum_method_node_chat_send() != 10291) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_close() != 1312) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_current_route() != 18880) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_resonator_ffi_checksum_method_node_db_path() != 22430) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_resonator_ffi_checksum_method_node_declare_tables() != 60411) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_resonator_ffi_checksum_method_node_endpoint_id() != 1104) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_node_entrain() != 42183) {
+    if (uniffi_resonator_ffi_checksum_method_node_entrain() != 32631) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_node_is_serving() != 6494) {
+    if (uniffi_resonator_ffi_checksum_method_node_is_serving() != 38621) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_is_shared_serving() != 65495) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_knock() != 34135) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_resonator_ffi_checksum_method_node_local_execute() != 30344) {
@@ -2111,28 +3144,49 @@ private var initializationResult: InitializationResult = {
     if (uniffi_resonator_ffi_checksum_method_node_query_peer() != 24285) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_node_serve() != 16508) {
+    if (uniffi_resonator_ffi_checksum_method_node_resume() != 46568) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_serve() != 43145) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_serve_web() != 36507) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_serving_info() != 25341) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_resonator_ffi_checksum_method_node_sparql() != 11957) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_node_stop() != 19991) {
+    if (uniffi_resonator_ffi_checksum_method_node_stop() != 39956) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_stop_web() != 17221) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_suspend() != 1276) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_resonator_ffi_checksum_method_node_ticket() != 17519) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_node_wake_outbox() != 7461) {
+    if (uniffi_resonator_ffi_checksum_method_node_wake_outbox() != 24394) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_method_node_web_url() != 25140) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_resonator_ffi_checksum_method_vibrationlistener_on_vibration() != 63114) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_method_vibrationlistener_on_end() != 58233) {
+    if (uniffi_resonator_ffi_checksum_method_vibrationlistener_on_end() != 3220) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_resonator_ffi_checksum_constructor_node_new() != 30471) {
+    if (uniffi_resonator_ffi_checksum_constructor_node_new() != 30631) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_resonator_ffi_checksum_constructor_node_open() != 108) {
         return InitializationResult.apiChecksumMismatch
     }
 

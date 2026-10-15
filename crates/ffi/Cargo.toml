@@ -19,10 +19,15 @@ required-features = ["bindgen"]
 default = []
 # The uniffi-bindgen CLI (mobile/build-*.sh); host tooling only.
 bindgen = ["uniffi/cli"]
+# The loopback web console (axum) for WebView shells (ios/ app).
+web = ["rsntr/web", "dep:resonator-web"]
 
 [dependencies]
-# No mods (extism/wasmtime) and no web (axum) on mobile targets.
+# No mods (extism/wasmtime) on mobile targets; the web server (axum) is
+# opt-in via the `web` feature for apps that show the console in a
+# WebView.
 rsntr = { path = "../cli", default-features = false }
+resonator-web = { path = "../web", optional = true }
 resonator-node = { path = "../node" }
 resonator-protocol = { path = "../protocol" }
 resonator-transport = { path = "../transport" }

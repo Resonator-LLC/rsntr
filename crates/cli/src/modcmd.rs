@@ -179,3 +179,173 @@ pub fn describe(
     }
     resonator_mods::describe_wasm(wasm, default_timeout_ms).map_err(|e| anyhow::anyhow!("{e}"))
 }
+
+// ---------------------------------------------------------------------
+// Remote install: `rsntr mod push` / `rsntr mod rm --peer`
+// ---------------------------------------------------------------------
+
+/// Imports `wasm_path` into this node's own blob store so the target can
+/// fetch it back, returning the `blake3:<hex>` hash and byte size. When
+/// this node's daemon holds the store lock, the import is delegated to
+/// it over the owner-lane `mod-install` affordance (one path param);
+/// otherwise it runs in-process. Mirrors the chat attachment path.
+pub async fn import_own_wasm(dir: &Path, wasm_path: &Path) -> Result<(String, u64)> {
+    use anyhow::Context;
+    let ch = OwnerChannel::open(dir, Prefer::Auto).await?;
+    if ch.is_socket() {
+        let abs = std::path::absolute(wasm_path)
+            .with_context(|| format!("resolving {}", wasm_path.display()))?;
+        let mut request = resonator_protocol::Request::new(
+            resonator_protocol::RequestKind::Execute,
+            "mod-install",
+            "",
+        );
+        request.params = vec![Value::Text(abs.to_string_lossy().into_owned())];
+        let id = request.id_string();
+        match ch.send(&request.to_envelope(), &id).await? {
+            crate::client::QueryOutcome::Rows { columns, rows, .. } => {
+                let row = rows.first().context("import returned no row")?;
+                let hash = cell(&columns, row, "hash").context("import returned no hash")?;
+                let bytes = cell(&columns, row, "bytes")
+                    .and_then(|b| b.parse().ok())
+                    .unwrap_or(0);
+                Ok((hash, bytes))
+            }
+            crate::client::QueryOutcome::Denied(d) => {
+                bail!("blob import denied: {}", d.reason.unwrap_or_default())
+            }
+            crate::client::QueryOutcome::Failed(e) => {
+                bail!(
+                    "blob import failed [{}]: {}",
+                    e.code,
+                    e.reason.unwrap_or_default()
+                )
+            }
+            other => bail!("unexpected blob import response: {other:?}"),
+        }
+    } else {
+        let (hash, bytes) = resonator_transport::blob_import(&dir.join("blobs"), wasm_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("importing {}: {e}", wasm_path.display()))?;
+        Ok((format!("blake3:{hash}"), bytes))
+    }
+}
+
+fn cell(columns: &[String], row: &resonator_protocol::Row, name: &str) -> Option<String> {
+    let i = columns.iter().position(|c| c == name)?;
+    row.cells
+        .iter()
+        .find(|(n, _)| n == &columns[i])
+        .and_then(|(_, v)| match v {
+            Value::Text(t) => Some(t.clone()),
+            Value::Integer(n) => Some(n.to_string()),
+            _ => None,
+        })
+}
+
+/// This node's serving addresses (its daemon's blob provider), so the
+/// target fetches the wasm from the right endpoint. Empty when not
+/// serving.
+fn own_serving_addrs(dir: &Path) -> Vec<String> {
+    let Ok(conn) = crate::store::open_db(dir) else {
+        return Vec::new();
+    };
+    resonator_node::get_rsntr(&conn, "serving_addrs")
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Builds the `rsntr:ModInstall` Turtle signal.
+#[allow(clippy::too_many_arguments)]
+fn install_turtle(
+    name: &str,
+    hash: &str,
+    bytes: u64,
+    caps: &[String],
+    addrs: &[String],
+    timeout_ms: Option<u64>,
+    memory_mb: Option<u64>,
+    note: Option<&str>,
+) -> String {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut t = format!(
+        "[] a rsntr:ModInstall ;\n  rsntr:name \"{}\" ;\n  rsntr:hash \"{}\" ;\n  rsntr:bytes {}",
+        esc(name),
+        esc(hash),
+        bytes
+    );
+    for c in caps {
+        t.push_str(&format!(" ;\n  rsntr:caps \"{}\"", esc(c)));
+    }
+    for a in addrs {
+        t.push_str(&format!(" ;\n  rsntr:addr \"{}\"", esc(a)));
+    }
+    if let Some(ms) = timeout_ms {
+        t.push_str(&format!(" ;\n  rsntr:timeoutMs {ms}"));
+    }
+    if let Some(mb) = memory_mb {
+        t.push_str(&format!(" ;\n  rsntr:memoryMb {mb}"));
+    }
+    if let Some(n) = note {
+        t.push_str(&format!(" ;\n  rsntr:note \"{}\"", esc(n)));
+    }
+    t.push_str(" .\n");
+    t
+}
+
+/// `rsntr mod push <peer> <name> <file>`: import the wasm locally, then
+/// send the `mod-install` Execute to `peer`.
+#[allow(clippy::too_many_arguments)]
+pub async fn mod_push(
+    dir: &Path,
+    peer: &str,
+    name: &str,
+    wasm_path: &Path,
+    caps: &[String],
+    timeout_ms: Option<u64>,
+    memory_mb: Option<u64>,
+    note: Option<&str>,
+    offline: bool,
+) -> Result<crate::client::QueryReport> {
+    check_name(name)?;
+    let (hash, bytes) = import_own_wasm(dir, wasm_path).await?;
+    let addrs = own_serving_addrs(dir);
+    let turtle = install_turtle(
+        name, &hash, bytes, caps, &addrs, timeout_ms, memory_mb, note,
+    );
+    crate::client::run_statement(
+        dir,
+        peer,
+        resonator_protocol::RequestKind::Execute,
+        "mod-install",
+        &turtle,
+        vec![],
+        offline,
+        None,
+    )
+    .await
+}
+
+/// `rsntr mod rm --peer <peer> <name>`: send the `mod-install` remove
+/// verb to `peer`.
+pub async fn mod_remove_remote(
+    dir: &Path,
+    peer: &str,
+    name: &str,
+    offline: bool,
+) -> Result<crate::client::QueryReport> {
+    check_name(name)?;
+    let esc = name.replace('\\', "\\\\").replace('"', "\\\"");
+    let turtle = format!("[] a rsntr:ModRemove ;\n  rsntr:name \"{esc}\" .\n");
+    crate::client::run_statement(
+        dir,
+        peer,
+        resonator_protocol::RequestKind::Execute,
+        "mod-install",
+        &turtle,
+        vec![],
+        offline,
+        None,
+    )
+    .await
+}

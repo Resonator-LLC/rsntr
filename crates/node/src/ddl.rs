@@ -131,6 +131,14 @@ fn ensure_media_accepts_column(conn: &Connection) -> Result<(), NodeError> {
 /// point's action on that table, which keeps "the projection never lies"
 /// true. `fields` is a JSON array of `{name, datatype, required, default,
 /// one_of, hint}` objects; `params_order` a JSON array of field names.
+/// The well-known Sympathetic point that vibrates on any `_inbox`
+/// write, so an owner UI can entrain it and update its pending-requests
+/// view live (mirrors the chat-inbox point). The vibration hook already
+/// signals table `_inbox`; this row makes the point exist and, being
+/// policy-filtered, it is visible only to observers who may entrain
+/// `_inbox` (the owner).
+pub const INBOX_POINT: &str = "urn:rsntr:inbox";
+
 pub const PROJECTION_TABLE_DDL: &str = "\
 CREATE TABLE IF NOT EXISTS _projection (
   point_iri       TEXT PRIMARY KEY,  -- stable IRI, minted by this node
@@ -180,7 +188,7 @@ pub fn ensure_modulations_table(conn: &Connection) -> Result<(), NodeError> {
 /// The modulations a fresh node serves. `chat` is builtin (PLAN sec 5);
 /// its user-space tables are ensured by the handler, and `rsntr chat
 /// init` adds the projection points and policy rows that make it useful.
-pub const DEFAULT_MODS: [&str; 7] = [
+pub const DEFAULT_MODS: [&str; 10] = [
     "help",
     "sql-sqlite",
     "sparql",
@@ -188,11 +196,79 @@ pub const DEFAULT_MODS: [&str; 7] = [
     "media",
     "audio-duplex",
     "chat",
+    "mod-install",
+    "pages",
+    "system",
 ];
+
+/// The schema this build produces. Bump when [`ensure_node_tables`]
+/// gains anything, so a database migrated by an older build is brought
+/// up on its next open and a current one is opened without writes.
+pub const SCHEMA_VERSION: i64 = 3;
+/// The oldest schema version a reader must understand to open a
+/// database this build migrated. Bump ONLY for a change that is not
+/// additive (every change so far is: new tables, `ADD COLUMN`, seeds).
+pub const MIN_READER_VERSION: i64 = 1;
+/// `_rsntr` keys carrying the two versions.
+pub const SCHEMA_VERSION_KEY: &str = "schema_version";
+pub const MIN_READER_VERSION_KEY: &str = "min_reader_version";
+
+fn rsntr_table_exists(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '_rsntr'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+fn rsntr_i64(conn: &Connection, key: &str) -> Option<i64> {
+    get_rsntr(conn, key).and_then(|v| v.trim().parse().ok())
+}
+
+/// Refuses a database whose declared minimum reader version is above
+/// this build's schema, before anything else touches it: an older app
+/// must never mis-read (or half-migrate) a newer database.
+pub fn check_schema_compat(conn: &Connection) -> Result<(), NodeError> {
+    if !rsntr_table_exists(conn) {
+        return Ok(());
+    }
+    match rsntr_i64(conn, MIN_READER_VERSION_KEY) {
+        Some(required) if required > SCHEMA_VERSION => Err(NodeError::SchemaTooNew {
+            required,
+            supported: SCHEMA_VERSION,
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// True when the database already carries this build's schema, so an
+/// open needs no DDL and no seed writes (several apps opening one
+/// database must not each take the write lock to change nothing).
+pub fn schema_is_current(conn: &Connection) -> bool {
+    rsntr_table_exists(conn) && rsntr_i64(conn, SCHEMA_VERSION_KEY) == Some(SCHEMA_VERSION)
+}
+
+/// Records this build's schema and minimum reader versions after a full
+/// [`ensure_node_tables`]; never lowers a value a newer build wrote.
+pub fn stamp_schema_version(conn: &Connection) -> Result<(), NodeError> {
+    for (key, mine) in [
+        (SCHEMA_VERSION_KEY, SCHEMA_VERSION),
+        (MIN_READER_VERSION_KEY, MIN_READER_VERSION),
+    ] {
+        if rsntr_i64(conn, key).is_none_or(|stored| stored < mine) {
+            set_rsntr(conn, key, &mine.to_string())?;
+        }
+    }
+    Ok(())
+}
 
 /// Creates every reserved table this crate owns, plus the authenticator's
 /// tables (`_policy`, `_scripts`, `_decisions`) and the SPARQL store
-/// schema. Idempotent.
+/// schema. Idempotent. Callers normally reach it through
+/// [`crate::db::migrate`], which wraps it in one immediate transaction
+/// and skips it when [`schema_is_current`].
 pub fn ensure_node_tables(conn: &Connection) -> Result<(), NodeError> {
     for ddl in [
         PEERS_DDL,
@@ -204,12 +280,20 @@ pub fn ensure_node_tables(conn: &Connection) -> Result<(), NodeError> {
         MEDIA_DDL,
         PROJECTION_TABLE_DDL,
         MODULATIONS_DDL,
+        PAGES_DDL,
         COMMENTS_DDL,
+        crate::apps::APPS_DDL,
     ] {
         conn.execute_batch(ddl)?;
     }
     ensure_media_accepts_column(conn)?;
+    crate::chat::ensure_chat_columns(conn)?;
     migrate_modulation(conn, "audio-duplex")?;
+    migrate_modulation(conn, "mod-install")?;
+    migrate_modulation(conn, "pages")?;
+    migrate_modulation(conn, "system")?;
+    migrate_auth_chain_human(conn)?;
+    seed_inbox_point(conn)?;
     resonator_authenticator::ensure_auth_tables(conn)?;
     resonator_sparql::store::ensure_schema(conn).map_err(|e| NodeError::Sparql(e.0))?;
     seed_table_comments(conn)?;
@@ -221,6 +305,15 @@ pub fn ensure_node_tables(conn: &Connection) -> Result<(), NodeError> {
 /// one for any table that lacks it: a database a human can read starts
 /// with knowing what each table is for. Scaffolds (chat init, example
 /// mod seeds) ship comments for the tables they create.
+pub const PAGES_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS pages (
+  name         TEXT PRIMARY KEY,
+  html         TEXT NOT NULL,
+  content_type TEXT NOT NULL DEFAULT 'text/html; charset=utf-8',
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+";
+
 pub const COMMENTS_DDL: &str = "\
 CREATE TABLE IF NOT EXISTS _comments (
   name        TEXT PRIMARY KEY,   -- table name
@@ -235,8 +328,16 @@ CREATE TABLE IF NOT EXISTS _comments (
 fn seed_table_comments(conn: &Connection) -> Result<(), NodeError> {
     const SEED: &[(&str, &str)] = &[
         (
+            "pages",
+            "published HTML pages served as holograms by the `pages` modulation (docs/hologram-protocol.md)",
+        ),
+        (
             "_rsntr",
             "node key/value config: endpoint id, advertised modulations, hello hint, help text",
+        ),
+        (
+            "_apps",
+            "apps sharing this node: id, name, version, platform, the tables each one declares, first/last seen",
         ),
         (
             "_peers",
@@ -330,16 +431,17 @@ pub fn set_rsntr(conn: &Connection, key: &str, value: &str) -> Result<(), NodeEr
 
 /// Seeds the `_rsntr` defaults a serving node needs, without overwriting
 /// anything the owner already set: envelope_version, modulations,
-/// encodings, and an auth_chain of the cache and policy tiers (script
-/// and human are registered but only run when the owner adds them to
-/// `auth_chain`). Idempotent.
+/// encodings, and an auth_chain of the cache, policy, and human tiers
+/// (unmatched requests park in `_inbox` for the owner instead of
+/// tail-denying; script is registered but only runs when the owner adds
+/// it to `auth_chain`). Idempotent.
 pub fn seed_rsntr_defaults(conn: &Connection) -> Result<(), NodeError> {
     let mods = serde_json::to_string(&DEFAULT_MODS).expect("static json");
     for (key, value) in [
         ("envelope_version", ENVELOPE_VERSION),
         ("modulations", mods.as_str()),
         ("encodings", r#"["turtle"]"#),
-        ("auth_chain", r#"["cache","policy"]"#),
+        ("auth_chain", r#"["cache","policy","human"]"#),
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO _rsntr (key, value) VALUES (?1, ?2)",
@@ -355,6 +457,37 @@ pub fn seed_rsntr_defaults(conn: &Connection) -> Result<(), NodeError> {
 /// never serves a new builtin. Runs at most once per database per
 /// modulation (a marker key), so an operator who later removes the tag
 /// keeps it removed.
+/// Upgrades a pre-human-tier database's default `auth_chain` so
+/// unmatched requests park for the owner (the cross-peer approval
+/// flow). Applies only when the stored value is exactly the old default
+/// `["cache","policy"]` -- an owner-customized chain is never touched --
+/// and at most once (marker key), so a later manual downgrade sticks.
+fn migrate_auth_chain_human(conn: &Connection) -> Result<(), NodeError> {
+    const MARKER: &str = "migrated_auth_chain_human";
+    if get_rsntr(conn, MARKER).is_some() {
+        return Ok(());
+    }
+    if get_rsntr(conn, "auth_chain").as_deref() == Some(r#"["cache","policy"]"#) {
+        set_rsntr(conn, "auth_chain", r#"["cache","policy","human"]"#)?;
+    }
+    set_rsntr(conn, MARKER, "1")?;
+    Ok(())
+}
+
+/// Ensures the core `urn:rsntr:inbox` Sympathetic point exists so the
+/// owner UI can entrain live pending-request updates. Idempotent
+/// (INSERT OR IGNORE on the point IRI).
+fn seed_inbox_point(conn: &Connection) -> Result<(), NodeError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO _projection \
+           (point_iri, kind, label, ord, resource, note) \
+         VALUES (?1, 'sympathetic', 'a request is waiting', 90, '_inbox', \
+                 'core inbox point')",
+        [INBOX_POINT],
+    )?;
+    Ok(())
+}
+
 fn migrate_modulation(conn: &Connection, name: &str) -> Result<(), NodeError> {
     let marker = format!("migrated_mod_{name}");
     if get_rsntr(conn, &marker).is_some() {
@@ -453,6 +586,7 @@ mod tests {
             "_media",
             "_projection",
             "_modulations",
+            "_apps",
             "_policy",
             "_scripts",
             "_decisions",

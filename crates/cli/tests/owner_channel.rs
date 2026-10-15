@@ -348,6 +348,12 @@ async fn file_send_while_serving_imports_through_the_node() {
     let (hash, bytes) = report.blob.clone().expect("blob attached");
     assert!(hash.starts_with("blake3:"));
     assert_eq!(bytes, data.len() as u64);
+    // The attachment was staged in the shared directory for the serving
+    // process and removed once its store had copied it.
+    let staged = std::fs::read_dir(ta.path().join(rsntr::chat::BLOBS_INBOX_DIR))
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(staged, 0, "staged copy removed after import");
 
     // Exactly one append: the delegated import's chat Execute deduped on
     // the message id instead of adding a note-to-self row.

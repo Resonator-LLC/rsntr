@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- Every app of the family that shares the node declares the same
+     sharedUserId, from its first release (an installed app cannot adopt
+     one later), and is signed with the same key (docs/shared-node.md). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sharedUserId="network.resonator.shared">
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:label="Resonator Demo">
         <activity android:name=".MainActivity" android:exported="true">

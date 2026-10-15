@@ -22,7 +22,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
 
@@ -155,16 +154,23 @@ impl HookRunner {
     /// aborted at shutdown.
     pub fn spawn(
         dir: PathBuf,
+        db: resonator_node::DbHandle,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     ) -> JoinHandle<()> {
         // Cursors snapshot before the task starts (and before the caller
         // installs the observer): a row committed right after serve
-        // start must not race the initialization and be skipped.
+        // start must not race the initialization and be skipped. They
+        // persist in `_rsntr` across serve runs, so a message that
+        // landed seconds before the previous server went away still
+        // runs its hook in the next one (the lease moves between apps).
         let self_id = store::node_id(&dir)
             .map(|id| id.to_string())
             .unwrap_or_default();
-        let mut chat_cursor = max_rowid(&dir, "chat_messages").unwrap_or(0);
-        let mut inbox_cursor = max_rowid(&dir, "_inbox").unwrap_or(0);
+        let (stored_chat, stored_inbox) = stored_cursors(&dir);
+        let mut chat_cursor = stored_chat
+            .unwrap_or_else(|| crate::events::max_rowid(&dir, "chat_messages").unwrap_or(0));
+        let mut inbox_cursor =
+            stored_inbox.unwrap_or_else(|| crate::events::max_rowid(&dir, "_inbox").unwrap_or(0));
         let mut hooks = load_enabled(&dir).unwrap_or_default();
         tokio::spawn(async move {
             while let Some(first) = rx.recv().await {
@@ -188,44 +194,64 @@ impl HookRunner {
                         Err(e) => tracing::warn!(error = %e, "reloading _hooks failed"),
                     }
                 }
+                let mut moved = false;
                 if dirty.contains("chat_messages") {
-                    match new_message_events(&dir, chat_cursor, &self_id) {
+                    match crate::events::new_message_events(&dir, chat_cursor, &self_id) {
                         Ok((cursor, events)) => {
+                            moved |= cursor != chat_cursor;
                             chat_cursor = cursor;
-                            dispatch(&hooks, "message", &events).await;
+                            let payloads: Vec<String> = events
+                                .iter()
+                                .map(|e| crate::events::message_json(e).to_string())
+                                .collect();
+                            dispatch(&hooks, "message", &payloads).await;
                         }
                         Err(e) => tracing::warn!(error = %e, "reading new chat messages failed"),
                     }
                 }
                 if dirty.contains("_inbox") {
-                    match new_inbox_events(&dir, inbox_cursor) {
+                    match crate::events::new_inbox_events(&dir, inbox_cursor) {
                         Ok((cursor, events)) => {
+                            moved |= cursor != inbox_cursor;
                             inbox_cursor = cursor;
-                            dispatch(&hooks, "inbox", &events).await;
+                            let payloads: Vec<String> = events
+                                .iter()
+                                .map(|e| crate::events::inbox_json(e).to_string())
+                                .collect();
+                            dispatch(&hooks, "inbox", &payloads).await;
                         }
                         Err(e) => tracing::warn!(error = %e, "reading new inbox rows failed"),
                     }
+                }
+                if moved {
+                    // Through the pipeline's own connection: an own
+                    // commit, so the watcher never mistakes it for a
+                    // foreign write.
+                    let (c, i) = (chat_cursor, inbox_cursor);
+                    let _ = db
+                        .call(move |conn| {
+                            resonator_node::set_rsntr(conn, CURSOR_CHAT_KEY, &c.to_string())?;
+                            resonator_node::set_rsntr(conn, CURSOR_INBOX_KEY, &i.to_string())
+                        })
+                        .await;
                 }
             }
         })
     }
 }
 
-fn max_rowid(dir: &Path, table: &str) -> Result<i64> {
-    let conn = store::open_db(dir)?;
-    let exists: i64 = conn.query_row(
-        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-        [table],
-        |r| r.get(0),
-    )?;
-    if exists == 0 {
-        return Ok(0);
-    }
-    Ok(conn.query_row(
-        &format!("SELECT COALESCE(max(rowid), 0) FROM \"{table}\""),
-        [],
-        |r| r.get(0),
-    )?)
+/// `_rsntr` keys holding the runner's last-seen rowids.
+pub const CURSOR_CHAT_KEY: &str = "hooks_cursor_chat";
+pub const CURSOR_INBOX_KEY: &str = "hooks_cursor_inbox";
+
+fn stored_cursors(dir: &Path) -> (Option<i64>, Option<i64>) {
+    let Ok(conn) = store::open_db(dir) else {
+        return (None, None);
+    };
+    let read = |key: &str| {
+        resonator_node::get_rsntr(&conn, key).and_then(|v| v.trim().parse::<i64>().ok())
+    };
+    (read(CURSOR_CHAT_KEY), read(CURSOR_INBOX_KEY))
 }
 
 fn load_enabled(dir: &Path) -> Result<Vec<HookRow>> {
@@ -253,90 +279,6 @@ fn load_enabled(dir: &Path) -> Result<Vec<HookRow>> {
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
-}
-
-/// New incoming messages past `cursor` as event payloads (own sends are
-/// skipped; a hook wakes on what arrived, not on what this node said).
-fn new_message_events(dir: &Path, cursor: i64, self_id: &str) -> Result<(i64, Vec<String>)> {
-    let conn = store::open_db(dir)?;
-    let mut stmt = conn.prepare(
-        "SELECT rowid, id, scope, sender, at, body, blob_hash, blob_name \
-         FROM chat_messages WHERE rowid > ?1 ORDER BY rowid",
-    )?;
-    let mut new_cursor = cursor;
-    let mut events = Vec::new();
-    let rows = stmt.query_map([cursor], |r| {
-        Ok((
-            r.get::<_, i64>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
-            r.get::<_, String>(3)?,
-            r.get::<_, String>(4)?,
-            r.get::<_, String>(5)?,
-            r.get::<_, Option<String>>(6)?,
-            r.get::<_, Option<String>>(7)?,
-        ))
-    })?;
-    for row in rows {
-        let (rowid, id, scope, sender, at, body, blob_hash, blob_name) = row?;
-        new_cursor = new_cursor.max(rowid);
-        if sender == self_id {
-            continue;
-        }
-        events.push(
-            json!({
-                "event": "message",
-                "id": id,
-                "scope": scope,
-                "from": sender,
-                "at": at,
-                "body": body,
-                "blob_hash": blob_hash,
-                "blob_name": blob_name,
-            })
-            .to_string(),
-        );
-    }
-    Ok((new_cursor, events))
-}
-
-/// New `_inbox` rows past `cursor` as event payloads.
-fn new_inbox_events(dir: &Path, cursor: i64) -> Result<(i64, Vec<String>)> {
-    let conn = store::open_db(dir)?;
-    let mut stmt = conn.prepare(
-        "SELECT rowid, request_id, peer, sql, params, received_at \
-         FROM _inbox WHERE rowid > ?1 ORDER BY rowid",
-    )?;
-    let mut new_cursor = cursor;
-    let mut events = Vec::new();
-    let rows = stmt.query_map([cursor], |r| {
-        Ok((
-            r.get::<_, i64>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?,
-            r.get::<_, Option<String>>(4)?,
-            r.get::<_, String>(5)?,
-        ))
-    })?;
-    for row in rows {
-        let (rowid, request_id, peer, sql, params, received_at) = row?;
-        new_cursor = new_cursor.max(rowid);
-        let sql = sql.unwrap_or_default();
-        let knock = sql.is_empty();
-        events.push(
-            json!({
-                "event": "inbox",
-                "id": request_id,
-                "peer": peer,
-                "kind": if knock { "knock" } else { "statement" },
-                "message": if knock { params.unwrap_or_default() } else { sql },
-                "received_at": received_at,
-            })
-            .to_string(),
-        );
-    }
-    Ok((new_cursor, events))
 }
 
 /// Runs every hook matching `event` for each payload, serialized.
@@ -369,14 +311,27 @@ async fn run_hook(hook: &HookRow, payload: &str) {
             return;
         }
     };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(payload.as_bytes()).await;
-        let _ = stdin.write_all(b"\n").await;
-        // Dropping closes the pipe; the hook sees EOF after one event.
-    }
     #[cfg(unix)]
     let pgid = child.id().map(|pid| pid as i32);
-    match tokio::time::timeout(hook_timeout(), child.wait()).await {
+    // Handing the event over is inside the deadline, not before it. A
+    // payload outgrows the 64 KiB a pipe holds in ordinary use (a
+    // parked `turtle load` chunk is 64 KiB of triples, a chat body may
+    // be 65536 bytes) and a hook that never reads its stdin (most of
+    // them; the manual's own example is a `touch`) leaves that write
+    // blocked for as long as the command runs. Waiting was already
+    // armed against a slow hook; writing was not, and the runner is one
+    // serialized task, so one such hook stopped every hook on the node.
+    let mut stdin = child.stdin.take();
+    let finished = tokio::time::timeout(hook_timeout(), async {
+        if let Some(mut pipe) = stdin.take() {
+            let _ = pipe.write_all(payload.as_bytes()).await;
+            let _ = pipe.write_all(b"\n").await;
+            // Dropping closes the pipe; the hook sees EOF after one event.
+        }
+        child.wait().await
+    })
+    .await;
+    match finished {
         Ok(Ok(status)) => {
             if !status.success() {
                 tracing::warn!(hook = hook.id, %status, "hook command failed");

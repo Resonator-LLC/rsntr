@@ -32,9 +32,9 @@ use resonator_protocol::{EnvelopeObject, Hello};
 
 pub use error::TransportError;
 pub use iroh_transport::{
-    AddrSink, AddrSource, BlobGate, BlobsConfig, IrohConfig, IrohRequestStream, IrohTransport,
-    PLAINTEXT_BANNER, blob_import, endpoint_id_from_secret, mint_ticket, parse_blob_hash,
-    parse_ticket,
+    AddrSink, AddrSource, BindPorts, BlobGate, BlobsConfig, IrohConfig, IrohRequestStream,
+    IrohTransport, PLAINTEXT_BANNER, PathReport, blob_import, endpoint_id_from_secret, mint_ticket,
+    parse_blob_hash, parse_ticket,
 };
 
 /// The envelope minor version this transport speaks (`rsntr:ver`); the major

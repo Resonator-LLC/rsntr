@@ -130,6 +130,13 @@ UPDATE _inbox SET decision = 'allow', decided_by = 'human'
 WHERE request_id = '01J9V6QK3M8ZT0R4Y2W6B8N1D5';
 ```
 
+Two rules make a parked knock usable as a status check:
+
+- **One pending row per peer.** A stranger who knocks again while a row is pending gets the same `rsntr:Decision "pending"` with the **same** `rsntr:id` (the pending row's), not a second row; the reason text names it ("pending id 01J9..."). Clients correlate by that id.
+- **Deny is durable.** `rsntr inbox answer <id> deny` on a knock also writes `_policy (peer_or_group = alice, table_name = '*', action = 'knock', effect = 'deny')` with a self-describing note, so alice's next knock is answered `deny` by the policy tier and never parks again. Deleting that row lets her knock again.
+
+A knock that answers nothing at all was dropped by the rate limit; retry later.
+
 ### 4.2 Admission is a _peers row
 
 Whichever tier decides, "allow" means one thing: alice gets a `_peers` row. That INSERT is the admission; from the next connection on, alice takes acceptance path A.

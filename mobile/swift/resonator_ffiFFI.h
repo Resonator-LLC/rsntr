@@ -309,9 +309,19 @@ void uniffi_resonator_ffi_fn_free_node(void*_Nonnull ptr, RustCallStatus *_Nonnu
 void*_Nonnull uniffi_resonator_ffi_fn_constructor_node_new(RustBuffer dir, int8_t offline, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_CONSTRUCTOR_NODE_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_CONSTRUCTOR_NODE_OPEN
+void*_Nonnull uniffi_resonator_ffi_fn_constructor_node_open(RustBuffer dir, int8_t offline, RustBuffer app, RustBuffer policy, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_ADD_PEER
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_ADD_PEER
 RustBuffer uniffi_resonator_ffi_fn_method_node_add_peer(void*_Nonnull ptr, RustBuffer name, RustBuffer ticket_or_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_APPS
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_APPS
+RustBuffer uniffi_resonator_ffi_fn_method_node_apps(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_CHAT_INIT
@@ -329,9 +339,24 @@ RustBuffer uniffi_resonator_ffi_fn_method_node_chat_log(void*_Nonnull ptr, RustB
 RustBuffer uniffi_resonator_ffi_fn_method_node_chat_send(void*_Nonnull ptr, RustBuffer target, RustBuffer text, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_CLOSE
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_CLOSE
+void uniffi_resonator_ffi_fn_method_node_close(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_CURRENT_ROUTE
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_CURRENT_ROUTE
+RustBuffer uniffi_resonator_ffi_fn_method_node_current_route(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_DB_PATH
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_DB_PATH
 RustBuffer uniffi_resonator_ffi_fn_method_node_db_path(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_DECLARE_TABLES
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_DECLARE_TABLES
+void uniffi_resonator_ffi_fn_method_node_declare_tables(void*_Nonnull ptr, RustBuffer tables, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_ENDPOINT_ID
@@ -349,6 +374,16 @@ void*_Nonnull uniffi_resonator_ffi_fn_method_node_entrain(void*_Nonnull ptr, Rus
 int8_t uniffi_resonator_ffi_fn_method_node_is_serving(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_IS_SHARED_SERVING
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_IS_SHARED_SERVING
+int8_t uniffi_resonator_ffi_fn_method_node_is_shared_serving(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_KNOCK
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_KNOCK
+RustBuffer uniffi_resonator_ffi_fn_method_node_knock(void*_Nonnull ptr, RustBuffer peer, RustBuffer message, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_LOCAL_EXECUTE
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_LOCAL_EXECUTE
 RustBuffer uniffi_resonator_ffi_fn_method_node_local_execute(void*_Nonnull ptr, RustBuffer signal, RustBuffer params, RustCallStatus *_Nonnull out_status
@@ -364,9 +399,24 @@ RustBuffer uniffi_resonator_ffi_fn_method_node_local_query(void*_Nonnull ptr, Ru
 RustBuffer uniffi_resonator_ffi_fn_method_node_query_peer(void*_Nonnull ptr, RustBuffer peer, RustBuffer signal, RustBuffer modulation, RustBuffer params, RustBuffer timeout_ms, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_RESUME
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_RESUME
+RustBuffer uniffi_resonator_ffi_fn_method_node_resume(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SERVE
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SERVE
 RustBuffer uniffi_resonator_ffi_fn_method_node_serve(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SERVE_WEB
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SERVE_WEB
+RustBuffer uniffi_resonator_ffi_fn_method_node_serve_web(void*_Nonnull ptr, int8_t rotate_token, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SERVING_INFO
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SERVING_INFO
+RustBuffer uniffi_resonator_ffi_fn_method_node_serving_info(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SPARQL
@@ -379,6 +429,16 @@ RustBuffer uniffi_resonator_ffi_fn_method_node_sparql(void*_Nonnull ptr, RustBuf
 void uniffi_resonator_ffi_fn_method_node_stop(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_STOP_WEB
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_STOP_WEB
+void uniffi_resonator_ffi_fn_method_node_stop_web(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SUSPEND
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_SUSPEND
+void uniffi_resonator_ffi_fn_method_node_suspend(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_TICKET
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_TICKET
 RustBuffer uniffi_resonator_ffi_fn_method_node_ticket(void*_Nonnull ptr, uint64_t wait_ms, RustCallStatus *_Nonnull out_status
@@ -387,6 +447,11 @@ RustBuffer uniffi_resonator_ffi_fn_method_node_ticket(void*_Nonnull ptr, uint64_
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_WAKE_OUTBOX
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_WAKE_OUTBOX
 void uniffi_resonator_ffi_fn_method_node_wake_outbox(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_WEB_URL
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_METHOD_NODE_WEB_URL
+RustBuffer uniffi_resonator_ffi_fn_method_node_web_url(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_FN_CLONE_VIBRATIONLISTENER
@@ -712,6 +777,12 @@ uint16_t uniffi_resonator_ffi_checksum_method_node_add_peer(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_APPS
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_APPS
+uint16_t uniffi_resonator_ffi_checksum_method_node_apps(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_CHAT_INIT
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_CHAT_INIT
 uint16_t uniffi_resonator_ffi_checksum_method_node_chat_init(void
@@ -730,9 +801,27 @@ uint16_t uniffi_resonator_ffi_checksum_method_node_chat_send(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_CLOSE
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_CLOSE
+uint16_t uniffi_resonator_ffi_checksum_method_node_close(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_CURRENT_ROUTE
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_CURRENT_ROUTE
+uint16_t uniffi_resonator_ffi_checksum_method_node_current_route(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_DB_PATH
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_DB_PATH
 uint16_t uniffi_resonator_ffi_checksum_method_node_db_path(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_DECLARE_TABLES
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_DECLARE_TABLES
+uint16_t uniffi_resonator_ffi_checksum_method_node_declare_tables(void
     
 );
 #endif
@@ -754,6 +843,18 @@ uint16_t uniffi_resonator_ffi_checksum_method_node_is_serving(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_IS_SHARED_SERVING
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_IS_SHARED_SERVING
+uint16_t uniffi_resonator_ffi_checksum_method_node_is_shared_serving(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_KNOCK
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_KNOCK
+uint16_t uniffi_resonator_ffi_checksum_method_node_knock(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_LOCAL_EXECUTE
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_LOCAL_EXECUTE
 uint16_t uniffi_resonator_ffi_checksum_method_node_local_execute(void
@@ -772,9 +873,27 @@ uint16_t uniffi_resonator_ffi_checksum_method_node_query_peer(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_RESUME
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_RESUME
+uint16_t uniffi_resonator_ffi_checksum_method_node_resume(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SERVE
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SERVE
 uint16_t uniffi_resonator_ffi_checksum_method_node_serve(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SERVE_WEB
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SERVE_WEB
+uint16_t uniffi_resonator_ffi_checksum_method_node_serve_web(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SERVING_INFO
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SERVING_INFO
+uint16_t uniffi_resonator_ffi_checksum_method_node_serving_info(void
     
 );
 #endif
@@ -790,6 +909,18 @@ uint16_t uniffi_resonator_ffi_checksum_method_node_stop(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_STOP_WEB
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_STOP_WEB
+uint16_t uniffi_resonator_ffi_checksum_method_node_stop_web(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SUSPEND
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_SUSPEND
+uint16_t uniffi_resonator_ffi_checksum_method_node_suspend(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_TICKET
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_TICKET
 uint16_t uniffi_resonator_ffi_checksum_method_node_ticket(void
@@ -799,6 +930,12 @@ uint16_t uniffi_resonator_ffi_checksum_method_node_ticket(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_WAKE_OUTBOX
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_WAKE_OUTBOX
 uint16_t uniffi_resonator_ffi_checksum_method_node_wake_outbox(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_WEB_URL
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_METHOD_NODE_WEB_URL
+uint16_t uniffi_resonator_ffi_checksum_method_node_web_url(void
     
 );
 #endif
@@ -817,6 +954,12 @@ uint16_t uniffi_resonator_ffi_checksum_method_vibrationlistener_on_end(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_CONSTRUCTOR_NODE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_CONSTRUCTOR_NODE_NEW
 uint16_t uniffi_resonator_ffi_checksum_constructor_node_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_CONSTRUCTOR_NODE_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_RESONATOR_FFI_CHECKSUM_CONSTRUCTOR_NODE_OPEN
+uint16_t uniffi_resonator_ffi_checksum_constructor_node_open(void
     
 );
 #endif

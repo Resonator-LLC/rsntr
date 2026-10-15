@@ -107,11 +107,15 @@ typed object and handed to the dispatcher, so the 256 KiB frame budget does
 not bind on this transport (relevant for `mod add`, section 5.2).
 
 In-process works always: with no node serving it is the only path, and WAL
-lets it run beside a serving node. Its known limitation is exactly recorded
-finding 1: writes commit on the CLI's connection, so the update hooks in the
-serving process do not fire. Sympathetic points do not vibrate, the outbox
-worker is not woken (its poll cadence catches up), and `rsntr chat watch`
-sees nothing until a re-read. In-process is correct but not live.
+lets it run beside a serving node. Recorded finding 1 (writes commit on the
+CLI's connection, so the serving process's update hook never fires) is
+closed since the shared-node work (docs/shared-node.md): every pipeline
+watches SQLite's data version, which moves only on other connections'
+commits, and signals its entrainments, the hook runner, the outbox, and
+the projection-changed point when another process wrote. An in-process
+write is therefore live for the serving process within a quarter second;
+the socket buys immediacy, the serving process's blob store, and push
+delivery, not correctness.
 
 ### 3.2 The control socket
 
@@ -121,15 +125,17 @@ next to `rsntr.db` and `rsntr.key`:
 - Created at serve start, mode 0600, owned by the serving uid. A leftover
   socket path from a crashed process is detected at bind time (connect
   refused) and unlinked before rebinding; a live socket (the connect
-  succeeds) is left alone, the node logs a warning and serves without a
-  control socket (the blob store's single-writer lock already prevents two
-  nodes serving one directory, so this only happens when a foreign process
-  squats the path). Removed on clean shutdown.
-- `sockaddr_un` caps socket paths at about 104 bytes on macOS. A node
-  directory deep enough to exceed the cap is reached through a short-lived
-  `/tmp/rsntr-<pid>-<n>` symlink alias for the bind/connect syscalls; the
-  socket inode itself always lives in the node directory and the alias is
-  removed immediately after.
+  succeeds) is left alone, the node logs a warning and serves without it
+  (the serving lease, `rsntr.serve.lock`, decides who serves; a live
+  socket here is a foreign process squatting the path). Removed on clean
+  shutdown.
+- `sockaddr_un` holds 104 bytes on Darwin and 108 on Linux, NUL included.
+  A node directory whose socket path does not fit is reached through a
+  short-lived per-process symlink alias in the temp dir for the
+  bind/connect syscalls; the socket inode itself always lives in the node
+  directory and the alias is removed immediately after. When even the
+  alias does not fit (an iOS app's folders), the serving process skips the
+  unix socket: the loopback transport below covers it.
 - The socket speaks exactly the framed envelope protocol: u32-LE
   length-prefixed self-contained Turtle documents, implied prefix block,
   256 KiB budget, byte-identical to the iroh stream encoding.
@@ -162,30 +168,58 @@ serving process's update hook, so Sympathetic points vibrate, `rsntr chat
 watch` sees the append immediately, and the outbox worker wakes. This closes
 recorded finding 1 for every command that uses the socket.
 
+### 3.2b Loopback TCP with a token
+
+Every serving process also listens on `127.0.0.1:<ephemeral>` and writes
+`<dir>/rsntr.owner` (tmp+rename, mode 0600): `{"port", "token" (32 random
+bytes, hex), "pid", "app"}`. A connection writes the token line first; the
+server answers one byte `+` and the framed envelope protocol of section
+3.2 follows unchanged (one request per connection, `rsntr:Entrain` keeps
+the connection open, closing is damping). A wrong token closes the
+connection without a byte. Possession of the directory is the authority
+here too: the token lives in it, readable only by the owner. This is the
+owner channel on Windows, in iOS Files-app folders (whose paths exceed
+`sun_path`), and anywhere else a unix socket cannot be bound; the record is
+removed on clean shutdown and ignored when its port refuses or the token
+is rejected.
+
 ### 3.3 Selection
 
-The CLI selects the transport per invocation:
+The CLI and the embeddings select the transport per invocation:
 
-- Try `<dir>/rsntr.sock` first. If it connects, use it.
+- Try `<dir>/rsntr.sock` where it exists, then `rsntr.owner`. If one
+  connects, use it.
 - Otherwise fall back to in-process.
-- `--socket` forces the socket and fails with a clear error when no node is
-  serving. `--local` forces in-process even when a node serves (writes are
-  then not live; the flag exists for debugging and for scripted bulk work
-  that does not want to compete with live traffic).
+- `--socket` forces the owner channel and fails with a clear error when no
+  node is serving (naming the lease holder when one exists without a
+  reachable channel). `--local` forces in-process even when a node serves
+  (its writes still reach the serving process through the watcher; the
+  flag exists for debugging and for scripted bulk work that does not want
+  to compete with live traffic).
 
-Commands that only make sense live require the socket and fail without it
-rather than silently watching nothing. (In v1 the one such command,
-`chat watch`, still reaches the serving node by iroh self-dial with an
-ephemeral identity it admits for its own lifetime; converting it to an
-`rsntr:Entrain` over the socket is a recorded follow-up, not part of the
-first implementation pass.)
+`rsntr await`, `chat wait`, and `chat watch` entrain over the owner
+channel (`crate::owner::entrain`) and fail without a serving process
+rather than silently watching nothing; none of them admits an ephemeral
+identity any more.
 
 ### 3.4 Windows
 
-No named-pipe implementation in v1. On Windows the in-process transport is
-the baseline, as it is everywhere: every owner command works, minus the
-liveness guarantee of section 3.2. A named-pipe transport with the same
-framing is the designated extension point when Windows serving matters.
+The loopback transport of section 3.2b serves Windows: `Prefer::Socket`
+and `Prefer::Auto` behave as on unix.
+
+### 3.5 Several processes, one directory
+
+Several apps and tools may share one node directory
+(docs/shared-node.md). Whoever holds the serving lease
+(`rsntr.serve.lock`, an OS file lock released by the kernel on any exit)
+binds the owner channel; every other process's owner channel selects it
+per section 3.3, so the channel is the cross-app channel on a device.
+Suspension rules: on iOS the serving app must `suspend()` before it is
+suspended (a suspended app holding a lock on a file outside its own
+container is terminated), releasing the lease and the channel so the
+next app takes over; on Android an app suspends on stop unless a
+foreground Service keeps it serving; an in-process client that merely
+reads also holds SQLite locks and must close before suspension.
 
 ## 4. Dispatch semantics on the node
 
@@ -338,14 +372,15 @@ what the owner did to their own node through the CLI.
 
 ### 6.2 Entrainment and vibration
 
-Owner writes delivered over the control socket execute on the serving
-connection, so the one sqlite update hook fires: entrainments on points
-whose resource is a changed table receive Vibrations, `_projection` and
-`_policy` changes signal the projection-changed point, and the composed
-table observer wakes the outbox worker. This is a guarantee of the socket
-transport, not of the owner channel in general: the in-process transport
-explicitly does not carry it (section 3.1), which is why the CLI prefers
-the socket whenever it connects.
+Owner writes delivered over the owner channel execute on the serving
+connection, so its commit hook fires at commit (never per row, never for
+a rolled-back statement): entrainments on points whose resource is a
+changed table receive Vibrations, `_projection` and `_policy` changes
+signal the projection-changed point, and the composed table observer
+wakes the outbox worker. Writes made in-process, or by any other process,
+reach the same fan-out through the foreign-write watcher within a quarter
+second (section 3.1), so liveness no longer depends on the transport; the
+channel is preferred for immediacy and push delivery.
 
 ### 6.3 Idempotency
 

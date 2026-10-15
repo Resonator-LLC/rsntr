@@ -48,6 +48,16 @@ pub struct AnswerReport {
     pub remembered: Vec<String>,
     /// The `table:action` grants written by `--grant` on a knock allow.
     pub granted: Vec<String>,
+    /// A knock deny also wrote the durable `(peer, '*', 'knock', 'deny')`
+    /// policy row, so the next knock is denied by policy instead of
+    /// parking again. Delete that row to let the peer knock again.
+    pub deny_policy_written: bool,
+}
+
+/// The `_policy.note` of the row a knock deny writes; self-describing so
+/// the owner finds the way back.
+pub fn knock_deny_note(request_id: &str) -> String {
+    format!("denied from inbox {request_id}; delete this row to allow knocking again")
 }
 
 /// Lists `_inbox` rows, pending only unless `all`.
@@ -106,6 +116,24 @@ pub async fn inbox_answer_with(
     let params_text = channel::cell_text(row, "params").unwrap_or_default();
     let decision = if allow { "allow" } else { "deny" };
 
+    // Everything that can be rejected is rejected before anything is
+    // written. These two checks used to happen where they were needed,
+    // which is after the row was marked answered and, on a knock, after
+    // the peer was already in `_peers`. So `inbox answer <id> allow
+    // --grant 'notes:read'` (a colon for the '=', and the actions
+    // themselves contain colons) exited 1 naming the typo, having
+    // already admitted the stranger with no grants at all, and refused
+    // the obvious retry as "already decided". The message was true
+    // about the step that failed and wrong about everything the reader
+    // would conclude from it, on the one command that lets a stranger
+    // in.
+    let grants = parse_grants(grants)?;
+    let parked = if sql_text.is_empty() {
+        None
+    } else {
+        Some(parse_parked(request_id, &params_text)?)
+    };
+
     channel::execute(
         &ch,
         "UPDATE _inbox SET decision = ?1, decided_by = 'human' WHERE request_id = ?2",
@@ -118,6 +146,25 @@ pub async fn inbox_answer_with(
 
     if sql_text.is_empty() {
         let mut granted = Vec::new();
+        let mut deny_policy_written = false;
+        if !allow {
+            // Deny means deny: without this row the peer's next knock
+            // would park a fresh pending row and ask the owner again.
+            channel::execute(
+                &ch,
+                "INSERT INTO _policy (peer_or_group, table_name, action, effect, note) \
+                 SELECT ?1, '*', 'knock', 'deny', ?2 \
+                 WHERE NOT EXISTS (SELECT 1 FROM _policy \
+                    WHERE peer_or_group = ?1 AND table_name = '*' \
+                      AND action = 'knock' AND effect = 'deny')",
+                vec![
+                    Value::Text(peer.clone()),
+                    Value::Text(knock_deny_note(request_id)),
+                ],
+            )
+            .await?;
+            deny_policy_written = true;
+        }
         if allow {
             channel::execute(
                 &ch,
@@ -136,28 +183,7 @@ pub async fn inbox_answer_with(
             // `--grant table=action` writes those rows in the same
             // breath ('=' because both tables and actions may contain
             // colons: `chat:direct`, `mod:cameras`).
-            for grant in grants {
-                let Some((table, action)) = grant.split_once('=') else {
-                    bail!(
-                        "--grant {grant:?}: expected table=action (e.g. 'shop_products=read', '*=mod:cameras')"
-                    );
-                };
-                channel::execute(
-                    &ch,
-                    "INSERT INTO _policy (peer_or_group, table_name, action, effect, note) \
-                     SELECT ?1, ?2, ?3, 'allow', ?4 \
-                     WHERE NOT EXISTS (SELECT 1 FROM _policy \
-                        WHERE peer_or_group = ?1 AND table_name = ?2 AND action = ?3 AND effect = 'allow')",
-                    vec![
-                        Value::Text(peer.clone()),
-                        Value::Text(table.to_string()),
-                        Value::Text(action.to_string()),
-                        Value::Text(format!("granted with knock admit {request_id}")),
-                    ],
-                )
-                .await?;
-                granted.push(grant.clone());
-            }
+            granted = apply_grants(&ch, &peer, request_id, &grants).await?;
         }
         return Ok(AnswerReport {
             request_id: request_id.to_string(),
@@ -166,15 +192,21 @@ pub async fn inbox_answer_with(
             knock: true,
             remembered: Vec::new(),
             granted,
+            deny_policy_written,
         });
     }
 
-    let parked: ParkedParams = serde_json::from_str(&params_text).map_err(|e| {
-        anyhow::anyhow!(
-            "inbox row {request_id} has unreadable params ({e}); \
-             answer it with plain SQL via `rsntr query`"
-        )
-    })?;
+    // Statement rows (a parked SQL write, a parked mod-install, ...)
+    // take grants too: approving a cross-peer install usually pairs the
+    // allow with the policy rows that make the retry pass (e.g.
+    // --grant 'cameras=mod-install' --grant 'cameras=mod-cap:db_read').
+    let granted = if allow {
+        apply_grants(&ch, &peer, request_id, &grants).await?
+    } else {
+        Vec::new()
+    };
+
+    let parked = parked.expect("a statement row's params were parsed above");
     channel::execute(
         &ch,
         &format!(
@@ -224,6 +256,66 @@ pub async fn inbox_answer_with(
         decision: decision.to_string(),
         knock: false,
         remembered,
-        granted: Vec::new(),
+        granted,
+        deny_policy_written: false,
     })
+}
+
+/// Splits `--grant table=action` pairs, keeping the original spelling
+/// for the report. Pure, and run before the answer writes anything, so
+/// a malformed grant costs nothing.
+fn parse_grants(grants: &[String]) -> Result<Vec<(String, String, String)>> {
+    grants
+        .iter()
+        .map(|grant| match grant.split_once('=') {
+            // The action may itself contain a colon (`mod:cameras`), so
+            // only the first '=' separates the pair.
+            Some((table, action)) => {
+                Ok((table.to_string(), action.to_string(), grant.clone()))
+            }
+            None => bail!(
+                "--grant {grant:?}: expected table=action (e.g. 'shop_products=read', '*=mod:cameras')"
+            ),
+        })
+        .collect()
+}
+
+/// Reads a parked statement row's params. Pure, and run before the
+/// answer writes anything: a row this command cannot read must not
+/// leave a half-applied answer behind.
+fn parse_parked(request_id: &str, params_text: &str) -> Result<ParkedParams> {
+    serde_json::from_str(params_text).map_err(|e| {
+        anyhow::anyhow!(
+            "inbox row {request_id} has unreadable params ({e}); \
+             answer it with plain SQL via `rsntr query`"
+        )
+    })
+}
+
+/// Writes one idempotent `_policy` allow row per parsed grant.
+async fn apply_grants(
+    ch: &OwnerChannel,
+    peer: &str,
+    request_id: &str,
+    grants: &[(String, String, String)],
+) -> Result<Vec<String>> {
+    let mut granted = Vec::new();
+    for (table, action, spelling) in grants {
+        channel::execute(
+            ch,
+            "INSERT INTO _policy (peer_or_group, table_name, action, effect, note) \
+             SELECT ?1, ?2, ?3, 'allow', ?4 \
+             WHERE NOT EXISTS (SELECT 1 FROM _policy \
+                WHERE peer_or_group = ?1 AND table_name = ?2 AND action = ?3 AND effect = 'allow')",
+            vec![
+                Value::Text(peer.to_string()),
+                Value::Text(table.clone()),
+                Value::Text(action.clone()),
+                Value::Text(format!("granted with inbox answer {request_id}")),
+            ],
+        )
+        .await?;
+        granted.push(spelling.clone());
+    }
+    Ok(granted)
 }

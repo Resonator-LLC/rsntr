@@ -49,6 +49,45 @@ pub async fn sparql_report(
     }
 }
 
+/// `rsntr system graph [--peer]`: the node's own state as RDF (the
+/// builtin `system` modulation, signal `graph`) — the own node over the
+/// owner channel (unfiltered), or a peer's, filtered by the `read`
+/// policy it grants per system table. Prints as Turtle via the Graph
+/// outcome; pipe into `rsntr turtle load -` to keep a local copy.
+pub async fn system_graph(
+    dir: &Path,
+    prefer: Prefer,
+    peer: Option<&str>,
+    offline: bool,
+) -> Result<QueryReport> {
+    match peer {
+        Some(peer) => {
+            client::run_statement(
+                dir,
+                peer,
+                RequestKind::Query,
+                resonator_node::SYSTEM_MOD,
+                resonator_node::GRAPH_SIGNAL,
+                vec![],
+                offline,
+                None,
+            )
+            .await
+        }
+        None => {
+            let ch = OwnerChannel::open(dir, prefer).await?;
+            let request = Request::new(
+                RequestKind::Query,
+                resonator_node::SYSTEM_MOD,
+                resonator_node::GRAPH_SIGNAL,
+            );
+            let id = request.id_string();
+            let outcome = ch.send(&request.to_envelope(), &id).await?;
+            Ok(QueryReport { id, outcome })
+        }
+    }
+}
+
 /// What `rsntr turtle load` did.
 #[derive(Debug)]
 pub enum LoadOutcome {

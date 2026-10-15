@@ -23,7 +23,28 @@ let package = Package(
         .target(
             name: "Resonator",
             dependencies: ["ResonatorFFI"],
-            path: "Sources/Resonator"
+            path: "Sources/Resonator",
+            // The privacy manifest ships with the package so every app
+            // that embeds it inherits the required-reason declarations.
+            // App Store Connect checks those statically against the
+            // linked binary, so the obligation arrives with the code
+            // even in an app that links resonator and never starts a
+            // node; without this each consumer meets it as an
+            // ITMS-9105x mail after their first upload.
+            resources: [
+                .copy("PrivacyInfo.xcprivacy")
+            ],
+            // The Rust stack's system dependencies on iOS: iroh's DNS
+            // discovery (hickory-resolver) calls SystemConfiguration,
+            // and its interface enumeration (netdev) calls Network
+            // (nw_endpoint_*, nw_interface_*). Both must be named here
+            // or every consumer of this package fails at link time with
+            // "Undefined symbols for architecture arm64" and has to
+            // rediscover them (kontrolator iOS, 2026-09-10).
+            linkerSettings: [
+                .linkedFramework("SystemConfiguration"),
+                .linkedFramework("Network")
+            ]
         ),
     ]
 )

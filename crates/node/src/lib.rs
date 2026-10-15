@@ -20,6 +20,7 @@
 //! any other [`Transport`](resonator_transport::Transport) impl) hands
 //! out.
 
+pub mod apps;
 pub mod audit;
 pub mod chat;
 pub mod clock;
@@ -29,26 +30,43 @@ pub mod entrain;
 pub mod error;
 pub mod footprint;
 pub mod help;
+pub mod media;
 pub mod mod_handler;
+pub mod mod_install;
 pub mod pipeline;
 pub mod projection;
 pub mod sparql_mod;
+pub mod system;
 
-pub use chat::{
-    BODY_MAX_BYTES, BlobAttachment, CHAT_HISTORY_POINT, CHAT_INBOX_POINT, CHAT_SEND_POINT,
-    CHAT_TABLES_DDL, ChatMessage, DIRECT_RESOURCE, message_to_turtle, parse_message,
+pub use apps::{
+    AppInfo, AppRow, TableDecl, claimed_by, declare_statements, declare_tables, list_apps,
+    register_app, touch_app,
 };
-pub use db::{DbHandle, open_node_db, open_node_db_in_memory};
+pub use chat::{
+    BODY_MAX_BYTES, BlobAttachment, CHAT_HISTORY_POINT, CHAT_INBOX_POINT, CHAT_LOG_VIEW_DDL,
+    CHAT_SEND_POINT, CHAT_TABLES_DDL, ChatMessage, ChatParseError, DIRECT_RESOURCE, RE_MAX_CHARS,
+    TAG_MAX_BYTES, TAGS_MAX, ensure_chat_columns, message_to_turtle, parse_message, tags_from_json,
+    tags_to_json, validate_thread_fields,
+};
+pub use db::{BUSY_TIMEOUT, DbHandle, is_busy, migrate, open_node_db, open_node_db_in_memory};
 pub use ddl::{
-    APPLIED_DDL, AUDIT_DDL, DEFAULT_MODS, INBOX_DDL, KNOCK_BUDGET_DDL, MEDIA_DDL, MODULATIONS_DDL,
-    PEERS_DDL, PROJECTION_TABLE_DDL, RSNTR_DDL, enabled_mod_names, ensure_modulations_table,
-    ensure_node_tables, get_rsntr, node_hello, seed_rsntr_defaults, served_modulations, set_rsntr,
+    APPLIED_DDL, AUDIT_DDL, DEFAULT_MODS, INBOX_DDL, INBOX_POINT, KNOCK_BUDGET_DDL, MEDIA_DDL,
+    MODULATIONS_DDL, PEERS_DDL, PROJECTION_TABLE_DDL, RSNTR_DDL, enabled_mod_names,
+    ensure_modulations_table, ensure_node_tables, get_rsntr, node_hello, seed_rsntr_defaults,
+    served_modulations, set_rsntr,
+};
+pub use ddl::{
+    MIN_READER_VERSION, SCHEMA_VERSION, check_schema_compat, schema_is_current,
+    stamp_schema_version,
 };
 pub use entrain::Entrainments;
 pub use error::NodeError;
 pub use footprint::{Approved, CollectState, Lane};
+pub use media::{FeedChunk, FeedReader, FeedWriter, MediaFeeds};
 pub use mod_handler::{ModHandler, ModHandlerFuture};
+pub use pipeline::ChangeWatcher;
 pub use pipeline::{
     BlobImporter, KnockLimits, ModDbOutcome, Node, NodeConfig, PostDecideHook, peer_known,
     run_mod_statement,
 };
+pub use system::{GRAPH_SIGNAL, GraphSections, SYSTEM_MOD, build_system_graph};

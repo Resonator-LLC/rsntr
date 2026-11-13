@@ -38,7 +38,10 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd client && npm ci && npm run typecheck && npm test && npm run build
-cd client && npx playwright install chromium && npm run test:e2e   # needs the release binary
+cargo build -p resonator -p resonator-server
+cd client && npx playwright install chromium webkit && \
+  RESONATOR_BINARY=../target/debug/resonator-server \
+  RESONATOR_NODE_BINARY=../target/debug/resonator npm run test:e2e
 ```
 
 - Build `client/dist` before building the binary or the apps; it is

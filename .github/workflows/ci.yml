@@ -53,10 +53,12 @@ jobs:
         with:
           key: e2e
       # A debug build is enough for the end-to-end tests and much faster.
-      - run: cargo build -p resonator
-      - run: cd client && npx playwright install --with-deps chromium
+      # resonator-server has the end-to-end hooks (/e2e/*); resonator is the
+      # node, for person mode.
+      - run: cargo build -p resonator -p resonator-server
+      - run: cd client && npx playwright install --with-deps chromium webkit
       - name: End-to-end tests
-        run: cd client && RESONATOR_BINARY="$PWD/../target/debug/resonator" RESONATOR_NODE_BINARY="$PWD/../target/debug/resonator" npm run test:e2e
+        run: cd client && RESONATOR_BINARY="$PWD/../target/debug/resonator-server" RESONATOR_NODE_BINARY="$PWD/../target/debug/resonator" npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

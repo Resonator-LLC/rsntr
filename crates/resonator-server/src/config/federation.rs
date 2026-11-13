@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(config.listen_addrs().unwrap().len(), 2);
         let config = FederationConfig {
             relay: "https://relay.example.com".to_owned(),
-            listen: "100.127.138.26:7777".to_owned(),
+            listen: "100.64.0.1:7777".to_owned(),
             ..FederationConfig::default()
         };
         assert!(matches!(
@@ -319,7 +319,7 @@ mod tests {
         ));
         assert_eq!(
             config.listen_addrs().unwrap(),
-            ["100.127.138.26:7777".parse().unwrap()]
+            ["100.64.0.1:7777".parse().unwrap()]
         );
         for bad in [
             FederationConfig {

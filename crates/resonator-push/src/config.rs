@@ -331,7 +331,7 @@ mod tests {
         assert!(config.validate().is_err());
         assert!(toml::from_str::<Config>("nope = 1").is_err());
         let config = Config {
-            listen: "mothership".to_owned(),
+            listen: "relayhost".to_owned(),
             ..Config::default()
         };
         assert!(config.validate().is_err());

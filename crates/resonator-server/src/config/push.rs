@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct PushConfig {
     /// The base URL of the push relay this device seals its push token
     /// with, and through which it wakes other devices
-    /// (`http://mothership:9900`, or an `https://` URL).
+    /// (`http://relayhost:9900`, or an `https://` URL).
     pub relay: String,
     /// Other relays this node may call to wake devices that sealed their
     /// token there. Devices whose relay is neither `relay` nor listed
@@ -63,13 +63,13 @@ mod tests {
     fn relays_are_urls_and_only_known_ones_are_called() {
         let mut push = PushConfig::default();
         assert!(!push.enabled() && push.validate().is_ok() && !push.may_call(""));
-        push.relay = "http://mothership:9900/".to_owned();
+        push.relay = "http://relayhost:9900/".to_owned();
         push.other_relays = vec!["https://push.example".to_owned()];
         assert!(push.validate().is_ok());
-        assert!(push.may_call("http://mothership:9900"));
+        assert!(push.may_call("http://relayhost:9900"));
         assert!(push.may_call("https://push.example/"));
         assert!(!push.may_call("http://evil.example"));
-        push.relay = "mothership:9900".to_owned();
+        push.relay = "relayhost:9900".to_owned();
         assert!(push.validate().is_err());
         push.relay.clear();
         assert!(push.validate().is_err());

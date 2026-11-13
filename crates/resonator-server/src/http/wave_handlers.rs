@@ -121,6 +121,10 @@ pub(super) async fn session(State(state): State<AppState>, context: Context) -> 
         "websocket_address": state.config.websocket_address(),
         "registration_enabled": state.config.registration_open(),
     });
+    // Where else one may register; only when configured.
+    if state.config.registration_open() && !state.config.other_servers.is_empty() {
+        body["other_servers"] = json!(state.config.other_servers);
+    }
     // Only when on, so that nothing changes for servers without it.
     if state.config.federation.enabled {
         body["federation"] = json!(true);

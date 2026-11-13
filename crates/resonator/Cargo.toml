@@ -4,6 +4,9 @@ description = "The resonator server: the wave server with robots, tools and AI a
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "resonator"

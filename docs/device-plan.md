@@ -3,7 +3,7 @@
 ## Context
 Resonator federation is built: an iroh endpoint and the `resonator-federation` crate, with host and replica roles, an outbox, attachments and trust. Its plan is in `docs/federation-plan.md`.
 
-Rafael now wants **no central server**. Every phone or computer runs a resonator node, and the iOS and Android apps are WebView wrappers around it. Decisions so far:
+The goal is **no central server**. Every phone or computer runs a resonator node, and the iOS and Android apps are WebView wrappers around it. Decisions so far:
 - **Ordering:** keep Wave's OT, where one host orders each wave, plus an optional always-on node ("anchor").
 - **Identity:** a person key plus device keys, and a person's devices sync with each other.
 - **Waking phones:** a tiny stateless push relay. This is a separate, later track.
@@ -157,4 +157,4 @@ Each run follows the established rules:
 - **Phase 5:**
   - Pair by token, recover from the phrase on a fresh node and pull shared waves, revoke a device.
   - A fork-as-new-wave keeps its history, and a co-host takes over a frozen wave.
-- **Manual:** three nodes on mothership in device mode (anchor plus two "devices") on separate ports bound to 0.0.0.0, exercised from Rafael's browser.
+- **Manual:** three nodes on one host in device mode (anchor plus two "devices") on separate ports bound to 0.0.0.0, exercised from a browser.

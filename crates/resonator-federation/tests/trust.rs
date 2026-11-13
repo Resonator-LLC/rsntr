@@ -101,24 +101,24 @@ async fn open_mode_pins_a_domain_without_a_record_to_its_first_key() {
     );
     // No record: the first key that claims the domain is pinned.
     assert_eq!(
-        f.trust.check(&first, "mothership", &[]).await.unwrap(),
+        f.trust.check(&first, "relayhost", &[]).await.unwrap(),
         Authorisation::Authorised
     );
     let pinned =
         f.db.federation_store()
-            .trusted_key("mothership")
+            .trusted_key("relayhost")
             .await
             .unwrap()
             .unwrap();
     assert_eq!(pinned.key, first.as_bytes());
-    assert_eq!(f.trust.resolve("mothership").await.unwrap(), Some(first));
-    assert!(f.trust.is_signer_bound(&first, "mothership").await.unwrap());
+    assert_eq!(f.trust.resolve("relayhost").await.unwrap(), Some(first));
+    assert!(f.trust.is_signer_bound(&first, "relayhost").await.unwrap());
     // Another key claiming it later is quarantined; the first keeps it.
     assert_eq!(
-        f.trust.check(&second, "mothership", &[]).await.unwrap(),
+        f.trust.check(&second, "relayhost", &[]).await.unwrap(),
         Authorisation::Quarantined
     );
-    assert!(f.trust.authorise(&first, "mothership").await);
+    assert!(f.trust.authorise(&first, "relayhost").await);
     // Never this server's own domain.
     assert_eq!(
         f.trust.check(&first, "local.example", &[]).await.unwrap(),

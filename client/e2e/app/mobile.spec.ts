@@ -15,7 +15,7 @@ test.describe.configure({ mode: "serial" });
 const SHOTS = process.env.RESONATOR_MOBILE_SHOTS ?? "mobile";
 const SCREENS =
   process.env.RESONATOR_SCREENS ??
-  "/tmp/claude-1000/-home-rafael-resonator/829b1b22-d69c-41c2-8cfa-79a908ad2e86/scratchpad/ui/screens";
+  "e2e/.results/screens";
 
 let servers: TestServers;
 let alice: User;

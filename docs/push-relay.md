@@ -155,7 +155,7 @@ forgotten first. If the table is still full, new keys are refused.
 
 ```toml
 [push]
-relay = "http://mothership:9900"   # unset or empty: push is off
+relay = "https://psh.rsntr.net"   # unset or empty: push is off
 other_relays = []                  # other relays this node may call to wake devices
 ```
 
@@ -183,19 +183,19 @@ TOML file (`--config`, or `RESONATOR_PUSH_CONFIG`), every key optional:
 
 ```toml
 listen = "0.0.0.0:9900"
-sealing_key = "/home/rafael/.config/resonator-push/sealing.key"
+sealing_key = "/etc/resonator-push/sealing.key"
 trust_forwarded_for = false        # true only behind a reverse proxy
 
 [apns]                             # off while key_path is empty
-key_path = "/home/rafael/.config/resonator-push/AuthKey_ABC123DEFG.p8"
+key_path = "/etc/resonator-push/AuthKey_ABC123DEFG.p8"
 key_id = "ABC123DEFG"
-team_id = "569TWLS7W8"             # example: Rafael's Apple team
+team_id = "ABCDE12345"
 topic = "am.resonator.client.ios"        # the default
 endpoint = "https://api.push.apple.com"                  # default
 sandbox_endpoint = "https://api.sandbox.push.apple.com"  # default
 
 [fcm]                              # off while service_account_path is empty
-service_account_path = "/home/rafael/.config/resonator-push/firebase-sa.json"
+service_account_path = "/etc/resonator-push/firebase-sa.json"
 project_id = ""                    # default: the service account's
 
 [limits]
@@ -216,13 +216,13 @@ the repository, and do not put a team ID or key ID in a committed config.
 `resonator-push --check` loads the configuration and keys, prints what is
 enabled and exits.
 
-### APNs setup (Rafael)
+### APNs setup
 
-1. In the Apple Developer account (team `569TWLS7W8`), go to **Certificates,
+1. In the Apple Developer account, go to **Certificates,
    Identifiers & Profiles → Keys** and create a key with **Apple Push
    Notifications service (APNs)** enabled.
 2. Download `AuthKey_<KEYID>.p8`. It can be downloaded only once.
-3. Put it on mothership, for example in `~/.config/resonator-push/`, and
+3. Put it on the relay host, for example in `/etc/resonator-push/`, and
    run `chmod 600` on it.
 4. Note the **Key ID** (10 characters) and the **Team ID**.
 5. Set the topic to the app's bundle ID, `am.resonator.client.ios` (the default).
@@ -242,34 +242,24 @@ production tokens, `apns`. One `.p8` works for both.
 3. Store it with mode 600 and set `fcm.service_account_path`. The project
    ID is read from it.
 
-## Running on mothership
+## Running a relay
 
-Build:
-
-```sh
-CARGO_TARGET_DIR=~/.cache/resonator-push-target cargo build --release -p resonator-push
-```
-
-Run:
+Build and run:
 
 ```sh
-mkdir -p ~/.config/resonator-push && chmod 700 ~/.config/resonator-push
-RESONATOR_PUSH_SEALING_KEY=~/.config/resonator-push/sealing.key \
-RESONATOR_PUSH_APNS_KEY_PATH=~/.config/resonator-push/AuthKey_<KEYID>.p8 \
+cargo build --release -p resonator-push
+mkdir -p /etc/resonator-push && chmod 700 /etc/resonator-push
+RESONATOR_PUSH_SEALING_KEY=/etc/resonator-push/sealing.key \
+RESONATOR_PUSH_APNS_KEY_PATH=/etc/resonator-push/AuthKey_<KEYID>.p8 \
 RESONATOR_PUSH_APNS_KEY_ID=<KEYID> \
-RESONATOR_PUSH_APNS_TEAM_ID=569TWLS7W8 \
-~/.cache/resonator-push-target/release/resonator-push
+RESONATOR_PUSH_APNS_TEAM_ID=<TEAMID> \
+target/release/resonator-push
 ```
 
-The relay listens on `0.0.0.0:9900`, so it is reachable over the tailnet at
-`http://mothership:9900` (fallback `http://100.127.138.26:9900`). Don't
-open the port in ufw. Check it with `curl http://mothership:9900/health`,
-then set `[push] relay = "http://mothership:9900"` on the nodes. It stops
-on SIGINT or SIGTERM.
-
-**Tailnet only for now.** A phone reaches the relay only while it is on the
-tailnet, but sealing happens only when the token changes, and the callers
-of `/wake` are the nodes, which are on the tailnet.
+The relay listens on `0.0.0.0:9900` by default. Check it with
+`curl http://<host>:9900/health`, then set `[push] relay` on the nodes. It
+stops on SIGINT or SIGTERM. `deploy/` has the systemd unit and Caddy setup
+used for the official relay, `https://psh.rsntr.net`.
 
 **For production**, the relay needs a public HTTPS name. Put it behind a
 TLS-terminating reverse proxy (for example Caddy) with

@@ -159,6 +159,21 @@ describe("session", () => {
     expect(session.registrationEnabled).toBe(false);
   });
 
+  test("getSession names other servers to register on", async () => {
+    const { api: http } = api(
+      json({
+        domain: "a.example",
+        id: "seed",
+        websocket_address: "x:1",
+        registration_enabled: true,
+        other_servers: ["b.example", "https://evil/", 3],
+      }),
+    );
+    expect((await http.getSession()).otherServers).toEqual(["b.example"]);
+    const { api: none } = api(json({ domain: "a.example", id: "seed", websocket_address: "x:1" }));
+    expect((await none.getSession()).otherServers).toBe(undefined);
+  });
+
   test("getSession tells whether the server federates", async () => {
     const { api: http } = api(
       json({ domain: "a.example", id: "seed", websocket_address: "x:1", federation: true }),

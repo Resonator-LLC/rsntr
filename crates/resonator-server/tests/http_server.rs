@@ -1693,6 +1693,32 @@ mod frames {
 // ---- The HTTP endpoints ----
 
 #[tokio::test]
+async fn the_session_names_other_servers_to_register_on() {
+    let server = TestServer::start().await;
+    let session: Value = server.get("/session", None).await.json().await.unwrap();
+    assert_eq!(session.get("other_servers"), None);
+    server.shutdown().await;
+
+    let server = TestServer::start_with(|config| {
+        config.other_servers = vec!["other.example".to_owned()];
+    })
+    .await;
+    let session: Value = server.get("/session", None).await.json().await.unwrap();
+    assert_eq!(session["other_servers"], json!(["other.example"]));
+    server.shutdown().await;
+
+    // Not while registration is closed here.
+    let server = TestServer::start_with(|config| {
+        config.other_servers = vec!["other.example".to_owned()];
+        config.registration_enabled = false;
+    })
+    .await;
+    let session: Value = server.get("/session", None).await.json().await.unwrap();
+    assert_eq!(session.get("other_servers"), None);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn registration_follows_the_original_rules() {
     let server = TestServer::start().await;
     let ok = server.register("  Frodo ", "password").await;

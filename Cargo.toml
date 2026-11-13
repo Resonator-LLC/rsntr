@@ -3,9 +3,12 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.4.0"
 edition = "2024"
 license = "Apache-2.0"
+authors = ["Resonator LLC"]
+repository = "https://github.com/Resonator-LLC/rsntr"
+homepage = "https://rsntr.net"
 
 [profile.release]
 lto = "thin"

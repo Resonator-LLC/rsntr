@@ -27,13 +27,27 @@ final class NodeHost: ObservableObject {
     private static let pushTokenKey = "pushToken"
 
     /// Settings laid over the device defaults (which allow files up to
-    /// 4 GiB): the push relay wakes this
-    /// device when another needs it (docs/push-relay.md); it is reached by
-    /// its tailnet address, since iOS may not resolve MagicDNS names.
-    private static let extraToml = """
-        [push]
-        relay = "http://100.127.138.26:9900"
-        """
+    /// 4 GiB): the iroh relay the node keeps a home on, and the push relay
+    /// that wakes this device when another needs it (docs/push-relay.md).
+    /// Both come from the build settings RESONATOR_IROH_RELAY and
+    /// RESONATOR_PUSH_RELAY (Info.plist); an empty value leaves the
+    /// default (n0's public relays; push off).
+    private static var extraToml: String {
+        var toml = ""
+        if let relay = infoString("ResonatorIrohRelay") {
+            toml += "[federation]\nrelay = \"\(relay)\"\n"
+        }
+        if let relay = infoString("ResonatorPushRelay") {
+            toml += "[push]\nrelay = \"\(relay)\"\n"
+        }
+        return toml
+    }
+
+    private static func infoString(_ key: String) -> String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty || trimmed.contains("\"") ? nil : trimmed
+    }
 
     /// The node's directory: Application Support, not backed up (the keys
     /// of this device must not be restored onto another one).

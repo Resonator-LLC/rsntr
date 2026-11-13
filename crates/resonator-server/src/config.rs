@@ -106,6 +106,11 @@ pub struct Config {
     /// Id, without domain, of the wave copied into every new user's inbox;
     /// empty for none (`administration.welcome_wave_id`).
     pub welcome_wave_id: String,
+    /// Domains of other servers where people may register instead
+    /// (`other_servers = ["resonator.network"]`): the registration screen
+    /// links to `https://<domain>/` for each. Empty (the default) for none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_servers: Vec<String>,
     /// Seconds a session lives without being used; every use renews it.
     pub session_lifetime_secs: u64,
     /// Seconds after sign-in at which a session ends however much it is
@@ -350,6 +355,7 @@ impl Default for Config {
             registration_enabled: true,
             admin_user: "@".to_owned(),
             welcome_wave_id: String::new(),
+            other_servers: Vec::new(),
             session_lifetime_secs: 14 * 24 * 60 * 60,
             session_absolute_lifetime_secs: 90 * 24 * 60 * 60,
             cookie_secure: CookieSecure::Auto,
@@ -818,6 +824,13 @@ impl Config {
         if self.listen.is_empty() {
             return invalid("listen must name at least one address".to_owned());
         }
+        for other in &self.other_servers {
+            if !is_valid_domain(0, other) || other == &self.domain {
+                return invalid(format!(
+                    "other_servers: '{other}' is not another server's domain name"
+                ));
+            }
+        }
         for address in self
             .listen
             .iter()
@@ -1071,6 +1084,23 @@ mod tests {
     }
 
     #[test]
+    fn other_servers_must_be_other_domains() {
+        let mut config = Config::default();
+        config.other_servers = vec!["resonator.network".to_owned()];
+        config.validate().unwrap();
+        for bad in ["https://resonator.network", "a/b", "", "local.net"] {
+            config.other_servers = vec![bad.to_owned()];
+            assert!(config.validate().is_err(), "{bad}");
+        }
+        // Empty: not in the printed configuration.
+        assert!(
+            !toml::to_string(&Config::default())
+                .unwrap()
+                .contains("other_servers")
+        );
+    }
+
+    #[test]
     fn defaults_are_valid_and_listen_on_all_interfaces() {
         let config = Config::default();
         config.validate().unwrap();
@@ -1112,7 +1142,7 @@ mod tests {
             "--domain",
             "flag.example",
             "--listen",
-            "0.0.0.0:1,100.127.138.26:2",
+            "0.0.0.0:1,100.64.0.1:2",
             "--synchronous",
             "FULL",
             "--registration-enabled",
@@ -1123,7 +1153,7 @@ mod tests {
         config.apply(&cli.overrides);
         config.validate().unwrap();
         assert_eq!(config.domain, "flag.example");
-        assert_eq!(config.listen, ["0.0.0.0:1", "100.127.138.26:2"]);
+        assert_eq!(config.listen, ["0.0.0.0:1", "100.64.0.1:2"]);
         assert_eq!(config.synchronous, Synchronous::Full);
         assert!(!config.registration_enabled);
         assert_eq!(config.admin(), Some(ParticipantId::of("a@b.c").unwrap()));

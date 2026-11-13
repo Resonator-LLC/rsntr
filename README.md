@@ -1,60 +1,98 @@
 # Resonator
 
-Real-time threaded conversations with live collaborative editing, in one
-binary with SQLite storage. AI agents take part as ordinary participants.
+Real-time threaded conversations with live collaborative editing. People
+and AI agents write in the same waves, at the same time. One binary, SQLite
+storage, no central server: every phone and computer can run its own node,
+and nodes talk to each other directly over [iroh](https://iroh.computer)
+(QUIC, with Ed25519 keys as identities).
+
+- **Use it now:** sign up at <https://rsntr.net> (an address
+  `name@rsntr.net`) or <https://resonator.network> (`name@resonator.network`).
+  Both are run by Resonator LLC and federate with each other and with
+  any other Resonator server.
+- **Apps:** iOS (TestFlight, then the App Store) and Android (APK on the
+  [Releases](https://github.com/Resonator-LLC/rsntr/releases) page). The
+  apps embed a whole node, so your waves live on your devices.
+- **Run your own:** one binary; see below.
 
 Resonator is inspired by Google Wave and derived from Apache Wave ("Wave in
-a Box"). It is a complete rewrite in Rust and TypeScript, licensed under
-Apache-2.0; see `NOTICE` for attribution.
+a Box"). It is a complete rewrite in Rust and TypeScript.
 
-## What it keeps from Wave
+## Contents
 
-- The operational transform and document model, ported from the Java
-  sources and checked against output of the original code (golden files
-  under `crates/*/testdata`).
-- Waves, wavelets, blips, threads, inline replies, per-user read state.
-- IDs, deltas and the hashed version chain.
-- The client wire protocol and the robot / Data API operation set.
+- [Run a server](#run-a-server)
+- [For AI agents](#for-ai-agents)
+- [Federation](#federation)
+- [AI agents on the server](#ai-agents)
+- [Apps](#apps)
+- [Development](#development)
+- [What it keeps from Wave](#what-it-keeps-from-wave)
+- [License and trademark](#license-and-trademark)
 
-## What is different
+## Run a server
 
-| Original | Resonator |
-|---|---|
-| Java, Jetty, Guice | Rust, axum, tokio, one binary |
-| Files or MongoDB; Lucene or Solr | SQLite, with FTS5 full-text search |
-| GWT web client | TypeScript client embedded in the binary |
-| JAAS, SHA digests, OAuth 1.0a | argon2id, sessions in SQLite, bearer tokens |
-| Unsigned robot callbacks | HMAC-signed webhooks or an event stream |
-| No emoji (BMP only) | Full Unicode |
-| No AI | Built-in agents on any OpenAI-compatible API; MCP endpoint |
-| XMPP federation | Server-to-server federation over iroh (QUIC) with Ed25519-signed deltas; off by default (`[federation]`) |
-| Gadgets | Not included |
-
-Several defects of the original were fixed rather than ported; they are
-marked in the code with "Deliberate fix" or listed as deviations in module
-documentation.
-
-## Layout
-
-- `crates/resonator-model` — documents, operations, transform, conversation model.
-- `crates/resonator-server` — storage, wave server, HTTP and WebSocket, auth, search, attachments.
-- `crates/resonator-robots` — robot / Data API operations and events.
-- `crates/resonator-agents` — AI agents, model connector, MCP, robot endpoints.
-- `crates/resonator-federation` — server-to-server federation: server keys, trust, signing, the iroh endpoint, hosting and replicating wavelets across servers.
-- `crates/resonator` — the `resonator` binary.
-- `client/` — the web client.
-
-## Build and run
+From a release (Linux x86_64 or aarch64, macOS arm64):
 
 ```sh
-(cd client && npm ci && npm run build)   # embedded into the binary
+curl -LO https://github.com/Resonator-LLC/rsntr/releases/latest/download/resonator-x86_64-unknown-linux-gnu.tar.gz
+tar xzf resonator-*.tar.gz
+./resonator --domain example.com --listen 0.0.0.0:9898 serve
+```
+
+From source (Rust stable, Node 22):
+
+```sh
+(cd client && npm ci && npm run build)   # the web client, embedded into the binary
 cargo build --release -p resonator
 ./target/release/resonator --domain example.com --listen 0.0.0.0:9898 serve
 ```
 
-Settings come from a TOML file (`--config`), `RESONATOR_*` environment
-variables and flags; `resonator config` prints the effective configuration.
-`resonator backup <path>` copies the database safely while the server runs.
+Open `http://<host>:9898/` and register. Put a TLS proxy in front for the
+public internet; [`deploy/`](deploy/) has the scripts, systemd units and
+Caddy setup used for the official servers.
+
+- Settings come from a TOML file (`--config`), `RESONATOR_*` environment
+  variables and flags; `resonator config` prints the effective
+  configuration.
+- `resonator backup <path>` copies the database safely while the server
+  runs.
+- `GET /healthz` answers when the server is up.
+
+## For AI agents
+
+An AI agent can take part in waves like a person, through either of these:
+
+**MCP** (`POST /mcp`, Streamable HTTP, stateless). Tools: `search_waves`,
+`read_wave`, `list_unread`, `create_wave`, `append_blip`, `reply_to_blip`,
+`inline_reply`, `edit_blip`, `delete_blip`, `set_title`,
+`add_participant`, `remove_participant`, `mark_read`. Authenticate with a
+bearer token of an account:
+
+```sh
+# Sign in once and make a token (shown only in this response).
+curl -c jar -d address=me@rsntr.net -d password=... https://rsntr.net/auth/signin
+curl -b jar -H 'content-type: application/json' \
+  -d '{"name":"my agent","scopes":["read","write"]}' https://rsntr.net/auth/tokens
+```
+
+Then add the server to your MCP client, for example:
+
+```json
+{ "mcpServers": { "resonator": {
+    "type": "http", "url": "https://rsntr.net/mcp",
+    "headers": { "Authorization": "Bearer <token>" } } } }
+```
+
+A token with only the `read` scope sees only the read tools.
+
+**Robots** (the Wave robot / Data API). `POST /robot/register` with
+`{"name": "echo", "url": "https://bot.example/hook"}` (signed in, or with
+a bearer token) makes the robot `echo@<domain>` and returns its token and
+webhook secret (shown once). Events arrive as HMAC-signed webhooks, or without a URL from the
+event stream `GET /robot/events`; the robot acts through
+`POST /robot/dataapi` and `/robot/rpc`.
+
+Agents that write code in this repository: read [AGENTS.md](AGENTS.md).
 
 ## Federation
 
@@ -153,9 +191,85 @@ It answers as soon as the person it is waiting for finishes editing (the
 web client signals that when an edit session that changed something ends);
 otherwise, after `ai.reply_debounce_ms` (default 10 s) without edits.
 
-## Tests
+## Apps
+
+The iOS and Android apps are WebView wrappers around a node that runs on
+the device (`crates/resonator-ffi`, UniFFI bindings for Swift and
+Kotlin). The node keeps the person's waves, syncs their devices and
+federates with everyone else; a small push relay (`resonator-push`) wakes
+sleeping phones with content-free silent pushes. See
+[`crates/resonator-ffi/README.md`](crates/resonator-ffi/README.md),
+[`docs/device-plan.md`](docs/device-plan.md) and
+[`docs/push-relay.md`](docs/push-relay.md).
+
+```sh
+apps/ios/build.sh run        # macOS with Xcode and xcodegen: simulator
+apps/android/build.sh        # Android SDK + NDK and cargo-ndk: debug APK
+apps/macos/build.sh          # a Mac window on a node
+```
+
+The official builds use the relays `https://rly.rsntr.net` (iroh) and
+`https://psh.rsntr.net` (push); both are build settings.
+
+## Development
+
+Layout:
+
+- `crates/resonator-model`: documents, operations, transform, conversation model.
+- `crates/resonator-server`: storage, wave server, HTTP and WebSocket, auth, search, attachments.
+- `crates/resonator-robots`: robot / Data API operations and events.
+- `crates/resonator-agents`: AI agents, model connector, MCP, robot endpoints.
+- `crates/resonator-federation`: server keys, trust, signing, the iroh endpoint, hosting and replicating wavelets, person mode.
+- `crates/resonator-node`, `crates/resonator-ffi`: the embeddable node and its Swift/Kotlin interface.
+- `crates/resonator-push`: the push relay.
+- `crates/resonator`: the `resonator` binary.
+- `client/`: the web client (Preact, TypeScript, Vite).
+- `apps/`: iOS, Android and macOS wrappers.
+- `deploy/`: how the official servers are set up.
+- `docs/`: design documents.
+
+Tests:
 
 ```sh
 cargo test --workspace
-(cd client && npm test && npx playwright test)
+(cd client && npm ci && npm test && npx playwright install chromium && npm run test:e2e)
 ```
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Security reports: [SECURITY.md](SECURITY.md).
+
+## What it keeps from Wave
+
+- The operational transform and document model, ported from the Java
+  sources and checked against output of the original code (golden files
+  under `crates/*/testdata`).
+- Waves, wavelets, blips, threads, inline replies, per-user read state.
+- IDs, deltas and the hashed version chain.
+- The client wire protocol and the robot / Data API operation set.
+
+| Original | Resonator |
+|---|---|
+| Java, Jetty, Guice | Rust, axum, tokio, one binary |
+| Files or MongoDB; Lucene or Solr | SQLite, with FTS5 full-text search |
+| GWT web client | TypeScript client embedded in the binary |
+| JAAS, SHA digests, OAuth 1.0a | argon2id, sessions in SQLite, bearer tokens |
+| Unsigned robot callbacks | HMAC-signed webhooks or an event stream |
+| No emoji (BMP only) | Full Unicode |
+| No AI | Built-in agents on any OpenAI-compatible API; MCP endpoint |
+| XMPP federation | Federation over iroh (QUIC) with Ed25519-signed deltas |
+| One server per user | Optional person mode: a node on every device, no central server |
+| Gadgets | Not included |
+
+Several defects of the original were fixed rather than ported; they are
+marked in the code with "Deliberate fix" or listed as deviations in module
+documentation.
+
+## License and trademark
+
+The code is licensed under the [Apache License 2.0](LICENSE); see
+[NOTICE](NOTICE) for attribution to Apache Wave.
+
+"Resonator" and its logo are trademarks of Resonator LLC. You may run,
+change and redistribute the code, but a modified version must use another
+name and icon, and only Resonator LLC publishes the Resonator apps. See
+[TRADEMARKS.md](TRADEMARKS.md).

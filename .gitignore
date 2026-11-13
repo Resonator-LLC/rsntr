@@ -9,3 +9,8 @@ reference/
 
 # Private keys (APNs .p8 etc.) must never be committed.
 *.p8
+
+# Playwright run state
+client/e2e/.results/
+client/test-results/
+client/playwright-report/

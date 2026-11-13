@@ -750,7 +750,7 @@ mod tests {
         let key = SecretKey::generate();
         let target = PushTarget {
             device: Some(key.public().as_bytes().to_vec()),
-            relay: Some("http://mothership:9900".to_owned()),
+            relay: Some("http://relayhost:9900".to_owned()),
             sealed: Some("c2VhbGVk".to_owned()),
             issued_at: Some(7),
         };

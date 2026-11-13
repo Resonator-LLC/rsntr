@@ -383,7 +383,7 @@ mod tests {
             ("169.254.0.1", LinkLocal),
             // Tailnet addresses, including this kind of server's own.
             ("100.64.0.1", SharedAddressSpace),
-            ("100.127.138.26", SharedAddressSpace),
+            ("100.127.255.254", SharedAddressSpace),
             ("100.100.100.100", SharedAddressSpace),
             ("224.0.0.1", Multicast),
             ("239.255.255.250", Multicast),
@@ -456,7 +456,7 @@ mod tests {
             ),
             ("http://10.0.0.5/", "not a public address"),
             ("http://192.168.1.1/", "not a public address"),
-            ("http://100.127.138.26:9898/", "not a public address"),
+            ("http://100.64.0.1:9898/", "not a public address"),
             ("http://0.0.0.0/", "not a public address"),
             ("http://[fd7a:115c:a1e0::1]/", "not a public address"),
         ] {

@@ -7,7 +7,7 @@ Federation was deferred in resonator, but its seams were kept:
 - `SubmitError::NotLocal`, `get_applied_history`, `container.is_delta_signer`
 - the ported federation protos (`crates/resonator-model/src/proto/federation.rs`)
 
-Rafael wants servers to federate with two kinds of address:
+Servers federate with two kinds of address:
 - `user@key`: the domain part *is* the server's public key.
 - `user@domain`: a DNS record on the domain points to the key.
 
@@ -21,7 +21,7 @@ Rafael wants servers to federate with two kinds of address:
 ### Why iroh
 - **Identity:** an endpoint's identity is an Ed25519 key (`EndpointId`). QUIC with TLS 1.3 and raw public keys means both sides are proven by the handshake, with no CA.
 - **Connectivity:** hole punching with relay fallback, and dialing by key through pkarr/DNS lookup.
-- **Firewall:** it only needs *outbound* UDP/HTTPS, so mothership's firewall stays closed.
+- **Firewall:** it only needs *outbound* UDP/HTTPS, so a server's firewall can stay closed.
 - **Same stack:** it is tokio-based, like resonator.
 
 ### Wave's federation model (unchanged — we keep it)
@@ -216,4 +216,4 @@ Rafael wants servers to federate with two kinds of address:
   - a tampered hash is rejected
   - a non-participant domain's fetch is denied
   - origin offline: a cached copy is served, and an uncached one returns 503
-- Manual: a second instance on mothership (another port and data dir) federating with the trial server through `user@<z32>`. Then a real domain with a `_resonator` TXT record.
+- Manual: a second instance on the same host (another port and data dir) federating with the trial server through `user@<z32>`. Then a real domain with a `_resonator` TXT record.

@@ -11,7 +11,7 @@
 //!   [`KeyRotation`](resonator_model::proto::federation_rpc::KeyRotation)
 //!   to it; otherwise the new key is quarantined until an admin decides.
 //!   In `open` mode, a domain that publishes no record at all (a bare
-//!   host name such as `mothership`, or a domain that never set one up) is
+//!   host name such as `relayhost`, or a domain that never set one up) is
 //!   pinned to the first key that claims it. A domain that does publish a
 //!   record is held to it, and a later, different key is quarantined as
 //!   above.

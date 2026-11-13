@@ -4,6 +4,9 @@ description = "Wave data model and operational transform, ported from Apache Wav
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [features]
 # Exposes `docop::testing` (random operation generator and test helpers) to

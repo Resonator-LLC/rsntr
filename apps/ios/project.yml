@@ -8,9 +8,13 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.4.0"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: ${RESONATOR_TEAM}
+    # The official network's relays; override on the xcodebuild command
+    # line (build.sh passes these environment variables through).
+    RESONATOR_IROH_RELAY: https://rly.rsntr.net
+    RESONATOR_PUSH_RELAY: https://psh.rsntr.net
 targets:
   Resonator:
     type: application

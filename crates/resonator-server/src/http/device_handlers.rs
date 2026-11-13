@@ -367,13 +367,7 @@ mod tests {
         for local in ["127.0.0.1", "127.8.9.1", "::1", "::ffff:127.0.0.1"] {
             assert!(is_loopback(local.parse().unwrap()), "{local}");
         }
-        for remote in [
-            "0.0.0.0",
-            "10.0.0.1",
-            "100.127.138.26",
-            "::",
-            "::ffff:10.0.0.1",
-        ] {
+        for remote in ["0.0.0.0", "10.0.0.1", "100.64.0.1", "::", "::ffff:10.0.0.1"] {
             assert!(!is_loopback(remote.parse().unwrap()), "{remote}");
         }
     }

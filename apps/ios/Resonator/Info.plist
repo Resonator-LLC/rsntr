@@ -45,6 +45,9 @@
     <string>remote-notification</string>
     <string>fetch</string>
   </array>
+  <!-- The relays of the official network (build settings). -->
+  <key>ResonatorIrohRelay</key><string>$(RESONATOR_IROH_RELAY)</string>
+  <key>ResonatorPushRelay</key><string>$(RESONATOR_PUSH_RELAY)</string>
   <!-- resonator:pair/… and resonator:contact/… links. -->
   <key>CFBundleURLTypes</key>
   <array>

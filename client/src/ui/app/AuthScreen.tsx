@@ -201,6 +201,23 @@ function SignInForm({ store, domain }: FormProps) {
   );
 }
 
+/** Links to the other servers where one may register instead. */
+function OtherServers({ domains }: { domains: readonly string[] }) {
+  return (
+    <p class="auth-switch auth-other-servers">
+      Prefer another address?{" "}
+      {domains.map((other, index) => (
+        <span key={other}>
+          {index > 0 ? ", " : null}
+          <a class="auth-link" href={`https://${other}/`}>
+            Register @{other}
+          </a>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function RegisterForm({ store, domain }: FormProps) {
   const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
@@ -208,6 +225,7 @@ function RegisterForm({ store, domain }: FormProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const addressRef = useRef<HTMLInputElement>(null);
+  const otherServers = store.session.value?.otherServers;
 
   useEffect(() => {
     addressRef.current?.focus();
@@ -283,6 +301,7 @@ function RegisterForm({ store, domain }: FormProps) {
           {busy ? "Registering..." : "Register"}
         </button>
       </div>
+      {otherServers !== undefined ? <OtherServers domains={otherServers} /> : null}
     </form>
   );
 }

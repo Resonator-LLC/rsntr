@@ -1,5 +1,5 @@
 Resonator
-Copyright 2026 the Resonator authors
+Copyright 2026 Resonator LLC and the Resonator contributors
 
 Resonator is inspired by, and derived from, Apache Wave ("Wave in a Box").
 It is a complete rewrite in Rust and TypeScript: no original source file is
@@ -19,3 +19,6 @@ have been kindly donated to the Apache Software Foundation.
 Resonator is not affiliated with or endorsed by the Apache Software
 Foundation or Google. "Apache Wave" and "Google Wave" are names of their
 respective owners and are used here only to describe origin.
+
+"Resonator" and the Resonator logo are trademarks of Resonator LLC. The
+Apache License does not grant permission to use them; see TRADEMARKS.md.

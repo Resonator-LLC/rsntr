@@ -3444,7 +3444,7 @@ checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 
 [[package]]
 name = "resonator"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "clap",
@@ -3468,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-agents"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-federation"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3528,7 +3528,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-ffi"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "resonator-node",
  "resonator-server",
@@ -3541,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-model"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3555,7 +3555,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-node"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "reqwest 0.12.28",
@@ -3574,7 +3574,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-push"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3593,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-robots"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3610,7 +3610,7 @@ dependencies = [
 
 [[package]]
 name = "resonator-server"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "argon2",
  "axum",

@@ -35,7 +35,7 @@ function harness(options: { own?: string | null; served?: string | null; unsaved
 
 describe("buildOfScript", () => {
   test("names a built asset", () => {
-    expect(buildOfScript("http://mothership:9898/assets/index-B3h3E6m_.js")).toBe("index-B3h3E6m_.js");
+    expect(buildOfScript("http://relayhost:9898/assets/index-B3h3E6m_.js")).toBe("index-B3h3E6m_.js");
     expect(buildOfScript("https://x/assets/index-a.js?v=1")).toBe("index-a.js");
   });
   test("is null for a development server", () => {

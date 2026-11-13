@@ -57,6 +57,11 @@ export interface SessionInfo {
   readonly websocketAddress: string;
   readonly registrationEnabled: boolean;
   /**
+   * Domains of other servers where one may register instead (shown on the
+   * registration screen); absent when the server names none.
+   */
+  readonly otherServers?: readonly string[];
+  /**
    * Whether the server federates with other wave servers: participants of
    * other domains can be added, and attachment ids name this domain.
    */
@@ -472,6 +477,7 @@ export class WaveHttpApi {
       idSeed: stringField(body, "id", response),
       websocketAddress: stringField(body, "websocket_address", response),
       registrationEnabled: body["registration_enabled"] === true,
+      ...otherServers(body["other_servers"]),
       ...(body["federation"] === true ? { federation: true } : {}),
       socketToken: typeof socketToken === "string" ? socketToken : null,
       ...deviceInfo(body),
@@ -736,4 +742,15 @@ export function sessionAuthToken(
     }
     return session.socketToken ?? bearerToken;
   };
+}
+
+/** `other_servers` of `/session`: the plain domain names in it, if any. */
+function otherServers(value: unknown): { otherServers?: readonly string[] } {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const domains = value.filter(
+    (item): item is string => typeof item === "string" && /^[a-z0-9.-]+$/i.test(item),
+  );
+  return domains.length > 0 ? { otherServers: domains } : {};
 }

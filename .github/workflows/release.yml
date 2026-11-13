@@ -1,0 +1,187 @@
+name: release
+
+# Push a tag like v0.4.0: builds the server binaries, the signed Android APK
+# and AAB, and the iOS app (uploaded to TestFlight), into a draft release
+# that is published only when every job has passed.
+#
+# Signed steps need these repository secrets and are skipped without them
+# (forks still get the server binaries):
+#   Android: ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASSWORD,
+#            ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#   iOS:     ASC_KEY_P8_B64, ASC_KEY_ID, ASC_ISSUER_ID, APPLE_TEAM_ID
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.4.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.resolve.outputs.tag }}"
+          gh release view "$tag" > /dev/null 2>&1 ||
+            gh release create "$tag" --draft --verify-tag --title "Resonator ${{ steps.resolve.outputs.version }}" \
+              --notes "Server binaries (resonator, resonator-push), the Android app, and the iOS app on TestFlight. See the README to get started."
+
+  server:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on 22.04 for a glibc 2.35 floor.
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-15, target: aarch64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd client && npm ci && npm run build
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p resonator -p resonator-push
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          name="resonator-${{ matrix.target }}.tar.gz"
+          mkdir dist
+          cp target/${{ matrix.target }}/release/resonator target/${{ matrix.target }}/release/resonator-push \
+             README.md LICENSE NOTICE TRADEMARKS.md dist/
+          tar czf "$name" -C dist .
+          if command -v sha256sum > /dev/null; then sha256sum "$name" > "$name.sha256"; else shasum -a 256 "$name" > "$name.sha256"; fi
+          gh release upload "${{ needs.create-release.outputs.tag }}" "$name" "$name.sha256" --clobber
+
+  android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEY: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "platforms;android-35" > /dev/null
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-release
+      - name: Keystore
+        if: env.HAS_KEY == 'true'
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RESONATOR_VERSION_NAME: ${{ needs.create-release.outputs.version }}
+        # versionCode from the version: 0.4.0 -> 400, 1.2.3 -> 10203.
+        run: |
+          IFS=. read -r major minor patch <<< "${RESONATOR_VERSION_NAME%%-*}"
+          export RESONATOR_VERSION_CODE=$((major * 10000 + minor * 100 + patch))
+          apps/android/build.sh release
+      - name: Upload
+        if: env.HAS_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          v="${{ needs.create-release.outputs.version }}"
+          cp apps/android/app/build/outputs/apk/release/app-release.apk "resonator-$v.apk"
+          cp apps/android/app/build/outputs/bundle/release/app-release.aab "resonator-$v.aab"
+          sha256sum "resonator-$v.apk" > "resonator-$v.apk.sha256"
+          gh release upload "${{ needs.create-release.outputs.tag }}" "resonator-$v.apk" "resonator-$v.apk.sha256" "resonator-$v.aab" --clobber
+      - run: rm -f "$RUNNER_TEMP/upload.jks"
+        if: always()
+
+  ios:
+    needs: create-release
+    runs-on: macos-15
+    env:
+      HAS_KEY: ${{ secrets.ASC_KEY_P8_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          brew install xcodegen
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-release
+      - name: Archive and upload to TestFlight
+        if: env.HAS_KEY == 'true'
+        env:
+          RESONATOR_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          echo "${{ secrets.ASC_KEY_P8_B64 }}" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" apps/ios/build.sh archive
+      - name: Simulator build (no signing secrets)
+        if: env.HAS_KEY != 'true'
+        run: apps/ios/build.sh simulator
+      - run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+        if: always()
+
+  publish:
+    needs: [create-release, server, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.create-release.outputs.tag }}" --draft=false

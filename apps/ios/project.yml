@@ -44,3 +44,10 @@ targets:
         # simulators and devices).
         ARCHS: arm64
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+      # Push tokens: sandbox for development builds, production for
+      # TestFlight and the App Store (Resonator.entitlements).
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production

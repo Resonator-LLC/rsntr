@@ -205,11 +205,24 @@ sleeping phones with content-free silent pushes. See
 ```sh
 apps/ios/build.sh run        # macOS with Xcode and xcodegen: simulator
 apps/android/build.sh        # Android SDK + NDK and cargo-ndk: debug APK
+apps/android/build.sh release  # release APK + AAB, signed if a keystore is set
 apps/macos/build.sh          # a Mac window on a node
 ```
 
 The official builds use the relays `https://rly.rsntr.net` (iroh) and
-`https://psh.rsntr.net` (push); both are build settings.
+`https://psh.rsntr.net` (push); both are build settings
+(`RESONATOR_IROH_RELAY`, `RESONATOR_PUSH_RELAY`).
+
+Android release signing reads `apps/android/keystore.properties`
+(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`; git-ignored) or
+the environment (`ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). Forks: change the
+`applicationId` and the name (see [TRADEMARKS.md](TRADEMARKS.md)).
+
+Continuous integration (`.github/workflows/ci.yml`) builds and tests
+everything on each push. Pushing a `v*` tag runs `release.yml`: the server
+binaries, the signed APK and AAB, and the iOS app to TestFlight, into a
+GitHub release.
 
 ## Development
 

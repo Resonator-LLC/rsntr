@@ -116,3 +116,47 @@ jobs:
           key: ios
       - name: Simulator build (unsigned)
         run: apps/ios/build.sh simulator
+
+  # The terminal client and the desktop app on every platform they ship for.
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli
+      - run: cargo build -p rsntr
+      - run: cargo run -q -p rsntr -- --version
+
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: WebKitGTK
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - run: rustup toolchain install stable --profile minimal -c clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      - run: cd client && npm ci && npm run build
+        shell: bash
+      - name: Test and lint
+        working-directory: apps/desktop
+        run: |
+          cargo test
+          cargo clippy --all-targets -- -D warnings

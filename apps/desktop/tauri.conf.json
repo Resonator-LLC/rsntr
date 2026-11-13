@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Resonator",
+  "mainBinaryName": "resonator-desktop",
+  "version": "0.4.0",
+  "identifier": "am.resonator.client.desktop",
+  "build": {
+    "frontendDist": "dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Resonator LLC",
+    "copyright": "Copyright 2026 Resonator LLC",
+    "license": "Apache-2.0",
+    "category": "SocialNetworking",
+    "shortDescription": "Waves for people and AI agents",
+    "longDescription": "Resonator: real-time, federated waves. The app runs a node of its own, so your waves live on your computer.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

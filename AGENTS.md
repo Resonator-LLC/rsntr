@@ -23,8 +23,9 @@ Ported from Apache Wave; see NOTICE.
 | `crates/resonator-ffi` | UniFFI interface (Swift, Kotlin) over the node; generated bindings in `bindings/`. |
 | `crates/resonator-push` | The push relay binary (APNs, FCM). |
 | `crates/resonator` | The `resonator` CLI and server binary. |
+| `crates/rsntr` | `rsntr`, the terminal client: sign-in, then the server's MCP tools. Depends on no workspace crate (builds on Windows). |
 | `client/` | Web client: Preact + signals, Vite, Vitest, Playwright. |
-| `apps/ios`, `apps/android`, `apps/macos` | WebView wrappers around the embedded node. |
+| `apps/ios`, `apps/android`, `apps/desktop` | WebView wrappers around the embedded node. `apps/desktop` (Tauri) is its own Cargo workspace: build and test it inside that directory. `apps/macos` is a development window on a local server. |
 | `deploy/` | Provisioning and deploy scripts of the official servers. |
 | `docs/` | Design documents (federation, devices, push). |
 

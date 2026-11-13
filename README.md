@@ -10,9 +10,11 @@ and nodes talk to each other directly over [iroh](https://iroh.computer)
   `name@rsntr.net`) or <https://resonator.network> (`name@resonator.network`).
   Both are run by Resonator LLC and federate with each other and with
   any other Resonator server.
-- **Apps:** iOS (TestFlight, then the App Store) and Android (APK on the
-  [Releases](https://github.com/Resonator-LLC/rsntr/releases) page). The
+- **Apps:** iOS (TestFlight, then the App Store), Android (APK), and
+  desktop apps for macOS, Windows and Linux, on the
+  [Releases](https://github.com/Resonator-LLC/rsntr/releases) page. The
   apps embed a whole node, so your waves live on your devices.
+- **Terminal:** `rsntr`, a command line client for any Resonator server.
 - **Run your own:** one binary; see below.
 
 Resonator is inspired by Google Wave and derived from Apache Wave ("Wave in
@@ -21,6 +23,7 @@ a Box"). It is a complete rewrite in Rust and TypeScript.
 ## Contents
 
 - [Run a server](#run-a-server)
+- [From the terminal](#from-the-terminal)
 - [For AI agents](#for-ai-agents)
 - [Federation](#federation)
 - [AI agents on the server](#ai-agents)
@@ -57,6 +60,25 @@ Caddy setup used for the official servers.
 - `resonator backup <path>` copies the database safely while the server
   runs.
 - `GET /healthz` answers when the server is up.
+
+## From the terminal
+
+`rsntr` reads and writes waves on any Resonator server. Download it from
+the [Releases](https://github.com/Resonator-LLC/rsntr/releases) page
+(`rsntr-<platform>.tar.gz` or `.zip`), or `cargo install --path crates/rsntr`.
+
+```sh
+rsntr login me@rsntr.net              # asks the password, keeps a token (mode 600)
+rsntr inbox                           # your waves; `rsntr unread`, `rsntr search with:bob@rsntr.net`
+rsntr read abc123                     # a wave by id (short ids are of your own server)
+rsntr new "Lunch?" -m "Noon?" -w bob@resonator.network
+rsntr reply abc123 -m "Yes"           # at the end; `rsntr reply abc123 <blip> -m ...` replies to a blip
+echo "from a script" | rsntr reply abc123
+rsntr tool read_wave '{"wave_id": "rsntr.net/w+abc123"}'   # any MCP tool, raw JSON
+```
+
+`--json` prints the server's JSON. Scripts and agents can skip `login` and
+set `RSNTR_SERVER` and `RSNTR_TOKEN` (a token from `/auth/tokens`, below).
 
 ## For AI agents
 
@@ -202,11 +224,16 @@ sleeping phones with content-free silent pushes. See
 [`docs/device-plan.md`](docs/device-plan.md) and
 [`docs/push-relay.md`](docs/push-relay.md).
 
+The desktop app (`apps/desktop`, Tauri) does the same on macOS, Windows
+and Linux, in the system's WebView.
+
 ```sh
+apps/desktop/build.sh        # Rust, Node; on Linux the WebKitGTK dev packages
+apps/desktop/build.sh release  # installers for this OS (.dmg, .msi/.exe, .deb/.rpm/.AppImage)
 apps/ios/build.sh run        # macOS with Xcode and xcodegen: simulator
 apps/android/build.sh        # Android SDK + NDK and cargo-ndk: debug APK
 apps/android/build.sh release  # release APK + AAB, signed if a keystore is set
-apps/macos/build.sh          # a Mac window on a node
+apps/macos/build.sh          # a Mac window on a node of this checkout (development)
 ```
 
 The official builds use the relays `https://rly.rsntr.net` (iroh) and
@@ -221,8 +248,8 @@ the environment (`ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`,
 
 Continuous integration (`.github/workflows/ci.yml`) builds and tests
 everything on each push. Pushing a `v*` tag runs `release.yml`: the server
-binaries, the signed APK and AAB, and the iOS app to TestFlight, into a
-GitHub release.
+binaries, `rsntr`, the desktop installers, the signed APK and AAB, and the
+iOS app to TestFlight, into a GitHub release.
 
 ## Development
 

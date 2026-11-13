@@ -1,8 +1,9 @@
 name: release
 
-# Push a tag like v0.4.0: builds the server binaries, the signed Android APK
-# and AAB, and the iOS app (uploaded to TestFlight), into a draft release
-# that is published only when every job has passed.
+# Push a tag like v0.4.0: builds the server binaries, the rsntr terminal
+# client, the desktop app's installers, the signed Android APK and AAB, and
+# the iOS app (uploaded to TestFlight), into a draft release that is
+# published only when every job has passed.
 #
 # Signed steps need these repository secrets and are skipped without them
 # (forks still get the server binaries):
@@ -45,7 +46,7 @@ jobs:
           tag="${{ steps.resolve.outputs.tag }}"
           gh release view "$tag" > /dev/null 2>&1 ||
             gh release create "$tag" --draft --verify-tag --title "Resonator ${{ steps.resolve.outputs.version }}" \
-              --notes "Server binaries (resonator, resonator-push), the Android app, and the iOS app on TestFlight. See the README to get started."
+              --notes "Server binaries (resonator, resonator-push), the rsntr terminal client, the desktop app (macOS, Windows, Linux), the Android app, and the iOS app on TestFlight. See the README to get started."
 
   server:
     needs: create-release
@@ -85,6 +86,88 @@ jobs:
           tar czf "$name" -C dist .
           if command -v sha256sum > /dev/null; then sha256sum "$name" > "$name.sha256"; else shasum -a 256 "$name" > "$name.sha256"; fi
           gh release upload "${{ needs.create-release.outputs.tag }}" "$name" "$name.sha256" --clobber
+
+  # rsntr, the terminal client: a single binary per platform.
+  cli:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-15, target: aarch64-apple-darwin }
+          - { os: macos-15, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p rsntr
+      - name: Package and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          mkdir dist
+          cp README.md LICENSE NOTICE dist/
+          if [ "${{ runner.os }}" = Windows ]; then
+            cp target/${{ matrix.target }}/release/rsntr.exe dist/
+            name="rsntr-${{ matrix.target }}.zip"
+            (cd dist && 7z a "../$name" . > /dev/null)
+            sha256sum "$name" > "$name.sha256"
+          else
+            cp target/${{ matrix.target }}/release/rsntr dist/
+            name="rsntr-${{ matrix.target }}.tar.gz"
+            tar czf "$name" -C dist .
+            if command -v sha256sum > /dev/null; then sha256sum "$name" > "$name.sha256"; else shasum -a 256 "$name" > "$name.sha256"; fi
+          fi
+          gh release upload "${{ needs.create-release.outputs.tag }}" "$name" "$name.sha256" --clobber
+
+  # The desktop app (Tauri): .dmg, .msi/.exe, .deb/.rpm/.AppImage. Not yet
+  # signed: macOS asks to confirm the first start, Windows SmartScreen warns.
+  desktop:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: WebKitGTK
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      - name: Build
+        shell: bash
+        run: apps/desktop/build.sh release
+      - name: Upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          shopt -s nullglob
+          files=(apps/desktop/target/release/bundle/{dmg/*.dmg,msi/*.msi,nsis/*.exe,deb/*.deb,rpm/*.rpm,appimage/*.AppImage})
+          [ ${#files[@]} -gt 0 ] || { echo "no installers were built" >&2; exit 1; }
+          gh release upload "${{ needs.create-release.outputs.tag }}" "${files[@]}" --clobber
 
   android:
     needs: create-release
@@ -177,7 +260,7 @@ jobs:
         if: always()
 
   publish:
-    needs: [create-release, server, android, ios]
+    needs: [create-release, server, cli, desktop, android, ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,445 @@
+/* The settings page of a device node: grouped cards, as an app's settings
+   screen; one column, full width on phones. */
+
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface-2);
+  flex: none;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: var(--sp-4) var(--sp-3) calc(var(--sp-6) + env(safe-area-inset-bottom));
+  min-width: 0;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.settings-section-title {
+  margin: 0 var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-text-3);
+}
+
+.settings-subtitle {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-2);
+  background: var(--c-surface);
+  min-width: 0;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: var(--tap);
+  min-width: 0;
+}
+.settings-list > .settings-row + .settings-row {
+  border-top: 1px solid var(--c-border);
+  padding-top: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.settings-row-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.settings-row-sub {
+  color: var(--c-text-3);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  flex: none;
+}
+
+.settings-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.settings-person {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.settings-device.is-revoked .settings-device-name {
+  color: var(--c-text-3);
+  text-decoration: line-through;
+}
+
+.settings-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.settings-badge {
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius-round);
+  background: var(--c-surface-3);
+  color: var(--c-text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+.settings-badge-accent {
+  background: var(--c-accent-soft);
+  color: var(--c-accent);
+}
+.settings-badge-danger {
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
+}
+
+.settings-danger-text {
+  color: var(--c-danger);
+}
+
+.settings-help,
+.settings-lease {
+  margin: 0;
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+}
+.settings-lease {
+  color: var(--c-text);
+  font-size: var(--fs-md);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.settings-inline-form {
+  display: flex;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.settings-inline-form .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.settings-check input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.settings-invitation {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-3);
+}
+
+.settings-qr {
+  align-self: center;
+  width: min(14rem, 100%);
+  aspect-ratio: 1;
+  padding: var(--sp-2);
+  background: #ffffff;
+  border-radius: var(--radius-1);
+}
+.settings-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.settings-pair-link {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+/* Pairing by code: the code shown large, its parts apart; it wraps
+   between parts on narrow screens, never inside one. */
+.settings-code-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--radius-2);
+  background: var(--c-surface-2);
+}
+.settings-pair-code {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  row-gap: var(--sp-1);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: clamp(1.375rem, 6.5vw, 2rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: var(--c-text);
+  user-select: all;
+}
+.settings-code-part {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.settings-code-sep {
+  padding-inline: 0.3em;
+  color: var(--c-text-3);
+  font-weight: 400;
+}
+.settings-code-group.is-number {
+  letter-spacing: 0.08em;
+  color: var(--c-accent);
+}
+.settings-code-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.settings-or:empty {
+  display: none;
+}
+
+.settings-code-input {
+  font-family: var(--font-mono);
+  font-size: max(1rem, 16px);
+  letter-spacing: 0.02em;
+}
+.settings-code-hint {
+  min-height: 1.2em;
+  margin: calc(-1 * var(--sp-2)) 0 0;
+  color: var(--c-text-3);
+  font-size: var(--fs-sm);
+}
+.settings-code-hint.is-error {
+  color: var(--c-danger);
+}
+.settings-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-top: calc(-1 * var(--sp-2));
+}
+.settings-suggestion {
+  min-height: var(--tap);
+  font-family: var(--font-mono);
+}
+
+.settings-join-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+}
+.settings-join-progress li::before {
+  content: "\25CB";
+  display: inline-block;
+  width: 1.4em;
+}
+.settings-join-progress li.is-done {
+  color: var(--c-text-2);
+}
+.settings-join-progress li.is-done::before {
+  content: "\2713";
+  color: var(--c-ok);
+}
+.settings-join-progress li.is-current {
+  color: var(--c-text);
+  font-weight: 600;
+}
+.settings-join-progress li.is-current::before {
+  content: "\25CF";
+  color: var(--c-accent);
+}
+
+.settings-request,
+.settings-confirm,
+.settings-message,
+.settings-restart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.settings-confirm p,
+.settings-restart p {
+  margin: 0;
+}
+
+.notice-info {
+  background: var(--c-accent-soft);
+  color: var(--c-accent);
+}
+
+.settings-phrase {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) calc(var(--sp-3) + 1.5rem);
+  border-radius: var(--radius-1);
+  background: var(--c-surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  user-select: text;
+}
+
+.settings-phrase-input {
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.settings-loading {
+  color: var(--c-text-3);
+}
+
+/* "Continue as new wave", under the wave's toolbar. */
+.wave-frozen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: var(--sp-2) var(--sp-3) 0;
+}
+
+/* The settings button of the top bar (device mode). */
+.topbar-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0 var(--sp-1);
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.topbar-settings:hover,
+.topbar-settings[aria-pressed="true"] {
+  background: rgb(255 255 255 / 16%);
+}
+
+@media (max-width: 47.99rem) {
+  .settings-page {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .settings-body {
+    padding-inline: max(var(--sp-3), env(safe-area-inset-left)) max(var(--sp-3), env(safe-area-inset-right));
+  }
+  .settings-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* The whole address: wraps anywhere, selected as one piece. */
+.settings-address {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  user-select: all;
+  -webkit-user-select: all;
+}
+.settings-address-row {
+  align-items: center;
+}
+.settings-copy {
+  flex: none;
+  min-width: 5.5rem;
+}

@@ -1,0 +1,792 @@
+N	doc-basic
+S	insert body
+O	conv+root	doc b+doc << body {}; << line {}; >>; >>; 
+D	conv+root	b+doc	1	<body><line/></body>
+P	conv+root	1	
+S	insert text
+O	conv+root	doc b+doc __3; ++"Hello world"; __1; 
+D	conv+root	b+doc	2	<body><line/>Hello world</body>
+P	conv+root	2	
+S	bold
+O	conv+root	doc b+doc __3; || { "style/fontWeight": null -> "bold" }; __5; || { "style/fontWeight" }; __7; 
+D	conv+root	b+doc	3	<body><line/><?a "style/fontWeight"="bold"?>Hello<?a "style/fontWeight"?> world</body>
+P	conv+root	3	
+S	link
+O	conv+root	doc b+doc __5; || { "link/manual": null -> "http://x" }; __7; || { "link/manual" }; __3; 
+D	conv+root	b+doc	3	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>llo<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	4	
+S	insert in annotated
+O	conv+root	doc b+doc __6; ++"XY"; __9; 
+D	conv+root	b+doc	5	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYlo<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	5	
+S	insert at annotation end
+O	conv+root	doc b+doc __10; ++"Z"; __7; 
+D	conv+root	b+doc	6	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYloZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	6	
+S	create reply anchor
+O	conv+root	doc b+doc __9; << reply { id="t1" }; >>; __9; 
+D	conv+root	b+doc	6	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYl<reply id="t1"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	7	
+S	set attribute
+O	conv+root	doc b+doc __9; u@ { id: "t1" -> "t2" }; __10; 
+D	conv+root	b+doc	8	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYl<reply id="t2"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	8	
+S	set same attribute
+D	conv+root	b+doc	8	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYl<reply id="t2"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	8	
+S	update attributes
+O	conv+root	doc b+doc __9; u@ { a: null -> "1", id: "t2" -> null, zz: null -> "z" }; __10; 
+D	conv+root	b+doc	9	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYl<reply a="1" zz="z"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	9	
+S	replace attributes
+O	conv+root	doc b+doc __9; r@ { a="1", zz="z" } { b="2", z="9" }; __10; 
+D	conv+root	b+doc	10	<body><line/><?a "style/fontWeight"="bold"?>He<?a "link/manual"="http://x"?>lXYl<reply b="2" z="9"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	10	
+S	unbold part
+O	conv+root	doc b+doc __4; || { "style/fontWeight": "bold" -> null }; __3; || { "style/fontWeight" }; __13; 
+D	conv+root	b+doc	11	<body><line/><?a "style/fontWeight"="bold"?>H<?a "style/fontWeight"?>e<?a "link/manual"="http://x"?>lX<?a "style/fontWeight"="bold"?>Yl<reply b="2" z="9"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	11	
+S	rebold overlapping
+O	conv+root	doc b+doc __2; || { "style/fontWeight": null -> "bold" }; __1; || { "style/fontWeight" }; __1; || { "style/fontWeight": null -> "bold" }; __3; || { "style/fontWeight" }; __13; 
+D	conv+root	b+doc	12	<body><line><?a "style/fontWeight"="bold"?></line>He<?a "link/manual"="http://x"?>lXYl<reply b="2" z="9"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	12	
+S	set same annotation
+O	conv+root	doc b+doc __3; || { "style/fontWeight": "bold" -> "bold" }; __3; || { "style/fontWeight" }; __14; 
+D	conv+root	b+doc	12	<body><line><?a "style/fontWeight"="bold"?></line>He<?a "link/manual"="http://x"?>lXYl<reply b="2" z="9"/>oZ<?a "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	13	
+S	delete range over annotations
+O	conv+root	doc b+doc __4; || { "link/manual": null -> null, "style/fontWeight": "bold" -> "bold" }; --"e"; || { "link/manual": "http://x" -> null }; --"lXYl"; x< reply { b="2", z="9" }; x>; --"oZ"; || { "link/manual", "style/fontWeight" }; __7; 
+D	conv+root	b+doc	14	<body><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	14	
+S	explicit title
+O	conv+root	doc b+doc || { "conv/title": null -> "Title" }; __1; || { "conv/title": null -> null }; __10; || { "conv/title" }; 
+D	conv+root	b+doc	15	<?a "conv/title"="Title"?><body><?a "conv/title"?><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> wor<?a "link/manual"?>ld</body>
+P	conv+root	15	
+S	implicit title
+O	conv+root	doc b+doc || { "conv/title": "Title" -> null }; __1; || { "conv/title": null -> "" }; __5; || { "conv/title": null -> null }; __5; || { "conv/title" }; 
+D	conv+root	b+doc	16	<body><?a "conv/title"=""?><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> w<?a "conv/title"?>or<?a "link/manual"?>ld</body>
+P	conv+root	16	
+S	append line
+O	conv+root	doc b+doc __10; << line {}; >>; __1; 
+O	conv+root	doc b+doc __12; ++"second < line & more"; __1; 
+D	conv+root	b+doc	18	<body><?a "conv/title"=""?><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> w<?a "conv/title"?>or<?a "link/manual"?>ld<line/>second &lt; line &amp; more</body>
+P	conv+root	18	
+S	append to last line
+O	conv+root	doc b+doc __32; ++" tail"; __1; 
+D	conv+root	b+doc	19	<body><?a "conv/title"=""?><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> w<?a "conv/title"?>or<?a "link/manual"?>ld<line/>second &lt; line &amp; more tail</body>
+P	conv+root	19	
+S	insert empty text
+O	conv+root	doc b+doc __38; 
+D	conv+root	b+doc	19	<body><?a "conv/title"=""?><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> w<?a "conv/title"?>or<?a "link/manual"?>ld<line/>second &lt; line &amp; more tail</body>
+P	conv+root	20	
+S	delete empty range
+D	conv+root	b+doc	19	<body><?a "conv/title"=""?><line><?a "style/fontWeight"="bold"?></line>H<?a "link/manual"="http://x" "style/fontWeight"?> w<?a "conv/title"?>or<?a "link/manual"?>ld<line/>second &lt; line &amp; more tail</body>
+P	conv+root	20	
+S	delete line element
+O	conv+root	doc b+doc __1; || { "conv/title": "" -> null, "link/manual": null -> null, "style/fontWeight": null -> null }; x< line {}; || { "style/fontWeight": "bold" -> null }; x>; || { "conv/title", "link/manual", "style/fontWeight" }; __35; 
+D	conv+root	b+doc	21	<body><?a "conv/title"="" "style/fontWeight"="bold"?>H<?a "link/manual"="http://x" "style/fontWeight"?> w<?a "conv/title"?>or<?a "link/manual"?>ld<line/>second &lt; line &amp; more tail</body>
+P	conv+root	21	
+S	delete all text
+O	conv+root	doc b+doc __1; || { "conv/title": "" -> null, "link/manual": null -> null, "style/fontWeight": "bold" -> null }; --"H"; || { "link/manual": "http://x" -> null, "style/fontWeight": null -> null }; --" w"; || { "conv/title": null -> null }; --"or"; || { "link/manual": null -> null }; --"ld"; x< line {}; x>; --"second < line & more tail"; || { "conv/title", "link/manual", "style/fontWeight" }; __1; 
+D	conv+root	b+doc	22	<body/>
+P	conv+root	22	
+S	empty document
+O	conv+root	doc b+doc x< body {}; x>; 
+P	conv+root	23	
+S	append line to empty
+O	conv+root	doc b+doc << body {}; << line {}; >>; >>; 
+O	conv+root	doc b+doc __3; ++"fresh"; __1; 
+O	conv+root	doc b+doc __1; r@ {} {}; __7; 
+D	conv+root	b+doc	26	<body><line/>fresh</body>
+P	conv+root	26	
+S	append to last line of empty
+O	conv+root	doc b+doc x< body {}; x< line {}; x>; --"fresh"; x>; 
+O	conv+root	doc b+doc << body {}; << line {}; >>; >>; 
+O	conv+root	doc b+doc __3; ++"x"; __1; 
+O	conv+root	doc b+doc __1; r@ {} {}; __3; 
+D	conv+root	b+doc	30	<body><line/>x</body>
+P	conv+root	30	
+S	bad location
+E
+D	conv+root	b+doc	30	<body><line/>x</body>
+P	conv+root	30	
+N	doc-delete-across-elements
+S	build
+O	conv+root	doc b+doc << a {}; ++"one"; << b {}; ++"two"; << c {}; ++"three"; >>; ++"four"; >>; ++"five"; >>; << d {}; ++"six"; << e {}; ++"seven"; >>; ++"eight"; >>; << f {}; ++"nine"; >>; 
+D	conv+root	b+doc	1	<a>one<b>two<c>three</c>four</b>five</a><d>six<e>seven</e>eight</d><f>nine</f>
+P	conv+root	1	
+S	annotate
+O	conv+root	doc b+doc __6; || { "k": null -> "v" }; __24; || { "k" }; __18; 
+D	conv+root	b+doc	2	<a>one<b>t<?a "k"="v"?>wo<c>three</c>four</b>five</a><d>six<e><?a "k"?>seven</e>eight</d><f>nine</f>
+P	conv+root	2	
+S	annotate 2
+O	conv+root	doc b+doc __10; || { "j": null -> "w" }; __10; || { "j" }; __28; 
+D	conv+root	b+doc	3	<a>one<b>t<?a "k"="v"?>wo<c>t<?a "j"="w"?>hree</c>four</b><?a "j"?>five</a><d>six<e><?a "k"?>seven</e>eight</d><f>nine</f>
+P	conv+root	3	
+S	delete c to e
+O	conv+root	doc b+doc __26; || { "j": null -> null, "k": "v" -> "v" }; --"six"; x< e {}; || { "k": null -> "v" }; --"seven"; x>; || { "j", "k" }; __12; 
+O	conv+root	doc b+doc __38; 
+O	conv+root	doc b+doc __20; || { "j": null -> "w", "k": "v" -> "v" }; --"five"; || { "j", "k" }; __14; 
+O	conv+root	doc b+doc __15; || { "j": "w" -> "w", "k": "v" -> "v" }; --"four"; || { "j", "k" }; __15; 
+O	conv+root	doc b+doc __11; || { "j": "w" -> "w", "k": "v" -> "v" }; --"ree"; || { "j", "k" }; __16; 
+D	conv+root	b+doc	8	<a>one<b>t<?a "k"="v"?>wo<c>t<?a "j"="w"?>h</c></b><?a "j"?></a><d><?a "k"?>eight</d><f>nine</f>
+P	conv+root	8	
+S	delete a to f
+O	conv+root	doc b+doc __22; || { "j": null -> null, "k": null -> null }; --"ni"; || { "j", "k" }; __3; 
+O	conv+root	doc b+doc __14; || { "j": null -> null, "k": "v" -> "v" }; x< d {}; || { "k": null -> "v" }; --"eight"; x>; || { "j", "k" }; __4; 
+O	conv+root	doc b+doc __2; || { "j": null -> null, "k": null -> null }; --"ne"; x< b {}; --"t"; || { "k": "v" -> null }; --"wo"; x< c {}; --"t"; || { "j": "w" -> null }; --"h"; x>; x>; || { "j", "k" }; __5; 
+D	conv+root	b+doc	11	<a>o<?a "k"="v"?></a><?a "k"?><f>ne</f>
+P	conv+root	11	
+S	delete into child
+O	conv+root	doc b+doc __4; || { "k": null -> null }; --"n"; || { "k" }; __2; 
+O	conv+root	doc b+doc __6; 
+O	conv+root	doc b+doc __1; || { "k": null -> null }; --"o"; || { "k" }; __4; 
+D	conv+root	b+doc	14	<a><?a "k"="v"?></a><?a "k"?><f>e</f>
+P	conv+root	14	
+N	doc-nindo
+S	initial content with annotations
+O	conv+root	doc b+doc << body {}; || { "conv/title": null -> "" }; << line {}; >>; >>; || { "conv/title" }; 
+D	conv+root	b+doc	1	<body><?a "conv/title"=""?><line/></body><?a "conv/title"?>
+P	conv+root	1	
+S	text
+O	conv+root	doc b+doc __3; ++"abcdefghij"; __1; 
+D	conv+root	b+doc	2	<body><?a "conv/title"=""?><line/>abcdefghij</body><?a "conv/title"?>
+P	conv+root	2	
+S	mixed
+O	conv+root	doc b+doc __4; || { "x": null -> "1" }; __2; ++"NEW"; __1; || { "conv/title": "" -> "" }; --"ef"; || { "conv/title", "x", "y": null -> "2" }; __2; || { "y" }; __3; 
+D	conv+root	b+doc	3	<body><?a "conv/title"=""?><line/>a<?a "x"="1"?>bcNEWd<?a "x" "y"="2"?>gh<?a "y"?>ij</body><?a "conv/title"?>
+P	conv+root	3	
+S	delete over three annotations
+O	conv+root	doc b+doc __3; || { "conv/title": "" -> "", "x": null -> null, "y": null -> null }; --"a"; || { "x": "1" -> null }; --"bcNEWd"; || { "x": null -> null, "y": "2" -> null }; --"gh"; || { "conv/title", "x", "y" }; __3; 
+O	conv+root	doc b+doc __6; 
+D	conv+root	b+doc	4	<body><?a "conv/title"=""?><line/>ij</body><?a "conv/title"?>
+P	conv+root	5	
+S	remove annotation everywhere
+O	conv+root	doc b+doc || { "x": null -> null }; __6; || { "x" }; 
+D	conv+root	b+doc	4	<body><?a "conv/title"=""?><line/>ij</body><?a "conv/title"?>
+P	conv+root	6	
+S	delete after key removed
+O	conv+root	doc b+doc __3; || { "conv/title": "" -> "" }; --"i"; || { "conv/title" }; __2; 
+D	conv+root	b+doc	7	<body><?a "conv/title"=""?><line/>j</body><?a "conv/title"?>
+P	conv+root	7	
+N	doc-unicode
+S	build
+O	conv+root	doc b+doc << body {}; << line {}; >>; >>; 
+D	conv+root	b+doc	1	<body><line/></body>
+P	conv+root	1	
+S	text
+O	conv+root	doc b+doc __3; ++"h\u00E9llo \u4E16\u754C \u005C"q\u005C" 'a' <&>"; __1; 
+D	conv+root	b+doc	2	<body><line/>h\u00E9llo \u4E16\u754C "q" 'a' &lt;&amp;&gt;</body>
+P	conv+root	2	
+S	annotate
+O	conv+root	doc b+doc __4; || { "k\u00E9y": null -> "v\u00E4l\u005C"ue" }; __5; || { "k\u00E9y" }; __15; 
+D	conv+root	b+doc	3	<body><line/>h<?a "k\u00E9y"="v\u00E4l\u005C"ue"?>\u00E9llo <?a "k\u00E9y"?>\u4E16\u754C "q" 'a' &lt;&amp;&gt;</body>
+P	conv+root	3	
+S	delete
+O	conv+root	doc b+doc __5; || { "k\u00E9y": "v\u00E4l\u005C"ue" -> "v\u00E4l\u005C"ue" }; --"llo "; || { "k\u00E9y": null -> "v\u00E4l\u005C"ue" }; --"\u4E16\u754C"; || { "k\u00E9y" }; __13; 
+D	conv+root	b+doc	4	<body><line/>h<?a "k\u00E9y"="v\u00E4l\u005C"ue"?>\u00E9<?a "k\u00E9y"?> "q" 'a' &lt;&amp;&gt;</body>
+P	conv+root	4	
+N	conv-basic
+S	create root
+O	conv+root	add alice@example.com
+O	conv+root	doc conversation << conversation {}; >>; 
+D	conv+root	conversation	2	<conversation/>
+P	conv+root	2	alice@example.com
+S	query empty
+Q	id example.com/conv+root
+Q	view example.com/w+wave
+Q	structure T()[]
+Q	bfs
+Q	title 
+D	conv+root	conversation	2	<conversation/>
+P	conv+root	2	alice@example.com
+S	append root blip
+O	conv+root	doc b+seedA << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __1; << blip { id="b+seedA" }; >>; __1; 
+D	conv+root	b+seedA	3	<body><line/></body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	4	alice@example.com
+S	write text
+O	conv+root	doc b+seedA __3; ++"Hello world. More text"; __1; 
+D	conv+root	b+seedA	5	<body><line/>Hello world. More text</body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	5	alice@example.com
+S	implicit title
+Q	structure T()[b+seedA^{}]
+Q	bfs b+seedA
+Q	title Hello world.
+O	conv+root	doc b+seedA || { "conv/title": null -> null }; __1; || { "conv/title": null -> "" }; __14; || { "conv/title": null -> null }; __11; || { "conv/title" }; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello world.<?a "conv/title"?> More text</body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	6	alice@example.com
+S	implicit title again
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello world.<?a "conv/title"?> More text</body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	6	alice@example.com
+S	append second blip
+O	conv+root	doc b+seedB << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __3; << blip { id="b+seedB" }; >>; __1; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	conversation	8	<conversation><blip id="b+seedA"/><blip id="b+seedB"/></conversation>
+P	conv+root	8	alice@example.com
+S	reply thread
+O	conv+root	doc conversation __2; << thread { id="b+seedC" }; >>; __4; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	conversation	9	<conversation><blip id="b+seedA"><thread id="b+seedC"/></blip><blip id="b+seedB"/></conversation>
+P	conv+root	9	alice@example.com
+S	reply blip
+O	conv+root	doc b+seedC << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __3; << blip { id="b+seedC" }; >>; __5; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	conversation	11	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	11	alice@example.com
+S	inline reply thread
+O	conv+root	doc b+seedA __8; << reply { id="b+seedD" }; >>; __18; 
+O	conv+root	doc conversation __6; << thread { id="b+seedD", inline="true" }; >>; __4; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello<reply id="b+seedD"/> world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	conversation	13	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"/></thread><thread id="b+seedD" inline="true"/></blip><blip id="b+seedB"/></conversation>
+P	conv+root	13	alice@example.com
+S	inline reply blips
+O	conv+root	doc b+seedD << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __7; << blip { id="b+seedD" }; >>; __5; 
+O	conv+root	doc b+seedE << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __9; << blip { id="b+seedE" }; >>; __5; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>Hello<reply id="b+seedD"/> world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	conversation	17	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"/></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	17	alice@example.com
+S	second inline reply thread, earlier
+O	conv+root	doc b+seedA __5; << reply { id="b+seedF" }; >>; __23; 
+O	conv+root	doc conversation __12; << thread { id="b+seedF", inline="true" }; >>; __4; 
+O	conv+root	doc b+seedF << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __13; << blip { id="b+seedF" }; >>; __5; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	conversation	21	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"/></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	21	alice@example.com
+S	nested reply
+O	conv+root	doc conversation __4; << thread { id="b+seedG" }; >>; __16; 
+O	conv+root	doc b+seedG << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __5; << blip { id="b+seedG" }; >>; __17; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	conversation	24	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	24	alice@example.com
+S	insert blip
+O	conv+root	doc b+seedH << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __21; << blip { id="b+seedH" }; >>; __3; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	26	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	26	alice@example.com
+S	query
+Q	structure T()[b+seedA^{5:T(b+seedF)[b+seedF{}],10:T(b+seedD)[b+seedD{},b+seedE{}],-1:T(b+seedC)[b+seedC{-1:T(b+seedG)[b+seedG{}]}]},b+seedH{},b+seedB{}]
+Q	bfs b+seedA b+seedH b+seedB b+seedC b+seedD b+seedE b+seedF b+seedG
+Q	title Hello world.
+Q	blip b+seedA author alice@example.com contributors [alice@example.com] lmv 6 lmt 1234567895123
+Q	blip b+seedB author alice@example.com contributors [alice@example.com] lmv 7 lmt 1234567897123
+Q	blip b+seedC author alice@example.com contributors [alice@example.com] lmv 10 lmt 1234567899123
+Q	blip b+seedD author alice@example.com contributors [alice@example.com] lmv 14 lmt 1234567901123
+Q	blip b+seedE author alice@example.com contributors [alice@example.com] lmv 16 lmt 1234567901125
+Q	blip b+seedF author alice@example.com contributors [alice@example.com] lmv 20 lmt 1234567902125
+Q	blip b+seedG author alice@example.com contributors [alice@example.com] lmv 23 lmt 1234567903124
+Q	blip b+seedH author alice@example.com contributors [alice@example.com] lmv 25 lmt 1234567904123
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world.<?a "conv/title"?> More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	26	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	26	alice@example.com
+S	explicit title
+Q	structure T()[b+seedA^{5:T(b+seedF)[b+seedF{}],10:T(b+seedD)[b+seedD{},b+seedE{}],-1:T(b+seedC)[b+seedC{-1:T(b+seedG)[b+seedG{}]}]},b+seedH{},b+seedB{}]
+Q	bfs b+seedA b+seedH b+seedB b+seedC b+seedD b+seedE b+seedF b+seedG
+Q	title Explicit
+O	conv+root	doc b+seedA || { "conv/title": null -> "Explicit" }; __1; || { "conv/title": "" -> null }; __18; || { "conv/title" }; __11; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world. More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	26	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	27	alice@example.com
+S	implicit title with explicit present
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world. More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	26	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	27	alice@example.com
+S	participants
+O	conv+root	add bob@example.com
+O	conv+root	remove alice@example.com
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world. More text</body>
+D	conv+root	b+seedB	7	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	26	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	29	bob@example.com
+S	author is no participant
+O	conv+root	add alice@example.com
+O	conv+root	doc b+seedB __3; ++"x"; __1; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world. More text</body>
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedD	14	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	26	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedD"/><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	31	bob@example.com alice@example.com
+S	delete first inline blip
+O	conv+root	doc conversation __11; x< blip { id="b+seedD" }; x>; __13; 
+O	conv+root	doc b+seedD x< body {}; x< line {}; x>; x>; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo<reply id="b+seedD"/> world. More text</body>
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedE	16	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	32	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedD" inline="true"><blip id="b+seedE"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	33	bob@example.com alice@example.com
+S	delete last inline blip
+Q	structure T()[b+seedA^{5:T(b+seedF)[b+seedF{}],-1:T(b+seedC)[b+seedC{-1:T(b+seedG)[b+seedG{}]}]},b+seedH{},b+seedB{}]
+Q	bfs b+seedA b+seedH b+seedB b+seedC b+seedF b+seedG
+Q	title Explicit
+O	conv+root	doc conversation __11; x< blip { id="b+seedE" }; x>; __11; 
+O	conv+root	doc b+seedE x< body {}; x< line {}; x>; x>; 
+O	conv+root	doc conversation __10; x< thread { id="b+seedD", inline="true" }; x>; __10; 
+O	conv+root	doc b+seedA __10; || { "conv/title": null -> null }; x< reply { id="b+seedD" }; x>; || { "conv/title" }; __18; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo world. More text</body>
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	36	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"><thread id="b+seedG"><blip id="b+seedG"/></thread></blip></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	37	bob@example.com alice@example.com
+S	delete nested thread
+O	conv+root	doc conversation __5; x< blip { id="b+seedG" }; x>; __13; 
+O	conv+root	doc b+seedG x< body {}; x< line {}; x>; x>; 
+O	conv+root	doc conversation __4; x< thread { id="b+seedG" }; x>; __12; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo world. More text</body>
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	b+seedC	10	<body><line/></body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	40	<conversation><blip id="b+seedA"><thread id="b+seedC"><blip id="b+seedC"/></thread><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	40	bob@example.com alice@example.com
+S	delete reply thread
+O	conv+root	doc conversation __3; x< blip { id="b+seedC" }; x>; __11; 
+O	conv+root	doc b+seedC x< body {}; x< line {}; x>; x>; 
+O	conv+root	doc conversation __2; x< thread { id="b+seedC" }; x>; __10; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo world. More text</body>
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	b+seedH	25	<body><line/></body>
+D	conv+root	conversation	43	<conversation><blip id="b+seedA"><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedH"/><blip id="b+seedB"/></conversation>
+P	conv+root	43	bob@example.com alice@example.com
+S	delete inserted blip
+O	conv+root	doc conversation __7; x< blip { id="b+seedH" }; x>; __3; 
+O	conv+root	doc b+seedH x< body {}; x< line {}; x>; x>; 
+D	conv+root	b+seedA	27	<?a "conv/title"="Explicit"?><body><?a "conv/title"?><line/>He<reply id="b+seedF"/>llo world. More text</body>
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	b+seedF	20	<body><line/></body>
+D	conv+root	conversation	44	<conversation><blip id="b+seedA"><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	45	bob@example.com alice@example.com
+S	delete blip with inline reply
+Q	structure T()[b+seedB^{}]
+Q	bfs b+seedB
+Q	title 
+O	conv+root	doc conversation __3; x< blip { id="b+seedF" }; x>; __5; 
+O	conv+root	doc b+seedF x< body {}; x< line {}; x>; x>; 
+O	conv+root	doc conversation __2; x< thread { id="b+seedF", inline="true" }; x>; __4; 
+O	conv+root	doc b+seedA __5; || { "conv/title": null -> null }; x< reply { id="b+seedF" }; x>; || { "conv/title" }; __21; 
+O	conv+root	doc conversation __1; x< blip { id="b+seedA" }; x>; __3; 
+O	conv+root	doc b+seedA || { "conv/title": "Explicit" -> null }; x< body {}; || { "conv/title": null -> null }; x< line {}; x>; --"Hello world. More text"; x>; || { "conv/title" }; 
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	conversation	50	<conversation><blip id="b+seedB"/></conversation>
+P	conv+root	51	bob@example.com alice@example.com
+S	tags
+O	conv+root	doc tags << tag {}; ++"one"; >>; 
+O	conv+root	doc tags __5; << tag {}; ++"two & <three>"; >>; 
+O	conv+root	doc tags __20; << tag {}; ++"four"; >>; 
+O	conv+root	doc tags __5; x< tag {}; --"two & <three>"; x>; __6; 
+O	conv+root	doc tags << tag {}; ++"zero"; >>; __11; 
+D	conv+root	b+seedB	31	<body><line/>x</body>
+D	conv+root	conversation	50	<conversation><blip id="b+seedB"/></conversation>
+D	conv+root	tags	56	<tag>zero</tag><tag>one</tag><tag>four</tag>
+P	conv+root	56	bob@example.com alice@example.com
+S	delete conversation
+O	conv+root	doc conversation __1; x< blip { id="b+seedB" }; x>; __1; 
+O	conv+root	doc b+seedB x< body {}; x< line {}; x>; --"x"; x>; 
+O	conv+root	doc conversation x< conversation {}; x>; 
+D	conv+root	tags	56	<tag>zero</tag><tag>one</tag><tag>four</tag>
+P	conv+root	59	bob@example.com alice@example.com
+N	conv-delete-many
+S	build
+Q	structure T()[b+seedA^{5:T(b+seedB)[b+seedB{},b+seedC{4:T(b+seedF)[b+seedF{}]}],9:T(b+seedE)[b+seedE{}],-1:T(b+seedD)[b+seedD{}]},b+seedG{}]
+Q	bfs b+seedA b+seedG b+seedB b+seedC b+seedD b+seedE b+seedF
+Q	title 
+O	conv+root	add alice@example.com
+O	conv+root	doc conversation << conversation {}; >>; 
+O	conv+root	doc b+seedA << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __1; << blip { id="b+seedA" }; >>; __1; 
+O	conv+root	doc b+seedA __3; ++"Some text here"; __1; 
+O	conv+root	doc b+seedA __5; << reply { id="b+seedB" }; >>; __13; 
+O	conv+root	doc conversation __2; << thread { id="b+seedB", inline="true" }; >>; __2; 
+O	conv+root	doc b+seedB << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __3; << blip { id="b+seedB" }; >>; __3; 
+O	conv+root	doc b+seedC << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __5; << blip { id="b+seedC" }; >>; __3; 
+O	conv+root	doc conversation __8; << thread { id="b+seedD" }; >>; __2; 
+O	conv+root	doc b+seedD << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __9; << blip { id="b+seedD" }; >>; __3; 
+O	conv+root	doc b+seedA __9; << reply { id="b+seedE" }; >>; __11; 
+O	conv+root	doc conversation __12; << thread { id="b+seedE", inline="true" }; >>; __2; 
+O	conv+root	doc b+seedE << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __13; << blip { id="b+seedE" }; >>; __3; 
+O	conv+root	doc b+seedC __4; << reply { id="b+seedF" }; >>; 
+O	conv+root	doc conversation __6; << thread { id="b+seedF", inline="true" }; >>; __12; 
+O	conv+root	doc b+seedF << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __7; << blip { id="b+seedF" }; >>; __13; 
+O	conv+root	doc b+seedG << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __21; << blip { id="b+seedG" }; >>; __1; 
+D	conv+root	b+seedA	5	<body><line/>So<reply id="b+seedB"/>me<reply id="b+seedE"/> text here</body>
+D	conv+root	b+seedB	8	<body><line/></body>
+D	conv+root	b+seedC	10	<body><line/></body><reply id="b+seedF"/>
+D	conv+root	b+seedD	13	<body><line/></body>
+D	conv+root	b+seedE	17	<body><line/></body>
+D	conv+root	b+seedF	21	<body><line/></body>
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	conversation	24	<conversation><blip id="b+seedA"><thread id="b+seedB" inline="true"><blip id="b+seedB"/><blip id="b+seedC"><thread id="b+seedF" inline="true"><blip id="b+seedF"/></thread></blip></thread><thread id="b+seedD"><blip id="b+seedD"/></thread><thread id="b+seedE" inline="true"><blip id="b+seedE"/></thread></blip><blip id="b+seedG"/></conversation>
+P	conv+root	24	alice@example.com
+S	delete blip with many replies
+Q	structure T()[b+seedG^{}]
+Q	bfs b+seedG
+Q	title 
+C	19
+D	conv+root	b+seedG	23	<body><line/></body>
+D	conv+root	conversation	42	<conversation><blip id="b+seedG"/></conversation>
+P	conv+root	43	alice@example.com
+S	delete root thread
+Q	structure T()[]
+Q	bfs
+Q	title 
+C	2
+D	conv+root	conversation	44	<conversation/>
+P	conv+root	45	alice@example.com
+N	conv-anchor
+S	create root
+O	conv+root	add alice@example.com
+O	conv+root	doc conversation << conversation {}; >>; 
+O	conv+root	doc b+seedA << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __1; << blip { id="b+seedA" }; >>; __1; 
+D	conv+root	b+seedA	3	<body><line/></body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	4	alice@example.com
+S	create conversation
+Q	id example.com/conv+seedB
+Q	has anchor false
+O	conv+seedB	add alice@example.com
+O	conv+seedB	doc conversation << conversation {}; >>; 
+O	conv+seedB	doc b+seedC << body {}; << line {}; >>; >>; 
+O	conv+seedB	doc conversation __1; << blip { id="b+seedC" }; >>; __1; 
+D	conv+root	b+seedA	3	<body><line/></body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	4	alice@example.com
+D	conv+seedB	b+seedC	3	<body><line/></body>
+D	conv+seedB	conversation	4	<conversation><blip id="b+seedC"/></conversation>
+P	conv+seedB	4	alice@example.com
+S	set anchor
+Q	has anchor true
+Q	anchor example.com/conv+root b+seedA
+O	conv+seedB	doc conversation u@ { anchorBlip: null -> "b+seedA", anchorWavelet: null -> "example.com/conv+root" }; __3; 
+D	conv+root	b+seedA	3	<body><line/></body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	4	alice@example.com
+D	conv+seedB	b+seedC	3	<body><line/></body>
+D	conv+seedB	conversation	5	<conversation anchorBlip="b+seedA" anchorWavelet="example.com/conv+root"><blip id="b+seedC"/></conversation>
+P	conv+seedB	5	alice@example.com
+S	set same anchor
+O	conv+seedB	doc conversation u@ { anchorBlip: "b+seedA" -> "b+seedA", anchorWavelet: "example.com/conv+root" -> "example.com/conv+root" }; __3; 
+D	conv+root	b+seedA	3	<body><line/></body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	4	alice@example.com
+D	conv+seedB	b+seedC	3	<body><line/></body>
+D	conv+seedB	conversation	6	<conversation anchorBlip="b+seedA" anchorWavelet="example.com/conv+root"><blip id="b+seedC"/></conversation>
+P	conv+seedB	6	alice@example.com
+S	delete anchor blip
+Q	has anchor false
+O	conv+root	doc conversation __1; x< blip { id="b+seedA" }; x>; __1; 
+O	conv+root	doc b+seedA x< body {}; x< line {}; x>; x>; 
+D	conv+root	conversation	5	<conversation/>
+P	conv+root	6	alice@example.com
+D	conv+seedB	b+seedC	3	<body><line/></body>
+D	conv+seedB	conversation	6	<conversation anchorBlip="b+seedA" anchorWavelet="example.com/conv+root"><blip id="b+seedC"/></conversation>
+P	conv+seedB	6	alice@example.com
+S	clear anchor
+Q	has anchor false
+O	conv+seedB	doc conversation u@ { anchorBlip: "b+seedA" -> null, anchorWavelet: "example.com/conv+root" -> null }; __3; 
+D	conv+root	conversation	5	<conversation/>
+P	conv+root	6	alice@example.com
+D	conv+seedB	b+seedC	3	<body><line/></body>
+D	conv+seedB	conversation	7	<conversation><blip id="b+seedC"/></conversation>
+P	conv+seedB	7	alice@example.com
+S	append with content
+O	conv+seedB	doc b+seedD << body {}; || { "conv/title": null -> "" }; << line {}; >>; >>; || { "conv/title" }; 
+O	conv+seedB	doc conversation __3; << blip { id="b+seedD" }; >>; __1; 
+D	conv+root	conversation	5	<conversation/>
+P	conv+root	6	alice@example.com
+D	conv+seedB	b+seedC	3	<body><line/></body>
+D	conv+seedB	b+seedD	8	<body><?a "conv/title"=""?><line/></body><?a "conv/title"?>
+D	conv+seedB	conversation	9	<conversation><blip id="b+seedC"/><blip id="b+seedD"/></conversation>
+P	conv+seedB	9	alice@example.com
+N	wavelet-authorise
+S	add alice to empty wavelet
+O	conv+root	add alice@example.com
+P	conv+root	1	alice@example.com
+S	edit as non-participant
+O	conv+root	add bob@example.com
+O	conv+root	doc b+x << body {}; << line {}; >>; >>; 
+D	conv+root	b+x	3	<body><line/></body>
+P	conv+root	3	alice@example.com bob@example.com
+S	remove bob
+O	conv+root	remove bob@example.com
+D	conv+root	b+x	3	<body><line/></body>
+P	conv+root	4	alice@example.com
+S	add self as non-participant
+O	conv+root	add bob@example.com
+D	conv+root	b+x	3	<body><line/></body>
+P	conv+root	5	alice@example.com bob@example.com
+S	remove bob again
+O	conv+root	remove bob@example.com
+D	conv+root	b+x	3	<body><line/></body>
+P	conv+root	6	alice@example.com
+S	remove alice as non-participant
+O	conv+root	add bob@example.com
+O	conv+root	remove alice@example.com
+D	conv+root	b+x	3	<body><line/></body>
+P	conv+root	8	bob@example.com
+S	touch empty wavelet
+O	conv+root	noop
+D	conv+root	b+x	3	<body><line/></body>
+P	conv+root	9	bob@example.com
+N	digest
+S	empty wave
+Q	digest title [example.com/w+wave] snippet [(empty)] participants [] modified -1 created -1 unread 0 blips 0
+S	non-conversational wavelet
+Q	digest title [example.com/w+wave] snippet [(unknown)] participants [] modified 1234567892123 created 1234567892123 unread 0 blips 2
+O	conv+root	doc some-doc ++"hello"; 
+D	conv+root	some-doc	1	hello
+P	conv+root	1	
+S	clear
+O	conv+root	doc some-doc --"hello"; 
+P	conv+root	2	
+S	empty conversation
+Q	digest title [] snippet [] participants [] modified -1 created 1234567892123 unread 0 blips 0
+O	conv+root	doc conversation << conversation {}; >>; 
+D	conv+root	conversation	3	<conversation/>
+P	conv+root	3	
+N	digest-conversation
+S	root blip
+Q	digest title [] snippet [] participants [alice@example.com] modified 1234567891125 created 1234567891123 unread 1 blips 1
+O	conv+root	add alice@example.com
+O	conv+root	doc conversation << conversation {}; >>; 
+O	conv+root	doc b+seedA << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __1; << blip { id="b+seedA" }; >>; __1; 
+D	conv+root	b+seedA	3	<body><line/></body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	4	alice@example.com
+S	text
+Q	digest title [] snippet [The title.  Some body text] participants [alice@example.com] modified 1234567892123 created 1234567891123 unread 1 blips 1
+O	conv+root	doc b+seedA __3; ++"  The title.  Some body text "; __1; 
+D	conv+root	b+seedA	5	<body><line/>  The title.  Some body text </body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	5	alice@example.com
+S	implicit title
+Q	digest title [The title.] snippet [  Some body text] participants [alice@example.com] modified 1234567893123 created 1234567891123 unread 1 blips 1
+O	conv+root	doc b+seedA || { "conv/title": null -> null }; __1; || { "conv/title": null -> "" }; __14; || { "conv/title": null -> null }; __18; || { "conv/title" }; 
+D	conv+root	b+seedA	6	<body><?a "conv/title"=""?><line/>  The title.<?a "conv/title"?>  Some body text </body>
+D	conv+root	conversation	4	<conversation><blip id="b+seedA"/></conversation>
+P	conv+root	6	alice@example.com
+S	more lines and blips
+Q	digest title [The title.] snippet [Inline reply] participants [alice@example.com, bob@example.com] modified 1234567894132 created 1234567891123 unread 3 blips 3
+Q	digest title [The title.] snippet [Inline reply] participants [alice@example.com, bob@example.com] modified 1234567894132 created 1234567891123 unread 3 blips 3
+O	conv+root	doc b+seedA __32; << line {}; >>; __1; 
+O	conv+root	doc b+seedA __34; ++"Second line"; __1; 
+O	conv+root	doc b+seedB << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __3; << blip { id="b+seedB" }; >>; __1; 
+O	conv+root	doc b+seedB __3; ++"Second blip \u00E9\u4E16"; __1; 
+O	conv+root	doc b+seedA __6; << reply { id="b+seedC" }; >>; __40; 
+O	conv+root	doc conversation __2; << thread { id="b+seedC", inline="true" }; >>; __4; 
+O	conv+root	doc b+seedC << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __3; << blip { id="b+seedC" }; >>; __5; 
+O	conv+root	doc b+seedC __3; ++"Inline reply"; __1; 
+O	conv+root	add bob@example.com
+D	conv+root	b+seedA	8	<body><?a "conv/title"=""?><line/>  T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	11	<body><line/>Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	16	<body><line/>Inline reply</body>
+D	conv+root	conversation	15	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	17	alice@example.com bob@example.com
+S	edit old blip
+Q	digest title [The title.] snippet [Edited. Second blip \u00E9\u4E16] participants [alice@example.com, bob@example.com] modified 1234567895123 created 1234567891123 unread 3 blips 3
+O	conv+root	doc b+seedB __3; ++"Edited. "; __15; 
+D	conv+root	b+seedA	8	<body><?a "conv/title"=""?><line/>  T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	16	<body><line/>Inline reply</body>
+D	conv+root	conversation	15	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	18	alice@example.com bob@example.com
+S	long text
+Q	digest title [The title.] snippet [word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 wor] participants [alice@example.com, bob@example.com] modified 1234567896123 created 1234567891123 unread 3 blips 3
+O	conv+root	doc b+seedC __3; ++"word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 "; __13; 
+D	conv+root	b+seedA	8	<body><?a "conv/title"=""?><line/>  T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	conversation	15	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	19	alice@example.com bob@example.com
+S	mark blip read
+Q	digest title [The title.] snippet [word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 wor] participants [alice@example.com, bob@example.com] modified 1234567896123 created 1234567891123 unread 2 blips 3
+Q	digest title [The title.] snippet [word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 wor] participants [alice@example.com, bob@example.com] modified 1234567896123 created 1234567891123 unread 3 blips 3
+O	user+alice@example.com	doc m/read << wavelet { i="example.com/conv+root" }; >>; 
+O	user+alice@example.com	doc m/read __1; << blip { i="b+seedA", v="19" }; >>; __1; 
+D	conv+root	b+seedA	8	<body><?a "conv/title"=""?><line/>  T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	conversation	15	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	19	alice@example.com bob@example.com
+D	user+alice@example.com	m/read	2	<wavelet i="example.com/conv+root"><blip i="b+seedA" v="19"/></wavelet>
+P	user+alice@example.com	2	
+S	edit read blip
+Q	digest title [Now   The title.] snippet [  Some body text  Second line] participants [alice@example.com, bob@example.com] modified 1234567898123 created 1234567891123 unread 3 blips 3
+O	conv+root	doc b+seedA __3; ++"Now "; __45; 
+D	conv+root	b+seedA	20	<body><?a "conv/title"=""?><line/>Now   T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	conversation	15	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	20	alice@example.com bob@example.com
+D	user+alice@example.com	m/read	2	<wavelet i="example.com/conv+root"><blip i="b+seedA" v="19"/></wavelet>
+P	user+alice@example.com	2	
+S	mark wave read
+Q	digest title [Now   The title.] snippet [  Some body text  Second line] participants [alice@example.com, bob@example.com] modified 1234567898123 created 1234567891123 unread 0 blips 3
+O	user+alice@example.com	doc m/read __3; << all { v="20" }; >>; __1; 
+D	conv+root	b+seedA	20	<body><?a "conv/title"=""?><line/>Now   T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	conversation	15	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/></conversation>
+P	conv+root	20	alice@example.com bob@example.com
+D	user+alice@example.com	m/read	3	<wavelet i="example.com/conv+root"><blip i="b+seedA" v="19"/><all v="20"/></wavelet>
+P	user+alice@example.com	3	
+S	new blip
+Q	digest title [Now   The title.] snippet [  Some body text  Second line word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word1] participants [alice@example.com, bob@example.com] modified 1234567900123 created 1234567891123 unread 1 blips 4
+O	conv+root	doc b+seedD << body {}; << line {}; >>; >>; 
+O	conv+root	doc conversation __9; << blip { id="b+seedD" }; >>; __1; 
+D	conv+root	b+seedA	20	<body><?a "conv/title"=""?><line/>Now   T<reply id="b+seedC"/>he title.<?a "conv/title"?>  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	b+seedD	21	<body><line/></body>
+D	conv+root	conversation	22	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/><blip id="b+seedD"/></conversation>
+P	conv+root	22	alice@example.com bob@example.com
+D	user+alice@example.com	m/read	3	<wavelet i="example.com/conv+root"><blip i="b+seedA" v="19"/><all v="20"/></wavelet>
+P	user+alice@example.com	3	
+S	explicit title
+Q	digest title [Now  The] snippet [Now   The title.  Some body text  Second line] participants [alice@example.com, bob@example.com] modified 1234567901123 created 1234567891123 unread 2 blips 4
+O	conv+root	doc b+seedA || { "conv/title": null -> "Now  The" }; __1; || { "conv/title": "" -> null }; __20; || { "conv/title" }; __31; 
+D	conv+root	b+seedA	23	<?a "conv/title"="Now  The"?><body><?a "conv/title"?><line/>Now   T<reply id="b+seedC"/>he title.  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	b+seedD	21	<body><line/></body>
+D	conv+root	conversation	22	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/><blip id="b+seedD"/></conversation>
+P	conv+root	23	alice@example.com bob@example.com
+D	user+alice@example.com	m/read	3	<wavelet i="example.com/conv+root"><blip i="b+seedA" v="19"/><all v="20"/></wavelet>
+P	user+alice@example.com	3	
+S	many participants
+Q	digest title [Now  The] snippet [Now   The title.  Some body text  Second line] participants [alice@example.com, bob@example.com, c@example.com, d@example.com, e@example.com] modified 1234567901123 created 1234567891123 unread 2 blips 4
+O	conv+root	add c@example.com
+O	conv+root	add d@example.com
+O	conv+root	add e@example.com
+O	conv+root	add f@example.com
+O	conv+root	add g@example.com
+D	conv+root	b+seedA	23	<?a "conv/title"="Now  The"?><body><?a "conv/title"?><line/>Now   T<reply id="b+seedC"/>he title.  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	b+seedD	21	<body><line/></body>
+D	conv+root	conversation	22	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/><blip id="b+seedD"/></conversation>
+P	conv+root	28	alice@example.com bob@example.com c@example.com d@example.com e@example.com f@example.com g@example.com
+D	user+alice@example.com	m/read	3	<wavelet i="example.com/conv+root"><blip i="b+seedA" v="19"/><all v="20"/></wavelet>
+P	user+alice@example.com	3	
+S	mark unread
+Q	digest title [Now  The] snippet [Now   The title.  Some body text  Second line] participants [alice@example.com, bob@example.com, c@example.com, d@example.com, e@example.com] modified 1234567901123 created 1234567891123 unread 4 blips 4
+O	user+alice@example.com	doc m/read x< wavelet { i="example.com/conv+root" }; x< blip { i="b+seedA", v="19" }; x>; x< all { v="20" }; x>; x>; 
+D	conv+root	b+seedA	23	<?a "conv/title"="Now  The"?><body><?a "conv/title"?><line/>Now   T<reply id="b+seedC"/>he title.  Some body text <line/>Second line</body>
+D	conv+root	b+seedB	18	<body><line/>Edited. Second blip \u00E9\u4E16</body>
+D	conv+root	b+seedC	19	<body><line/>word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply</body>
+D	conv+root	b+seedD	21	<body><line/></body>
+D	conv+root	conversation	22	<conversation><blip id="b+seedA"><thread id="b+seedC" inline="true"><blip id="b+seedC"/></thread></blip><blip id="b+seedB"/><blip id="b+seedD"/></conversation>
+P	conv+root	28	alice@example.com bob@example.com c@example.com d@example.com e@example.com f@example.com g@example.com
+P	user+alice@example.com	4	
+S	delete blips
+Q	digest title [] snippet [] participants [alice@example.com, bob@example.com, c@example.com, d@example.com, e@example.com] modified 1234567900123 created 1234567891123 unread 1 blips 1
+O	conv+root	doc conversation __7; x< blip { id="b+seedB" }; x>; __3; 
+O	conv+root	doc b+seedB x< body {}; x< line {}; x>; --"Edited. Second blip \u00E9\u4E16"; x>; 
+O	conv+root	doc conversation __3; x< blip { id="b+seedC" }; x>; __5; 
+O	conv+root	doc b+seedC x< body {}; x< line {}; x>; --"word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 Inline reply"; x>; 
+O	conv+root	doc conversation __2; x< thread { id="b+seedC", inline="true" }; x>; __4; 
+O	conv+root	doc b+seedA __10; || { "conv/title": null -> null }; x< reply { id="b+seedC" }; x>; || { "conv/title" }; __40; 
+O	conv+root	doc conversation __1; x< blip { id="b+seedA" }; x>; __3; 
+O	conv+root	doc b+seedA || { "conv/title": "Now  The" -> null }; x< body {}; || { "conv/title": null -> null }; x< line {}; x>; --"Now   The title.  Some body text "; x< line {}; x>; --"Second line"; x>; || { "conv/title" }; 
+D	conv+root	b+seedD	21	<body><line/></body>
+D	conv+root	conversation	35	<conversation><blip id="b+seedD"/></conversation>
+P	conv+root	36	alice@example.com bob@example.com c@example.com d@example.com e@example.com f@example.com g@example.com
+P	user+alice@example.com	4	
+N	digest-other-conversation
+S	non-root conversation
+Q	digest fails
+O	conv+seedA	add alice@example.com
+O	conv+seedA	doc conversation << conversation {}; >>; 
+O	conv+seedA	doc b+seedB << body {}; << line {}; >>; >>; 
+O	conv+seedA	doc conversation __1; << blip { id="b+seedB" }; >>; __1; 
+O	conv+seedA	doc b+seedB __3; ++"Private reply"; __1; 
+D	conv+seedA	b+seedB	5	<body><line/>Private reply</body>
+D	conv+seedA	conversation	4	<conversation><blip id="b+seedB"/></conversation>
+P	conv+seedA	5	alice@example.com

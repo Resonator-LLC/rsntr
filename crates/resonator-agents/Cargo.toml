@@ -1,0 +1,32 @@
+[package]
+name = "resonator-agents"
+description = "Robots, tools and AI agents for the resonator wave server: the Data API and robot endpoints, webhook and streamed event delivery, the MCP endpoint, the model connector and the built-in agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+resonator-model = { path = "../resonator-model" }
+resonator-server = { path = "../resonator-server" }
+resonator-robots = { path = "../resonator-robots" }
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+getrandom = "0.3"
+hmac = "0.12"
+quick-xml = "0.41"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net"] }
+tokio-util = "0.7"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tokio-tungstenite = "0.29"

@@ -1,6 +1,11 @@
 target/
-*.zip
-.DS_Store
-__pycache__
-npm/dist/
-npm/assets/
+node_modules/
+dist/
+reference/
+*.db
+*.db-wal
+*.db-shm
+/data/
+
+# Private keys (APNs .p8 etc.) must never be committed.
+*.p8

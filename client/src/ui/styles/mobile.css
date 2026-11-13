@@ -1,0 +1,210 @@
+/*
+ * Phones and tablets: the client behaves like an app, not a page.
+ *
+ * - No zoom. iOS zooms into a focused field (and contenteditable) whose
+ *   text is under 16px, and does not zoom back out: the page stays panned,
+ *   cutting off its left side. Fields are 16px on touch screens, and the
+ *   viewport meta forbids zooming.
+ * - Nothing wider than the screen: the shell clips sideways overflow and
+ *   toolbars scroll inside their own box.
+ * - The layout follows the visual viewport (viewport.ts sets --viewport-h),
+ *   so the edit toolbar and the caret stay above the on-screen keyboard.
+ * - Safe areas: the notch, the rounded corners and the home bar.
+ * - Taps: no double-tap zoom delay, a tap highlight, 44px targets, no text
+ *   selection of the chrome (blips and fields stay selectable).
+ *
+ * Loaded last, so that equal-specificity rules here win.
+ */
+
+html {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: rgb(47 111 208 / 18%);
+}
+
+body {
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+/* The app is exactly as tall as what is visible (above the keyboard). */
+.app {
+  height: var(--viewport-h, 100%);
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+.app-body,
+.app-main,
+.app-search,
+.wave-panel,
+.wave-header,
+.wave-participants,
+.wave-scroll,
+.edit-toolbar,
+.edit-row {
+  min-width: 0;
+}
+
+/* Buttons are controls, not text. */
+button,
+[role="button"],
+[role="menuitem"],
+[role="option"],
+[role="tab"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Dialogs fit above the keyboard, and scroll inside if they must. */
+.dialog {
+  max-height: calc(var(--viewport-h, 100dvh) - 2 * var(--sp-3));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.keyboard-open .dialog {
+  margin-top: var(--sp-3);
+}
+
+/* ---- touch screens ---- */
+
+@media (pointer: coarse) {
+  /* The chrome is not text to select or to call up a callout on... */
+  .app,
+  .auth {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* ...but the conversation and the fields are. */
+  .blip-content,
+  .doc,
+  .wave-title,
+  input,
+  textarea,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
+  /* 16px or more wherever one types: iOS zooms into anything smaller. */
+  input,
+  select,
+  textarea,
+  .input,
+  .edit-select,
+  .wave-tag-input,
+  .doc {
+    font-size: max(1rem, 16px);
+  }
+
+  /* 44px tap targets. */
+  .topbar-signout,
+  .search-folder,
+  .wave-tool,
+  .reply-box,
+  .blip-menu-btn,
+  .wave-tag-add,
+  .wave-participant,
+  .wave-add-participant,
+  .auth-link {
+    min-width: var(--tap);
+    min-height: var(--tap);
+  }
+  .wave-participant {
+    display: grid;
+    place-items: center;
+  }
+  .wave-add-participant {
+    width: var(--tap);
+    height: var(--tap);
+  }
+  .blip-menu-btn,
+  .wave-tag-add {
+    width: var(--tap);
+    height: var(--tap);
+  }
+  .auth-link {
+    display: inline-flex;
+    align-items: center;
+  }
+  .wave-participant-list {
+    gap: 0;
+  }
+  .topbar-signout {
+    border-color: transparent;
+  }
+
+  /* While typing, the tags bar gives its room to the conversation. */
+  .keyboard-open .wave-tags {
+    display: none;
+  }
+
+  /*
+   * Writing mode: a blip is edited with the keyboard up. Everything but the
+   * edit toolbar and the conversation goes, so the text gets the screen;
+   * Done stays pinned at the end of the toolbar (the blip header and its
+   * own Done go too).
+   */
+  .keyboard-open .app:has(.blip-editing) :is(.topbar, .wave-header, .wave-participants, .wave-tags) {
+    display: none;
+  }
+  .keyboard-open .blip-editing > .blip-meta {
+    display: none;
+  }
+  /* No avatar column to make room for. */
+  .keyboard-open .blip-main.blip-editing {
+    padding-left: var(--sp-3);
+  }
+  .keyboard-open .app:has(.blip-editing) .edit-row {
+    flex-wrap: nowrap;
+  }
+  .keyboard-open .app:has(.blip-editing) .edit-gap {
+    flex: 0 0 0;
+  }
+  .keyboard-open .app:has(.blip-editing) .edit-done {
+    position: sticky;
+    right: 0;
+    flex: none;
+    margin-left: auto;
+    box-shadow: -12px 0 12px -4px var(--c-surface, #fff);
+  }
+}
+
+/* ---- safe areas (viewport-fit=cover) ---- */
+
+.topbar {
+  height: calc(var(--topbar-h) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+}
+
+@media (max-width: 47.99rem) {
+  .app-body {
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* The keyboard covers the home bar. */
+  .keyboard-open .app-body {
+    padding-bottom: 0;
+  }
+  /* The toolbars of a narrow screen scroll sideways inside themselves. */
+  .edit-row,
+  .wave-toolbar {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .edit-row::-webkit-scrollbar,
+  .wave-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+  .wave-participant-list {
+    flex-wrap: wrap;
+  }
+}
+
+.auth {
+  padding-top: max(var(--sp-4), env(safe-area-inset-top));
+  padding-bottom: max(var(--sp-4), env(safe-area-inset-bottom));
+  padding-inline: max(var(--sp-4), env(safe-area-inset-left)) max(var(--sp-4), env(safe-area-inset-right));
+}

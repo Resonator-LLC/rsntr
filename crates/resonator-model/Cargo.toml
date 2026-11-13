@@ -1,0 +1,23 @@
+[package]
+name = "resonator-model"
+description = "Wave data model and operational transform, ported from Apache Wave"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Exposes `docop::testing` (random operation generator and test helpers) to
+# other crates' tests.
+testing = []
+
+[dependencies]
+base64 = "0.22"
+bytes = "1"
+hex = "0.4"
+prost = "0.14"
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+rand = "0.9"

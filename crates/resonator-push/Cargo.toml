@@ -1,0 +1,32 @@
+[package]
+name = "resonator-push"
+description = "The resonator push relay: seals device push tokens and wakes sleeping devices with silent APNs and FCM pushes; stateless"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "resonator_push"
+
+[[bin]]
+name = "resonator-push"
+path = "src/main.rs"
+
+[dependencies]
+# http2: the fake push services of `testing` speak h2c.
+axum = { version = "0.8", features = ["http2"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json"] }
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }

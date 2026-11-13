@@ -1,0 +1,24 @@
+[package]
+name = "resonator-node"
+description = "The resonator node as a library: the wave server with robots, agents, federation and the embedded web client, started and stopped in-process (the resonator binary, and apps embedding a node)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = "0.8"
+rust-embed = { version = "8", features = ["debug-embed", "interpolate-folder-path"] }
+resonator-server = { path = "../resonator-server" }
+resonator-agents = { path = "../resonator-agents" }
+resonator-federation = { path = "../resonator-federation" }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+toml = "0.9"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1"
+tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }

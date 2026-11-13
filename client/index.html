@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- An app, not a document: no zoom (iOS zooms into focused text under
+         16px and then leaves the page panned sideways), the whole screen
+         under the notch and home bar (see the safe-area insets in the CSS),
+         and the layout shrinks above the on-screen keyboard. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#1f4f9e" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#162a4d" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Resonator" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>Resonator</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/ui/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,385 @@
+/* The shell: top bar, two-pane layout, sign-in screen, splash. */
+
+.wave-mark {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---- top bar ---- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--topbar-h);
+  padding: 0 var(--sp-3);
+  padding-inline: max(var(--sp-3), env(safe-area-inset-left)) max(var(--sp-3), env(safe-area-inset-right));
+  background: var(--c-topbar);
+  color: var(--c-topbar-text);
+  flex: none;
+}
+
+.topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: inherit;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: var(--fs-lg);
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-1);
+  padding: 2px var(--sp-1);
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-inline-start: auto;
+  font-size: var(--fs-sm);
+  color: var(--c-topbar-text-2);
+}
+
+.topbar-saved.is-unsaved {
+  color: #ffd27a;
+}
+
+.topbar-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: inherit;
+  font-size: var(--fs-sm);
+}
+button.topbar-net {
+  cursor: pointer;
+  background: rgb(255 255 255 / 12%);
+}
+button.topbar-net:hover {
+  background: rgb(255 255 255 / 22%);
+}
+
+.topbar-update {
+  border: 0;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-round);
+  background: #ffd27a;
+  color: #1f2a44;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.topbar-update:hover {
+  background: #ffe2a6;
+}
+
+.topbar-net-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-round);
+  background: #6ee07f;
+}
+.topbar-net.is-offline .topbar-net-dot {
+  background: #ff8a80;
+}
+.topbar-net.is-connecting .topbar-net-dot {
+  background: #ffd27a;
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.topbar-signout {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 2rem;
+  padding: 0 var(--sp-2);
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.topbar-signout:hover {
+  background: rgb(255 255 255 / 12%);
+}
+
+.app-problem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin: var(--sp-2) var(--sp-3) 0;
+}
+
+/* ---- two panels ---- */
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+}
+
+.app-search,
+.app-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.app-search {
+  width: var(--search-w);
+  flex: none;
+}
+
+.app-main {
+  flex: 1;
+}
+
+@media (max-width: 60rem) {
+  :root {
+    --search-w: 20rem;
+  }
+}
+
+/* Phones: one panel at a time. */
+@media (max-width: 47.99rem) {
+  .app-body {
+    padding: 0;
+    gap: 0;
+  }
+  .app-search,
+  .app-main {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .app-search {
+    width: 100%;
+  }
+  .app-body-list .app-main,
+  .app-body-wave .app-search {
+    display: none;
+  }
+  .topbar-signout-text,
+  .topbar-saved.is-saved {
+    display: none;
+  }
+}
+
+/* ---- sign-in ---- */
+
+.auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  min-height: 100%;
+  padding: var(--sp-4);
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--c-accent) 18%, transparent), transparent 55%),
+    var(--c-bg);
+}
+
+.auth-card {
+  width: min(24rem, 100%);
+  padding: var(--sp-5);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-2);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-2);
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+  color: var(--c-accent);
+}
+.auth-brand .wave-mark {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.auth-product {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  color: var(--c-text);
+}
+.auth-brand-domain {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-3);
+  font-size: var(--fs-md);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.auth-title {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.auth-address {
+  display: flex;
+  align-items: stretch;
+}
+.auth-address .input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+.auth-domain {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--c-border-strong);
+  border-inline-start: 0;
+  border-start-end-radius: var(--radius-1);
+  border-end-end-radius: var(--radius-1);
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-hint {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+/* A key domain: under the user name, whole, on two lines, with Copy. */
+.auth-address-stacked {
+  flex-direction: column;
+}
+.auth-address-stacked .input {
+  flex: none;
+  border-start-end-radius: var(--radius-1);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+.auth-long-domain {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border-strong);
+  border-top: 0;
+  border-end-start-radius: var(--radius-1);
+  border-end-end-radius: var(--radius-1);
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
+}
+.auth-long-domain-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.auth-copy {
+  flex: none;
+  min-width: 4.25rem;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-xs);
+}
+
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.auth-actions .btn {
+  min-width: 6rem;
+}
+
+.auth-switch {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+}
+
+.auth-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--c-link);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.auth-notice-info {
+  background: var(--c-accent-soft);
+  color: var(--c-text);
+}
+
+.auth-tagline {
+  color: var(--c-text-3);
+  font-size: var(--fs-sm);
+}
+
+/* ---- splash ---- */
+
+.app-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  height: 100%;
+  color: var(--c-accent);
+}
+.app-splash p {
+  color: var(--c-text-2);
+}
+.app-splash .wave-mark {
+  width: 3rem;
+  height: 3rem;
+}

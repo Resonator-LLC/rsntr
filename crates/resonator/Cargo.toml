@@ -1,0 +1,34 @@
+[package]
+name = "resonator"
+description = "The resonator server: the wave server with robots, tools and AI agents, in one binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "resonator"
+path = "src/main.rs"
+
+[dependencies]
+resonator-node = { path = "../resonator-node" }
+resonator-server = { path = "../resonator-server" }
+resonator-federation = { path = "../resonator-federation" }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+# The push relay and its fake APNs, for tests/push.rs.
+resonator-push = { path = "../resonator-push" }
+axum = "0.8"
+resonator-model = { path = "../resonator-model" }
+resonator-agents = { path = "../resonator-agents" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }

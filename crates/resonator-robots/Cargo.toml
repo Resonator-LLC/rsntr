@@ -1,0 +1,22 @@
+[package]
+name = "resonator-robots"
+description = "Wave Robots / Data API: operation model, executor and event generator, ported from Apache Wave"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+resonator-model = { path = "../resonator-model" }
+resonator-server = { path = "../resonator-server" }
+async-trait = "0.1"
+base64 = "0.22"
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

@@ -1,0 +1,8 @@
+[bindings.kotlin]
+package_name = "am.resonator.client.ffi"
+cdylib_name = "resonator_ffi"
+
+[bindings.swift]
+module_name = "ResonatorFFI"
+ffi_module_name = "ResonatorFFIFFI"
+ffi_module_filename = "ResonatorFFIFFI"

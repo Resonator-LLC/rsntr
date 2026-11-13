@@ -1564,6 +1564,8 @@ public func FfiConverterTypePushPlatform_lower(_ value: PushPlatform) -> RustBuf
 
 /**
  * What can go wrong.
+ * (The fields are named `detail`, not `message`: Kotlin exceptions
+ * already have a `message`.)
  */
 public 
 enum ResonatorError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
@@ -1573,12 +1575,12 @@ enum ResonatorError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
     /**
      * The configuration is not valid.
      */
-    case Config(message: String
+    case Config(detail: String
     )
     /**
      * The node could not start (or do what was asked).
      */
-    case Node(message: String
+    case Node(detail: String
     )
     /**
      * The node has been stopped.
@@ -1614,10 +1616,10 @@ public struct FfiConverterTypeResonatorError: FfiConverterRustBuffer {
 
         
         case 1: return .Config(
-            message: try FfiConverterString.read(from: &buf)
+            detail: try FfiConverterString.read(from: &buf)
             )
         case 2: return .Node(
-            message: try FfiConverterString.read(from: &buf)
+            detail: try FfiConverterString.read(from: &buf)
             )
         case 3: return .Stopped
 
@@ -1632,14 +1634,14 @@ public struct FfiConverterTypeResonatorError: FfiConverterRustBuffer {
 
         
         
-        case let .Config(message):
+        case let .Config(detail):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
             
         
-        case let .Node(message):
+        case let .Node(detail):
             writeInt(&buf, Int32(2))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
             
         
         case .Stopped:

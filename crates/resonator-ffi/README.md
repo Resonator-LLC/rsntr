@@ -40,7 +40,12 @@ The web client is embedded at build time. Run `npm run build` in `client/` first
 - Swift module `ResonatorFFI`, with the C module `ResonatorFFIFFI`;
 - Kotlin package `am.resonator.client.ffi`, which loads `libresonator_ffi.so`.
 
-On Android, the Kotlin bindings also need JNA (`net.java.dev.jna:jna:5.x@aar`).
+On Android, the Kotlin bindings also need JNA (`net.java.dev.jna:jna:5.x@aar`),
+and the app must call `System.loadLibrary("resonator_ffi")` once before the
+first call through them. Android then runs the library's `JNI_OnLoad`, which
+hands the JavaVM and the Application to the DNS resolver and network
+monitoring; without it the node fails with "android context was not
+initialized". `apps/android` does this in `NodeHost`.
 
 ## The interface
 
@@ -97,6 +102,7 @@ webView.load(URLRequest(url: URL(string: node.signedInUrl()!)!))
 // Android
 import am.resonator.client.ffi.*
 
+System.loadLibrary("resonator_ffi")  // once, before the first call
 val node = withContext(Dispatchers.IO) {
     ResonatorNode.start(NodeConfig(dataDir = filesDir.resolve("resonator").path,
         deviceName = Build.MODEL))

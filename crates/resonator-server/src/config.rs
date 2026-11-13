@@ -1085,8 +1085,10 @@ mod tests {
 
     #[test]
     fn other_servers_must_be_other_domains() {
-        let mut config = Config::default();
-        config.other_servers = vec!["resonator.network".to_owned()];
+        let mut config = Config {
+            other_servers: vec!["resonator.network".to_owned()],
+            ..Config::default()
+        };
         config.validate().unwrap();
         for bad in ["https://resonator.network", "a/b", "", "local.net"] {
             config.other_servers = vec![bad.to_owned()];

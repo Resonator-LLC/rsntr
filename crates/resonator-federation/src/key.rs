@@ -180,7 +180,9 @@ impl ServerKey {
 /// Writes `contents` to a new file at `path`, readable by the owner only
 /// (mode 600), through a temporary file and a hard link: fails with
 /// [`std::io::ErrorKind::AlreadyExists`] if `path` exists, so it never
-/// replaces a file that appears concurrently.
+/// replaces a file that appears concurrently. Where hard links are not
+/// allowed (Android's app sandbox denies them), the file is created in place
+/// with `O_EXCL` instead, which keeps that guarantee.
 pub(crate) fn write_new_file(path: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
@@ -199,7 +201,34 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> std::io::Result<()>
         std::fs::hard_link(&temporary, path)
     })();
     let _ = std::fs::remove_file(&temporary);
-    result
+    match result {
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+            ) =>
+        {
+            write_exclusive(path, contents)
+        }
+        result => result,
+    }
+}
+
+/// Creates `path` (mode 600) only if it does not exist, and writes
+/// `contents` to it; a failed write removes the file again.
+fn write_exclusive(path: &Path, contents: &str) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    let written = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all());
+    if written.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
 
 pub(crate) fn warn_if_readable_by_others(path: &Path) {
@@ -221,6 +250,22 @@ pub(crate) fn warn_if_readable_by_others(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_exclusive_fallback_never_replaces_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("person.key");
+        super::write_exclusive(&path, "first\n").unwrap();
+        let again = super::write_exclusive(&path, "second\n").unwrap_err();
+        assert_eq!(again.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
     use resonator_model::id::is_valid_domain;
 
     use super::*;

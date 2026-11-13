@@ -27,3 +27,9 @@ tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# DNS (hickory) and network monitoring (netdev) read Android's settings
+# through JNI and need the app's JavaVM and Context: see src/android.rs.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

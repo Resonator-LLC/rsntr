@@ -2208,6 +2208,8 @@ public object FfiConverterTypePushPlatform: FfiConverterRustBuffer<PushPlatform>
 
 /**
  * What can go wrong.
+ * (The fields are named `detail`, not `message`: Kotlin exceptions
+ * already have a `message`.)
  */
 sealed class ResonatorException: kotlin.Exception() {
     
@@ -2216,10 +2218,10 @@ sealed class ResonatorException: kotlin.Exception() {
      */
     class Config(
         
-        val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ResonatorException() {
         override val message
-            get() = "message=${ `message` }"
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -2227,10 +2229,10 @@ sealed class ResonatorException: kotlin.Exception() {
      */
     class Node(
         
-        val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ResonatorException() {
         override val message
-            get() = "message=${ `message` }"
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -2277,12 +2279,12 @@ public object FfiConverterTypeResonatorError : FfiConverterRustBuffer<ResonatorE
             is ResonatorException.Config -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is ResonatorException.Node -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is ResonatorException.Stopped -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -2295,12 +2297,12 @@ public object FfiConverterTypeResonatorError : FfiConverterRustBuffer<ResonatorE
         when(value) {
             is ResonatorException.Config -> {
                 buf.putInt(1)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is ResonatorException.Node -> {
                 buf.putInt(2)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is ResonatorException.Stopped -> {

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Resonator</string>
+    <string name="starting">Starting Resonator…</string>
+    <string name="pairing">Pairing this device…</string>
+    <string name="try_again">Try again</string>
+</resources>

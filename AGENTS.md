@@ -50,7 +50,11 @@ cd client && npx playwright install chromium && npm run test:e2e   # needs the r
 - iOS needs macOS (Xcode, xcodegen); Android needs the SDK, NDK and
   `cargo-ndk`. See `apps/*/build.sh`.
 - After changing the FFI interface, regenerate the bindings (see
-  `crates/resonator-ffi/README.md`) and commit them.
+  `crates/resonator-ffi/README.md`) and commit them. Do not name UniFFI
+  error fields `message` (Kotlin exceptions already have one).
+- The node runs in Android's app sandbox too: no hard links (SELinux denies
+  them), no netlink route dumps. Test device changes on an emulator
+  (`apps/android/build.sh`, then `adb install`).
 
 ## Rules the code keeps
 

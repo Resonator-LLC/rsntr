@@ -8,6 +8,9 @@
 //! from its lifecycle. Every call blocks: call them off the main thread.
 //! The node runs on a tokio runtime of its own.
 
+#[cfg(target_os = "android")]
+mod android;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,14 +20,16 @@ use resonator_node::{BackgroundReport, ForegroundReport, Handle, LeaseState, Nod
 uniffi::setup_scaffolding!();
 
 /// What can go wrong.
+/// (The fields are named `detail`, not `message`: Kotlin exceptions
+/// already have a `message`.)
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ResonatorError {
     /// The configuration is not valid.
-    #[error("invalid configuration: {message}")]
-    Config { message: String },
+    #[error("invalid configuration: {detail}")]
+    Config { detail: String },
     /// The node could not start (or do what was asked).
-    #[error("{message}")]
-    Node { message: String },
+    #[error("{detail}")]
+    Node { detail: String },
     /// The node has been stopped.
     #[error("the node is stopped")]
     Stopped,
@@ -35,10 +40,10 @@ impl From<NodeError> for ResonatorError {
         match error {
             NodeError::Stopped => ResonatorError::Stopped,
             NodeError::Config(_) | NodeError::Invalid(_) => ResonatorError::Config {
-                message: error.to_string(),
+                detail: error.to_string(),
             },
             error => ResonatorError::Node {
-                message: error.to_string(),
+                detail: error.to_string(),
             },
         }
     }
@@ -203,7 +208,7 @@ impl From<ForegroundReport> for ForegroundResult {
 
 /// The TOML overrides of `config` (strings quoted by the TOML writer).
 fn overrides(config: &NodeConfig) -> Result<String, ResonatorError> {
-    let invalid = |message: String| ResonatorError::Config { message };
+    let invalid = |message: String| ResonatorError::Config { detail: message };
     let mut table: toml::Table = match &config.extra_toml {
         Some(text) => toml::from_str(text).map_err(|e| invalid(e.to_string()))?,
         None => toml::Table::new(),
@@ -340,7 +345,7 @@ impl ResonatorNode {
         token: String,
     ) -> Result<(), ResonatorError> {
         let token = resonator_node::push::PushToken::new(platform.into(), &token)
-            .map_err(|message| ResonatorError::Config { message })?;
+            .map_err(|message| ResonatorError::Config { detail: message })?;
         Ok(self.handle.set_push_token(Some(&token))?)
     }
 

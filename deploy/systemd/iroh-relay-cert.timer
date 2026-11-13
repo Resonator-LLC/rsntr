@@ -1,0 +1,9 @@
+[Unit]
+Description=Copy the relay certificate from Caddy every few hours
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+
+[Install]
+WantedBy=timers.target

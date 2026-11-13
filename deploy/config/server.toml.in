@@ -1,0 +1,17 @@
+# resonator@@DOMAIN@: the official server for name@@DOMAIN@.
+domain = "@DOMAIN@"
+listen = ["127.0.0.1:@PORT@"]
+database_path = "/var/lib/resonator/@DOMAIN@/resonator.db"
+registration_enabled = true
+other_servers = [@OTHERS@]
+trusted_proxies = ["127.0.0.1", "::1"]
+cookie_secure = "always"
+
+[federation]
+enabled = true
+mode = "open"
+relay = "https://rly.rsntr.net"
+listen = "0.0.0.0:@FEDPORT@"
+
+[push]
+relay = "https://psh.rsntr.net"

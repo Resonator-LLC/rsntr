@@ -1,0 +1,9 @@
+# A consistent copy of the database of resonator@<domain>, kept 14 days.
+[Unit]
+Description=Back up the resonator database of %i
+
+[Service]
+Type=oneshot
+User=resonator
+Group=resonator
+ExecStart=/bin/sh -c 'set -eu; d=/var/backups/resonator/%i; f="$d/resonator-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).db"; /usr/local/bin/resonator --config /etc/resonator/%i.toml backup "$f"; gzip "$f"; find "$d" -name "resonator-*.db.gz" -mtime +14 -delete'

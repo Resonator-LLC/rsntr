@@ -1,0 +1,8 @@
+# Copies the certificate Caddy got for the relay's name to where
+# iroh-relay reads it (it reloads it by itself) for QUIC address discovery.
+[Unit]
+Description=Copy the relay certificate from Caddy
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/iroh-relay-cert

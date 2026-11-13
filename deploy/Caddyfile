@@ -1,0 +1,27 @@
+# The official servers. Each wave domain is its own resonator instance.
+(resonator) {
+	encode zstd gzip
+	# Metrics stay on the host.
+	respond /metrics 404
+	reverse_proxy {args[0]}
+}
+
+rsntr.net {
+	import resonator 127.0.0.1:9898
+}
+
+resonator.network {
+	import resonator 127.0.0.1:9897
+}
+
+psh.rsntr.net {
+	reverse_proxy 127.0.0.1:9900
+}
+
+rly.rsntr.net {
+	reverse_proxy https://127.0.0.1:3341 {
+		transport http {
+			tls_server_name rly.rsntr.net
+		}
+	}
+}

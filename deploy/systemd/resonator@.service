@@ -1,0 +1,25 @@
+# One resonator server per wave domain: resonator@<domain>.service reads
+# /etc/resonator/<domain>.toml and keeps its data in
+# /var/lib/resonator/<domain>.
+[Unit]
+Description=Resonator server for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=resonator
+Group=resonator
+ExecStart=/usr/local/bin/resonator --config /etc/resonator/%i.toml serve
+WorkingDirectory=/var/lib/resonator/%i
+Restart=always
+RestartSec=2
+Environment=RUST_LOG=info
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/resonator/%i
+
+[Install]
+WantedBy=multi-user.target

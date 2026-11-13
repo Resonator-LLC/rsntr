@@ -1,0 +1,10 @@
+# resonator-push behind Caddy (psh.rsntr.net). The APNs key ID and team ID
+# come from /etc/resonator-push/env (RESONATOR_PUSH_APNS_KEY_ID,
+# RESONATOR_PUSH_APNS_TEAM_ID), never from a committed file.
+listen = "127.0.0.1:9900"
+sealing_key = "/etc/resonator-push/sealing.key"
+trust_forwarded_for = true
+
+[apns]
+key_path = "/etc/resonator-push/apns.p8"
+topic = "am.resonator.client.ios"

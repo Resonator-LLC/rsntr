@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily backup of the resonator database of %i
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

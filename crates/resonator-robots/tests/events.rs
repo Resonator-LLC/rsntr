@@ -1060,7 +1060,7 @@ async fn acting_later_through_the_reactor_counts_as_a_reaction() {
     }
     setup.dispatcher.idle().await;
     assert_eq!(
-        format!("<body><line/>Thinking about it.</body>"),
+        "<body><line/>Thinking about it.</body>",
         setup.fixture.doc_xml(&wave.name, &blip).await
     );
     // The echo agent was told of the new blip as the reaction it is: one

@@ -1,0 +1,5 @@
+# Handlers return `Result<_, axum::response::Response>` (128 bytes) and the
+# federation handlers `Result<_, Answer>` (280 bytes): the error is the
+# reply, returned at once, and boxing it buys nothing. Clippy 1.100 lowered
+# the bar for result_large_err below these.
+large-error-threshold = 512

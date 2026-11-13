@@ -5,7 +5,7 @@
   "version": "0.4.0",
   "identifier": "am.resonator.client.desktop",
   "build": {
-    "frontendDist": "dist"
+    "frontendDist": "start"
   },
   "app": {
     "windows": [],

@@ -35,7 +35,7 @@ echo "droplet $NAME: $ip $ip6 (id $id)"
 record() {
   local zone=$1 name=$2 type=$3 data=$4 rec
   rec=$("${D[@]}" compute domain records list "$zone" --format ID,Type,Name,Data --no-header |
-    awk -v n="$name" -v t="$type" '$2==t && $3==n {print $1" "$4; exit}')
+    awk -v n="$name" -v t="$type" '!done && $2==t && $3==n {print $1" "$4; done=1}')
   if [[ -z "$rec" ]]; then
     "${D[@]}" compute domain records create "$zone" --record-type "$type" --record-name "$name" \
       --record-data "$data" --record-ttl 300 >/dev/null

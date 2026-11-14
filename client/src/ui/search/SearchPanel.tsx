@@ -12,9 +12,12 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { OpenWave, WaveClient } from "../../client";
 import type { Digest } from "../../wire/search";
 import { ArchiveIcon, InboxIcon, MuteIcon, PlusIcon, SearchIcon } from "../app/icons";
+import { CheckAllIcon } from "../wave/icons";
 import type { SearchPanelProps } from "../contracts";
 import { Avatar } from "../profiles/Avatar";
 import type { ProfileStore } from "../profiles/profileStore";
+import { MoreIcon } from "../wave/icons";
+import { Popup } from "../wave/Popup";
 import { formatFullDateTime, formatPastDate } from "./dates";
 import { OpenWaveDigests } from "./liveDigest";
 import { DEFAULT_SEARCH, SearchStore, hasMore, resultRange } from "./searchStore";
@@ -98,22 +101,72 @@ function DigestItem({
   folder,
   onSelect,
   onAction,
+  onMenu,
+  menuOpen,
 }: {
   digest: Digest;
   profiles: ProfileStore;
   selected: boolean;
   folder: string | null;
   onSelect: (waveId: string) => void;
-  onAction: (waveId: string, action: "archive" | "inbox" | "mute") => void;
+  onAction: (waveId: string, action: WaveAction) => void;
+  onMenu: (waveId: string, anchor: HTMLElement) => void;
+  menuOpen: boolean;
 }) {
   const unread = digest.unreadCount;
   const people = [digest.author, ...digest.participants].filter((p) => p !== "").slice(0, 4);
   const time = Number(digest.lastModified);
   const title = digest.title.trim() === "" ? "(untitled)" : digest.title;
   const href = `#${digest.waveId}`;
+  // Swipe left in the inbox: archive (a shortcut; the menu has it too).
+  const swipe = useRef<{ x: number; y: number; dx: number; sideways: boolean | null } | null>(null);
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const canSwipe = folder === "in:inbox";
+  const slide = (dx: number): void => {
+    const link = linkRef.current;
+    if (link !== null) {
+      link.style.transform = dx === 0 ? "" : `translateX(${dx}px)`;
+    }
+  };
+  const onTouchStart = (event: TouchEvent): void => {
+    const t = event.touches[0];
+    swipe.current = canSwipe && t !== undefined && event.touches.length === 1 ? { x: t.clientX, y: t.clientY, dx: 0, sideways: null } : null;
+  };
+  const onTouchMove = (event: TouchEvent): void => {
+    const s = swipe.current;
+    const t = event.touches[0];
+    if (s === null || t === undefined) {
+      return;
+    }
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (s.sideways === null && Math.abs(dx) + Math.abs(dy) > 10) {
+      s.sideways = Math.abs(dx) > Math.abs(dy) * 1.5;
+    }
+    if (s.sideways === true) {
+      s.dx = Math.min(0, dx);
+      slide(s.dx);
+    }
+  };
+  const onTouchEnd = (): void => {
+    const s = swipe.current;
+    swipe.current = null;
+    slide(0);
+    if (s?.sideways === true && s.dx < -SWIPE_PX) {
+      onAction(digest.waveId, "archive");
+    }
+  };
   return (
-    <li class={`digest ${selected ? "is-selected" : ""} ${unread > 0 ? "is-unread" : ""}`} data-wave-id={digest.waveId}>
+    <li
+      class={`digest ${selected ? "is-selected" : ""} ${unread > 0 ? "is-unread" : ""}`}
+      data-wave-id={digest.waveId}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
+    >
       <a
+        ref={linkRef}
         class="digest-link"
         href={href}
         aria-current={selected ? "true" : undefined}
@@ -150,25 +203,34 @@ function DigestItem({
           )}
         </span>
       </a>
-      <span class="digest-actions">
-        {folder === "in:inbox" ? (
-          <button type="button" class="icon-btn" aria-label={`Archive “${title}”`} title="Archive" data-action="archive" onClick={() => onAction(digest.waveId, "archive")}>
-            <ArchiveIcon />
-          </button>
-        ) : (
-          <button type="button" class="icon-btn" aria-label={`Move “${title}” to the inbox`} title="Move to inbox" data-action="inbox" onClick={() => onAction(digest.waveId, "inbox")}>
-            <InboxIcon />
-          </button>
-        )}
-        {folder !== "in:mute" ? (
-          <button type="button" class="icon-btn" aria-label={`Mute “${title}”`} title="Mute" data-action="mute" onClick={() => onAction(digest.waveId, "mute")}>
-            <MuteIcon />
-          </button>
-        ) : null}
-      </span>
+      <button
+        type="button"
+        class="icon-btn digest-more"
+        aria-label={`Actions for “${title}”`}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        data-action="digest-menu"
+        onClick={(event) => onMenu(digest.waveId, event.currentTarget)}
+      >
+        <MoreIcon />
+      </button>
     </li>
   );
 }
+
+type WaveAction = "archive" | "inbox" | "mute" | "read";
+
+/** How far a row is swiped left to archive it. */
+const SWIPE_PX = 96;
+/** How long the note after an action (with Undo) stays. */
+const TOAST_MS = 8000;
+
+const DONE_TEXT: Record<WaveAction, string> = {
+  archive: "Archived",
+  inbox: "Moved to the inbox",
+  mute: "Muted",
+  read: "Marked as read",
+};
 
 export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewWave, refreshToken }: SearchPanelProps) {
   const live = useMemo(() => new OpenWaveDigests(client), [client]);
@@ -178,6 +240,14 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
   );
   const [draft, setDraft] = useState(store.query.peek());
   const [busy, setBusy] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ waveId: string; anchor: HTMLElement } | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo: (() => void) | null } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (toastTimer.current !== null) {
+      clearTimeout(toastTimer.current);
+    }
+  }, []);
   const listRef = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
@@ -222,10 +292,21 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
     setDraft(q);
     store.setQuery(q);
   };
-  const act = async (waveId: string, action: "archive" | "inbox" | "mute"): Promise<void> => {
+  const showToast = (text: string, undo: (() => void) | null): void => {
+    if (toastTimer.current !== null) {
+      clearTimeout(toastTimer.current);
+    }
+    setToast({ text, undo });
+    toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
+  };
+  const act = async (waveId: string, action: WaveAction, undoable = true): Promise<void> => {
     setBusy(waveId);
     try {
-      await withWave(client, waveId, (wave) =>
+      await withWave(client, waveId, (wave) => {
+        if (action === "read") {
+          wave.markRead();
+          return;
+        }
         wave.writeSupplement((s) => {
           if (action === "archive") {
             s.archive();
@@ -235,24 +316,36 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
           } else {
             s.unfollow();
           }
-        }),
-      );
+        });
+      });
+      const undo = undoable && (action === "archive" || action === "mute") && folder === "in:inbox"
+        ? () => {
+            setToast(null);
+            void act(waveId, "inbox", false);
+          }
+        : null;
+      showToast(DONE_TEXT[action], undo);
     } catch (error) {
       console.error("search: the action failed", error);
+      showToast("That did not work. Try again.", null);
     } finally {
       setBusy(null);
       store.refreshSoon();
     }
   };
 
-  // Up/Down move between digests (the original's list keys).
+  // Up/Down move between digests (the original's list keys), Home/End to
+  // the first and last.
   const onListKey = (event: KeyboardEvent): void => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) {
       return;
     }
     const links = Array.from(listRef.current?.querySelectorAll<HTMLElement>(".digest-link") ?? []);
-    const index = links.indexOf(document.activeElement as HTMLElement);
-    const next = links[Math.max(0, Math.min(links.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))];
+    const row = (document.activeElement as HTMLElement | null)?.closest(".digest");
+    const index = links.findIndex((l) => l.closest(".digest") === row);
+    const to =
+      event.key === "Home" ? 0 : event.key === "End" ? links.length - 1 : index + (event.key === "ArrowDown" ? 1 : -1);
+    const next = links[Math.max(0, Math.min(links.length - 1, to))];
     if (next !== undefined) {
       event.preventDefault();
       next.focus();
@@ -323,6 +416,8 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
                 void act(id, action);
               }
             }}
+            menuOpen={menu?.waveId === digest.waveId}
+            onMenu={(waveId, anchor) => setMenu(menu?.waveId === waveId ? null : { waveId, anchor })}
           />
         ))}
       </ul>
@@ -341,6 +436,78 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
           {store.loadingMore.value ? "Loading..." : "Show more"}
         </button>
       ) : null}
+      {menu !== null ? <DigestMenu
+        digest={digests.find((d) => d.waveId === menu.waveId) ?? null}
+        anchor={menu.anchor}
+        folder={folder}
+        onClose={() => setMenu(null)}
+        onAction={(action) => {
+          const waveId = menu.waveId;
+          setMenu(null);
+          menu.anchor.focus();
+          if (busy === null) {
+            void act(waveId, action);
+          }
+        }}
+      /> : null}
+      <div class="search-toast-region" role="status">
+        {toast !== null ? (
+          <div class="toast">
+            <span>{toast.text}</span>
+            {toast.undo !== null ? (
+              <button type="button" class="btn btn-ghost toast-action" data-action="undo" onClick={toast.undo}>
+                Undo
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </section>
+  );
+}
+
+/** The actions of one wave in the list: a menu at its "..." button. */
+function DigestMenu({
+  digest,
+  anchor,
+  folder,
+  onClose,
+  onAction,
+}: {
+  digest: Digest | null;
+  anchor: HTMLElement;
+  folder: string | null;
+  onClose: () => void;
+  onAction: (action: WaveAction) => void;
+}) {
+  if (digest === null) {
+    return null;
+  }
+  return (
+    <Popup anchor={anchor} onClose={onClose} role="menu" label="Wave actions">
+      {folder === "in:inbox" ? (
+        <button type="button" class="menu-item" role="menuitem" data-action="archive" onClick={() => onAction("archive")}>
+          <ArchiveIcon />
+          Archive
+        </button>
+      ) : (
+        <button type="button" class="menu-item" role="menuitem" data-action="inbox" onClick={() => onAction("inbox")}>
+          <InboxIcon />
+          Move to inbox
+        </button>
+      )}
+      {folder !== "in:mute" ? (
+        <button type="button" class="menu-item" role="menuitem" data-action="mute" onClick={() => onAction("mute")}>
+          <MuteIcon />
+          Mute
+        </button>
+      ) : null}
+      {digest.unreadCount > 0 ? (
+        <button type="button" class="menu-item" role="menuitem" data-action="read" onClick={() => onAction("read")}>
+          <CheckAllIcon />
+          Mark as read
+        </button>
+      ) : null}
+    </Popup>
   );
 }

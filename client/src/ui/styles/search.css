@@ -125,10 +125,16 @@
 
 .digest {
   position: relative;
+  display: flex;
   border-bottom: 1px solid var(--c-border);
 }
 
 .digest-link {
+  flex: 1;
+  min-width: 0;
+  /* Sideways is the swipe to archive; up and down scroll. */
+  touch-action: pan-y;
+  transition: transform var(--t-fast);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--sp-3);
@@ -144,6 +150,7 @@
 .digest-link:focus-visible {
   box-shadow: inset 0 0 0 2px var(--c-accent);
 }
+.digest.is-selected,
 .digest.is-selected .digest-link {
   background: var(--c-accent-soft);
   border-inline-start-color: var(--c-accent);
@@ -222,35 +229,44 @@
   line-height: 1.375rem;
 }
 
-.digest-actions {
-  position: absolute;
-  inset-inline-end: var(--sp-2);
-  bottom: var(--sp-1);
-  display: flex;
-  gap: var(--sp-0);
-  padding: var(--sp-0);
-  border-radius: var(--radius-1);
-  background: var(--c-surface);
-  box-shadow: var(--shadow-1);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--t-fast);
-}
-.digest:hover .digest-actions,
-.digest:focus-within .digest-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-.digest-actions .icon-btn {
-  width: 1.875rem;
-  height: 1.875rem;
+/* Each row: the link (one tap opens the wave) and its "..." menu. */
+.digest-more {
+  flex: none;
+  align-self: center;
+  margin-inline-end: var(--sp-1);
+  color: var(--c-text-2);
 }
 
-@media (hover: none) {
-  .digest.is-selected .digest-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
+/* The note after an action, with Undo. */
+.search-toast-region {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--sp-3);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-2);
+  background: var(--c-text);
+  color: var(--c-surface);
+  font-size: var(--fs-sm);
+  box-shadow: var(--shadow-2);
+  pointer-events: auto;
+}
+.toast-action {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}
+.toast-action:hover {
+  background: color-mix(in srgb, var(--c-surface) 15%, transparent);
+  color: inherit;
 }
 
 /* Very large text on a phone: the search field, the folders and the list

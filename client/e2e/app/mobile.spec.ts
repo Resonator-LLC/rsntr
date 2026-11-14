@@ -279,3 +279,55 @@ test("390x844: the viewport is an app's, pinch-zoom allowed: safe areas, a manif
   const touchAction = await page.evaluate(() => getComputedStyle(document.body).touchAction);
   expect(touchAction).toBe("manipulation");
 });
+
+test("390x844: swipe a wave left in the inbox to archive it, Undo brings it back", async ({ browser }) => {
+  const { page } = await phone(browser, "390x844");
+  const problems = problemsOf(page);
+  await page.goto(servers.baseUrl);
+  const carol = await createUser(servers, "carol");
+  await signIn(page, carol);
+  await page.locator("[data-action=new-wave]").tap();
+  await page.keyboard.type("Swipe me");
+  await expect(page.locator(".blip-editing .doc")).toContainText("Swipe me");
+  await page.locator(".edit-done").tap();
+  await page.locator(".wave-back").tap();
+  const row = page.locator(".digest").filter({ hasText: "Swipe me" });
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  // A finger moving left along the row.
+  await row.evaluate((li) => {
+    const r = li.getBoundingClientRect();
+    const y = r.top + r.height / 2;
+    // WebKit has no Touch constructor: events with a list of touches.
+    const fire = (type: string, x: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : [{ clientX: x, clientY: y }] });
+      li.dispatchEvent(event);
+    };
+    fire("touchstart", r.right - 20);
+    for (let x = r.right - 40; x >= r.right - 220; x -= 20) {
+      fire("touchmove", x);
+    }
+    fire("touchend", r.right - 220);
+  });
+  await expect(row).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator(".toast")).toContainText("Archived");
+  await page.locator('.toast [data-action="undo"]').tap();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  // A vertical move is a scroll, not a swipe.
+  await row.evaluate((li) => {
+    const r = li.getBoundingClientRect();
+    const fire = (type: string, y: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : [{ clientX: r.right - 20, clientY: y }] });
+      li.dispatchEvent(event);
+    };
+    fire("touchstart", r.top + 5);
+    for (let i = 1; i <= 8; i++) {
+      fire("touchmove", r.top + 5 + i * 20);
+    }
+    fire("touchend", r.top + 165);
+  });
+  await page.waitForTimeout(500);
+  await expect(row).toBeVisible();
+  expect(problems).toEqual([]);
+});

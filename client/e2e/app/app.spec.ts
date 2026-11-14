@@ -289,13 +289,21 @@ test("search, archive and back to the inbox", async ({ browser }) => {
   // Archive from the inbox.
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
   await expect(digest).toBeVisible();
-  await digest.hover();
-  await digest.locator('[data-action="archive"]').click();
+  // Archive from the row's menu; Undo brings it back; archive again.
+  const fromMenu = async (action: string) => {
+    await digest.locator(".digest-more").click();
+    await page.locator(`[role=menu] [data-action="${action}"]`).click();
+  };
+  await fromMenu("archive");
+  await expect(digest).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator(".toast")).toContainText("Archived");
+  await page.locator('.toast [data-action="undo"]').click();
+  await expect(digest).toBeVisible({ timeout: 15_000 });
+  await fromMenu("archive");
   await expect(digest).toHaveCount(0, { timeout: 15_000 });
   await page.getByRole("button", { name: "Archive", exact: true }).click();
   await expect(digest).toBeVisible({ timeout: 15_000 });
-  await digest.hover();
-  await digest.locator('[data-action="inbox"]').click();
+  await fromMenu("inbox");
   await expect(digest).toHaveCount(0, { timeout: 15_000 });
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
   await expect(digest).toBeVisible({ timeout: 15_000 });

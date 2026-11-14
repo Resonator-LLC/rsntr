@@ -34,6 +34,8 @@ fn main() {
                     .title("Resonator")
                     .inner_size(1200.0, 820.0)
                     .min_inner_size(380.0, 480.0)
+                    // Ctrl/Cmd + and - zoom the page (WCAG 1.4.4).
+                    .zoom_hotkeys_enabled(true)
                     .on_navigation(move |url| {
                         if stays_in_app(url) {
                             return true;

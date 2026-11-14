@@ -4,6 +4,7 @@
 // Stands where `WebClient`, `Session`, `SavedStateIndicator` and the
 // history handling of the Apache Wave web client stand (Apache License 2.0).
 
+import type { PrefsStore } from "./prefs";
 import { type Signal, batch, signal } from "@preact/signals";
 
 import type { WaveClient } from "../../client";
@@ -102,11 +103,14 @@ export interface AppStoreOptions {
   clock?: () => number;
   /** Asks the server for a newer client build; see `updateCheck.ts`. */
   update?: UpdateCheck;
+  /** Display and accessibility preferences of this device. */
+  prefs?: PrefsStore;
 }
 
 export class AppStore {
   readonly client: WaveClient;
   readonly profiles: ProfileStore;
+  readonly prefs: PrefsStore | null;
   readonly update: UpdateCheck | null;
 
   readonly phase: Signal<Phase> = signal<Phase>("loading");
@@ -148,6 +152,7 @@ export class AppStore {
   constructor(options: AppStoreOptions) {
     this.client = options.client;
     this.profiles = options.profiles;
+    this.prefs = options.prefs ?? null;
     this.update = options.update ?? null;
     this.location = options.location;
     this.timers = options.timers ?? DEFAULT_TIMERS;

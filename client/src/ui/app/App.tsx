@@ -38,6 +38,7 @@ function Shell({ store }: { store: AppStore }) {
             address={store.session.value?.address ?? ""}
             connection={{ status: net, text: NET_STATUS_TEXT[net], connectNow: store.reconnect }}
             device={store.session.value?.device !== undefined}
+            prefs={store.prefs ?? undefined}
             onClose={store.closeSettings}
           />
         </main>

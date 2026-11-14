@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Contact, JoinStage, NewPairing, Pairing, PersonOverview } from "../../net/person";
 import { PersonApiError } from "../../net/person";
 import { isSettingsFragment } from "../app/appStore";
+import { PrefsStore } from "../app/prefs";
 import { isRemoteWave } from "../wave/ContinueWave";
 import { SettingsPage } from "./SettingsPage";
 import {
@@ -405,6 +406,34 @@ describe("SettingsPage", () => {
     await act(async () => render(page("online"), root!));
     expect(root.querySelector("[data-testid=connection]")?.textContent).toBe("Online");
     expect(root.querySelector("[data-action=connect-now]")).toBeNull();
+  });
+
+  test("Accessibility: the choices change the preferences and the attributes of <html>", async () => {
+    const prefs = new PrefsStore(null, null);
+    const html = document.createElement("html");
+    const stop = prefs.apply(html);
+    root = document.createElement("div");
+    document.body.append(root);
+    await act(async () => render(<SettingsPage api={new FakeNode()} onClose={() => {}} device={false} prefs={prefs} />, root!));
+    const section = root.querySelector("[data-section=accessibility]")!;
+    expect(section).not.toBeNull();
+    const size = section.querySelector<HTMLSelectElement>("select[data-pref=textSize]")!;
+    expect(section.querySelector(`label[for=${size.id}]`)?.textContent).toBe("Text size");
+    await act(async () => {
+      size.value = "150";
+      size.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(html.getAttribute("data-text-size")).toBe("150");
+    const contrast = section.querySelector<HTMLSelectElement>("select[data-pref=contrast]")!;
+    await act(async () => {
+      contrast.value = "more";
+      contrast.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(html.getAttribute("data-contrast")).toBe("more");
+    await click(section.querySelector("input[data-pref=underlineLinks]"));
+    expect(html.hasAttribute("data-underline-links")).toBe(true);
+    expect(prefs.prefs.value).toMatchObject({ textSize: "150", contrast: "more", underlineLinks: true });
+    stop();
   });
 
   test("an admin device: devices, pairing with a QR code and link, the phrase behind a confirmation", async () => {

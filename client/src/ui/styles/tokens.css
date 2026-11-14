@@ -1,7 +1,9 @@
 /*
  * The design system of the resonator client: every colour, size and
  * duration used by the other stylesheets is a custom property defined here.
- * Light is the default; dark follows `prefers-color-scheme`.
+ * Light is the default. The theme, contrast and motion blocks below follow
+ * attributes on <html> that prefs.ts sets from the user's choice or, for
+ * "system", from the media queries (prefers-color-scheme and others).
  * Every pair of text and surface meets WCAG AA; `contrast.test.ts` checks.
  *
  * The palette keeps what made Wave recognisable (a blue chrome, green for
@@ -9,7 +11,7 @@
  */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   /* Surfaces */
   --c-bg: #eef1f6; /* behind the panels */
@@ -103,54 +105,141 @@
   --t-med: 200ms;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --c-bg: #0f131a;
-    --c-surface: #181d26;
-    --c-surface-2: #1f2530;
-    --c-surface-3: #2a3140;
-    --c-border: #2f3746;
-    --c-border-strong: #6b778a;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: #0f131a;
+  --c-surface: #181d26;
+  --c-surface-2: #1f2530;
+  --c-surface-3: #2a3140;
+  --c-border: #2f3746;
+  --c-border-strong: #6b778a;
 
-    --c-text: #e6e9ef;
-    --c-text-2: #b3bccb;
-    --c-text-3: #909bad;
-    --c-text-on-accent: #0b1220; /* dark on the light dark-mode blue: 7:1 */
+  --c-text: #e6e9ef;
+  --c-text-2: #b3bccb;
+  --c-text-3: #909bad;
+  --c-text-on-accent: #0b1220; /* dark on the light dark-mode blue: 7:1 */
 
-    --c-accent: #6ea2f0;
-    --c-accent-hover: #8db6f4;
-    --c-accent-soft: #1d2d49;
-    --c-accent-border: #3f68ad;
+  --c-accent: #6ea2f0;
+  --c-accent-hover: #8db6f4;
+  --c-accent-soft: #1d2d49;
+  --c-accent-border: #3f68ad;
 
-    --c-unread: #4cb85d;
-    --c-unread-soft: #1a3320;
-    --c-unread-text: #08130a;
+  --c-unread: #4cb85d;
+  --c-unread-soft: #1a3320;
+  --c-unread-text: #08130a;
 
-    --c-danger: #f47f76;
-    --c-text-on-danger: #1a0605;
-    --c-danger-soft: #3a1c1a;
-    --c-warning: #e0a030;
-    --c-warning-soft: #36290f;
-    --c-ok: #5cb860;
+  --c-danger: #f47f76;
+  --c-text-on-danger: #1a0605;
+  --c-danger-soft: #3a1c1a;
+  --c-warning: #e0a030;
+  --c-warning-soft: #36290f;
+  --c-ok: #5cb860;
 
-    --c-link: #7fb0f5;
-    --c-selection: #2c4f85;
-    --c-inline-thread: #1c222d;
-    --c-code-bg: #232a36;
+  --c-link: #7fb0f5;
+  --c-selection: #2c4f85;
+  --c-inline-thread: #1c222d;
+  --c-code-bg: #232a36;
 
-    --c-topbar: #162a4d;
-    --c-topbar-text: #f2f5fa;
-    --c-topbar-text-2: #a9b9d6;
+  --c-topbar: #162a4d;
+  --c-topbar-text: #f2f5fa;
+  --c-topbar-text-2: #a9b9d6;
 
-    --c-overlay: rgb(0 0 0 / 60%);
-    --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-2: 0 6px 16px rgb(0 0 0 / 50%);
-  }
+  --c-overlay: rgb(0 0 0 / 60%);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-2: 0 6px 16px rgb(0 0 0 / 50%);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --t-fast: 0ms;
-    --t-med: 0ms;
-  }
+/* High contrast (Increase Contrast, or the app's setting): 7:1 for text
+   (WCAG 1.4.6), stronger edges, links always underlined. */
+:root[data-theme="light"][data-contrast="more"] {
+  --c-border: #5a6576;
+  --c-border-strong: #1b2330;
+  --c-text: #000000;
+  --c-text-2: #1b2330;
+  --c-text-3: #283242;
+  --c-accent: #0a3a8c;
+  --c-accent-hover: #072c6b;
+  --c-accent-border: #0a3a8c;
+  --c-unread: #0e4a18;
+  --c-danger: #8a1414;
+  --c-warning: #5a3200;
+  --c-ok: #145a1c;
+  --c-link: #0a3a8c;
+  --c-topbar: #0b2a5c;
+  --c-topbar-text: #ffffff;
+  --c-topbar-text-2: #e6edf9;
+}
+
+:root[data-theme="dark"][data-contrast="more"] {
+  --c-bg: #000000;
+  --c-surface: #0b0e13;
+  --c-surface-2: #12161d;
+  --c-surface-3: #1c222c;
+  --c-border: #6b778a;
+  --c-border-strong: #c0c8d4;
+  --c-text: #ffffff;
+  --c-text-2: #e6e9ef;
+  --c-text-3: #d0d6e0;
+  --c-text-on-accent: #000000;
+  --c-accent: #9cc2ff;
+  --c-accent-hover: #b8d3ff;
+  --c-accent-soft: #14223a;
+  --c-accent-border: #9cc2ff;
+  --c-unread: #7ad88a;
+  --c-unread-soft: #10261a;
+  --c-unread-text: #000000;
+  --c-danger: #ffaaa3;
+  --c-text-on-danger: #000000;
+  --c-danger-soft: #2d1210;
+  --c-warning: #ffc864;
+  --c-warning-soft: #2a1f08;
+  --c-ok: #8ad88e;
+  --c-link: #a8caff;
+  --c-inline-thread: #0f141b;
+  --c-topbar: #0a1a33;
+  --c-topbar-text: #ffffff;
+  --c-topbar-text-2: #d6e0f2;
+}
+
+/* Links in text (not the rows of the wave list or the chrome). */
+:root[data-contrast="more"] :is(.doc, p) a,
+:root[data-underline-links] :is(.doc, p) a {
+  text-decoration: underline;
+}
+
+/* Text size: everything is in rem, so it follows the root font size. The
+   percentages keep the browser's own text size setting; "system" follows
+   the system text size the native apps report. */
+:root[data-text-size="system"] {
+  font-size: calc(100% * var(--system-text-scale, 1));
+}
+:root[data-text-size="125"] {
+  font-size: 125%;
+}
+:root[data-text-size="150"] {
+  font-size: 150%;
+}
+:root[data-text-size="200"] {
+  font-size: 200%;
+}
+
+/* Reading spacing (WCAG 1.4.12 style): more room between lines, letters
+   and words. */
+:root[data-spacing="reading"] {
+  --lh: 1.8;
+}
+:root[data-spacing="reading"] body {
+  letter-spacing: 0.04em;
+  word-spacing: 0.12em;
+}
+
+/* Large targets: 48px controls everywhere (mobile.css applies --tap). */
+:root[data-targets="large"] {
+  --tap: 3rem;
+}
+
+/* Reduced motion (the system setting or the app's, see prefs.ts). */
+:root[data-motion="reduce"] {
+  --t-fast: 0ms;
+  --t-med: 0ms;
 }

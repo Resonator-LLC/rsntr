@@ -1,5 +1,5 @@
 // WCAG 2.2 AA, checked by axe on every screen: sign-in, the list of waves,
-// a wave read and edited, in light and dark, on desktop Chromium and on an
+// a wave read and edited, Settings, and high contrast at 200% text, in light and dark, on desktop Chromium and on an
 // iPhone in WebKit. Any violation fails.
 
 import AxeBuilder from "@axe-core/playwright";
@@ -88,6 +88,24 @@ for (const [client, { engine, options }] of Object.entries(CLIENTS)) {
       expect.soft(await violations(page), "wave, editing").toEqual([]);
       await page.keyboard.press("Escape");
       expect(waveId).not.toBe("");
+
+      await page.locator(".topbar-net").click();
+      await expect(page.locator("[data-section=accessibility]")).toBeVisible();
+      expect.soft(await violations(page), "settings").toEqual([]);
+      // High contrast and 200% text, kept across a reload.
+      await page.locator("select[data-pref=contrast]").selectOption("more");
+      await page.locator("select[data-pref=textSize]").selectOption("200");
+      await expect(page.locator("html")).toHaveAttribute("data-contrast", "more");
+      expect.soft(await violations(page), "settings, high contrast").toEqual([]);
+      await page.reload();
+      await expect(page.locator("html")).toHaveAttribute("data-text-size", "200");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme);
+      expect(await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)).toBe("32px");
+      // The reload kept Settings open.
+      await page.locator(".settings-back").click();
+      await page.locator(".digest-link").first().click();
+      await expect(page.locator(".blip-main").nth(2)).toBeVisible();
+      expect.soft(await violations(page), "wave, high contrast").toEqual([]);
       await context.close();
     });
   }

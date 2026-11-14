@@ -98,7 +98,7 @@ button,
     font-size: max(1rem, 16px);
   }
 
-  /* 44px tap targets. */
+  /* 44px tap targets (also with large targets on, below). */
   .topbar-signout,
   button.topbar-net,
   .search-folder,
@@ -209,4 +209,17 @@ button,
   padding-top: max(var(--sp-4), env(safe-area-inset-top));
   padding-bottom: max(var(--sp-4), env(safe-area-inset-bottom));
   padding-inline: max(var(--sp-4), env(safe-area-inset-left)) max(var(--sp-4), env(safe-area-inset-right));
+}
+
+/* Large targets (Settings, Accessibility): the touch sizes on every
+   pointer, at 48px. */
+:root[data-targets="large"] :is(.topbar-signout, button.topbar-net, .search-folder, .wave-tool, .reply-box,
+    .blip-menu-btn, .blip-action, .wave-tag-add, .wave-participant, .wave-add-participant, .auth-link, .btn,
+    .icon-btn, .digest-more) {
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+:root[data-targets="large"] :is(.wave-add-participant, .blip-menu-btn, .wave-tag-add) {
+  width: var(--tap);
+  height: var(--tap);
 }

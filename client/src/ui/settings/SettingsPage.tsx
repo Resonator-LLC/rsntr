@@ -6,6 +6,7 @@
 // recovery phrase (admin devices, behind a confirmation) and recovering
 // from one, co-hosts, and contacts.
 
+import { CHOICES, type Prefs, type PrefsStore } from "../app/prefs";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import "../styles/settings.css";
@@ -37,6 +38,8 @@ export interface SettingsPageProps {
     readonly text: string;
     readonly connectNow: () => void;
   };
+  /** Display and accessibility preferences; the section shows with them. */
+  readonly prefs?: PrefsStore;
   /** For tests. */
   readonly store?: SettingsStore;
   readonly now?: () => number;
@@ -598,6 +601,73 @@ function Address({ address }: { readonly address: string }) {
   );
 }
 
+const PREF_LABELS = {
+  textSize: { system: "As the system", "100": "100%", "125": "125%", "150": "150%", "200": "200%" },
+  theme: { system: "As the system", light: "Light", dark: "Dark" },
+  contrast: { system: "As the system", normal: "Normal", more: "High" },
+  motion: { system: "As the system", reduce: "Reduce" },
+  spacing: { normal: "Normal", reading: "More, for reading" },
+  targets: { normal: "Normal", large: "Large" },
+} as const;
+
+const PREF_NAMES: Record<keyof typeof PREF_LABELS, string> = {
+  textSize: "Text size",
+  theme: "Theme",
+  contrast: "Contrast",
+  motion: "Motion",
+  spacing: "Text spacing",
+  targets: "Buttons",
+};
+
+/** Text size, theme, contrast, motion, spacing, targets and links. */
+function Accessibility({ prefs }: { readonly prefs: PrefsStore }) {
+  const current = prefs.prefs.value;
+  const select = <K extends keyof typeof PREF_LABELS>(key: K) => (
+    <div class="settings-row settings-pref" key={key}>
+      <label class="settings-row-main" for={`pref-${key}`}>
+        {PREF_NAMES[key]}
+      </label>
+      <select
+        id={`pref-${key}`}
+        class="input settings-select"
+        data-pref={key}
+        value={current[key]}
+        onChange={(e) => prefs.set(key, e.currentTarget.value as Prefs[K])}
+      >
+        {(CHOICES[key] as readonly string[]).map((value) => (
+          <option key={value} value={value}>
+            {(PREF_LABELS[key] as Record<string, string>)[value]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+  return (
+    <>
+      {select("textSize")}
+      {select("theme")}
+      {select("contrast")}
+      {select("motion")}
+      {select("spacing")}
+      {select("targets")}
+      <div class="settings-row">
+        <label class="settings-check">
+          <input
+            type="checkbox"
+            data-pref="underlineLinks"
+            checked={current.underlineLinks}
+            onChange={(e) => prefs.set("underlineLinks", e.currentTarget.checked)}
+          />
+          <span>Underline links</span>
+        </label>
+      </div>
+      <p class="settings-help settings-preview" data-testid="prefs-preview">
+        Preview: the venue is booked for Friday, details at <a href="https://rsntr.net" target="_blank" rel="noreferrer">rsntr.net</a>.
+      </p>
+    </>
+  );
+}
+
 function Connection({ connection }: { readonly connection: NonNullable<SettingsPageProps["connection"]> }) {
   return (
     <div class="settings-row">
@@ -759,6 +829,11 @@ export function SettingsPage(props: SettingsPageProps) {
           {props.connection !== undefined ? (
             <Section title="Connection" id="connection">
               <Connection connection={props.connection} />
+            </Section>
+          ) : null}
+          {props.prefs !== undefined ? (
+            <Section title="Accessibility" id="accessibility">
+              <Accessibility prefs={props.prefs} />
             </Section>
           ) : null}
           {body}

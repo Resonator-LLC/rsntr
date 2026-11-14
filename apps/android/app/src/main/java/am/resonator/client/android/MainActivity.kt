@@ -61,6 +61,9 @@ class MainActivity : Activity() {
             settings.mediaPlaybackRequiresUserGesture = true
             settings.allowFileAccess = false
             settings.allowContentAccess = true
+            // The page scales its whole layout with the system font size
+            // (--system-text-scale, below), not only the text.
+            settings.textZoom = 100
             webViewClient = Client()
             webChromeClient = Chrome()
             visibility = View.INVISIBLE
@@ -162,7 +165,19 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    /** The system font size, for the page's "As the system" text size. */
+    private fun applyTextScale(view: WebView) {
+        val scale = resources.configuration.fontScale.coerceIn(0.5f, 3f)
+        view.evaluateJavascript(
+            "document.documentElement.style.setProperty('--system-text-scale','$scale')", null,
+        )
+    }
+
     private inner class Client : WebViewClient() {
+        override fun onPageCommitVisible(view: WebView, url: String) = applyTextScale(view)
+
+        override fun onPageFinished(view: WebView, url: String) = applyTextScale(view)
+
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url.toString()
             if (host.isNodeUrl(url)) return false

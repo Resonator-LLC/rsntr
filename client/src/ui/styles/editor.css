@@ -259,9 +259,8 @@ html.lightbox-shown body {
 @keyframes lightbox-in {
   from { opacity: 0; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .lightbox { animation: none; }
-}
+:root[data-motion="reduce"] .lightbox { animation: none; }
+:root[data-motion="reduce"] .lightbox-img { transition: none; }
 .lightbox-bar {
   display: flex;
   align-items: center;

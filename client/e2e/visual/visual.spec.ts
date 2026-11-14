@@ -1,5 +1,6 @@
 // Screenshots of the main screens at phone, tablet and desktop sizes, in
-// light and dark, at 100% and 200% text. A changed pixel fails: look at the
+// light and dark, at 100% and 200% text and in high contrast: the list, a
+// wave and Settings. A changed pixel fails: look at the
 // diff, and when the change is wanted, `npm run test:visual:update` and
 // review the new images before committing them. Run with
 // `npm run test:visual` (see playwright.visual.config.ts).
@@ -14,7 +15,12 @@ const SIZES = {
   tablet: { width: 834, height: 1112, mobile: true },
   desktop: { width: 1280, height: 860, mobile: false },
 } as const;
-const TEXT = { "100": "", "200": "200%" } as const;
+/** Text at 100% and 200%, and high contrast (the app's setting) at 100%. */
+const LOOKS = {
+  text100: { fontSize: "", contrast: false },
+  text200: { fontSize: "200%", contrast: false },
+  contrast: { fontSize: "", contrast: true },
+} as const;
 
 let servers: TestServers;
 let anna: User;
@@ -78,8 +84,8 @@ async function noSidewaysScroll(page: Page, where: string): Promise<void> {
 
 for (const [size, { width, height, mobile }] of Object.entries(SIZES)) {
   for (const colorScheme of ["light", "dark"] as const) {
-    for (const [text, fontSize] of Object.entries(TEXT)) {
-      const name = `${size}-${colorScheme}-text${text}`;
+    for (const [look, { fontSize, contrast }] of Object.entries(LOOKS)) {
+      const name = `${size}-${colorScheme}-${look}`;
       test(name, async ({ browser }) => {
         const context = await browser.newContext({
           viewport: { width, height },
@@ -88,6 +94,9 @@ for (const [size, { width, height, mobile }] of Object.entries(SIZES)) {
           colorScheme,
           reducedMotion: "reduce",
         });
+        if (contrast) {
+          await context.addInitScript(() => localStorage.setItem("resonator.prefs", '{"contrast":"more"}'));
+        }
         const page = await context.newPage();
         await page.goto(servers.baseUrl);
         if (fontSize !== "") {
@@ -106,6 +115,11 @@ for (const [size, { width, height, mobile }] of Object.entries(SIZES)) {
         await expect(page.locator(".blip-main")).toHaveCount(3);
         await expect(page).toHaveScreenshot(`${name}-wave.png`, { mask: masks(page) });
         await noSidewaysScroll(page, "wave");
+
+        await page.locator(".topbar-net").click();
+        await expect(page.locator("[data-section=accessibility]")).toBeVisible();
+        await expect(page).toHaveScreenshot(`${name}-settings.png`, { mask: masks(page) });
+        await noSidewaysScroll(page, "settings");
         await context.close();
       });
     }

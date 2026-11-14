@@ -75,10 +75,8 @@
     transform: rotate(360deg);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .wave-spinner {
-    animation-duration: 3s;
-  }
+:root[data-motion="reduce"] .wave-spinner {
+  animation-duration: 3s;
 }
 
 .wave-error {

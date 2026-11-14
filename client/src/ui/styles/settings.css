@@ -442,3 +442,22 @@
 .settings-net.is-connecting .settings-net-dot {
   background: var(--c-warning);
 }
+
+/* A choice: the label, and the select beside it or, at large text,
+   under it. */
+.settings-pref {
+  flex-wrap: wrap;
+  padding-block: var(--sp-1);
+}
+.settings-pref > .settings-row-main {
+  flex: 1 1 8em;
+}
+.settings-select {
+  flex: 0 1 12em;
+  width: auto;
+  max-width: 100%;
+}
+.settings-preview {
+  margin: 0;
+  padding-block: var(--sp-2);
+}

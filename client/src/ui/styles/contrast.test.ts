@@ -1,5 +1,6 @@
 // The colour tokens meet WCAG 2.2 AA: 4.5:1 for text (1.4.3) and 3:1 for
-// the edges of controls and for focus (1.4.11), in light and dark.
+// the edges of controls and for focus (1.4.11), in light and dark; in high
+// contrast 7:1 for text (1.4.6) and 4.5:1 for edges.
 
 import { readFileSync } from "node:fs";
 
@@ -14,9 +15,6 @@ function colours(header: string): Record<string, string> {
     throw new Error(`no ${header} in tokens.css`);
   }
   start = css.indexOf("{", start) + 1;
-  if (header.startsWith("@media")) {
-    start = css.indexOf("{", start) + 1;
-  }
   const body = css.slice(start, css.indexOf("}", start));
   return Object.fromEntries([...body.matchAll(/--c-([\w-]+):\s*(#[0-9a-f]{6})\b/gi)].map((m) => [m[1]!, m[2]!]));
 }
@@ -35,10 +33,15 @@ export function contrast(a: string, b: string): number {
 }
 
 const light = colours(":root {");
+const dark = { ...light, ...colours(':root[data-theme="dark"] {') };
 const themes: Record<string, Record<string, string>> = {
   light,
-  dark: { ...light, ...colours("@media (prefers-color-scheme: dark)") },
+  dark,
+  "light, high contrast": { ...light, ...colours(':root[data-theme="light"][data-contrast="more"] {') },
+  "dark, high contrast": { ...dark, ...colours(':root[data-theme="dark"][data-contrast="more"] {') },
 };
+/** The required ratio: higher in high contrast. */
+const required = (theme: string, min: number): number => (theme.includes("high") ? (min >= 4.5 ? 7 : 4.5) : min);
 
 const SURFACES = ["bg", "surface", "surface-2", "surface-3", "accent-soft", "unread-soft", "inline-thread"];
 const TEXTS = ["text", "text-2", "text-3", "link", "accent", "danger", "warning", "ok", "unread"];
@@ -64,8 +67,8 @@ describe("colour contrast of the tokens", () => {
       const failing = PAIRS.filter(([fg, bg, min]) => {
         expect(theme[fg], `--c-${fg}`).toBeDefined();
         expect(theme[bg], `--c-${bg}`).toBeDefined();
-        return contrast(theme[fg]!, theme[bg]!) < min;
-      }).map(([fg, bg, min]) => `${fg} on ${bg}: ${contrast(theme[fg]!, theme[bg]!).toFixed(2)} < ${min}`);
+        return contrast(theme[fg]!, theme[bg]!) < required(name, min);
+      }).map(([fg, bg, min]) => `${fg} on ${bg}: ${contrast(theme[fg]!, theme[bg]!).toFixed(2)} < ${required(name, min)}`);
       expect(failing).toEqual([]);
     });
   }

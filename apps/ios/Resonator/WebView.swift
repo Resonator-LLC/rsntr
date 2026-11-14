@@ -18,6 +18,7 @@ struct WebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
+        configuration.userContentController.addUserScript(WebView.textScaleScript())
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
@@ -30,7 +31,26 @@ struct WebView: UIViewRepresentable {
             #endif
         }
         context.coordinator.webView = view
+        context.coordinator.followTextSize()
         return view
+    }
+
+    /// The system text size (Dynamic Type) as a factor of the default, for
+    /// the page's "As the system" text size (`--system-text-scale`, read by
+    /// tokens.css). Contrast and dark mode reach the page by media queries.
+    static func textScaleSource() -> String {
+        let scale = min(UIFontMetrics(forTextStyle: .body).scaledValue(for: 17) / 17, 3)
+        return """
+            (function set() {
+              var root = document.documentElement;
+              if (root) { root.style.setProperty('--system-text-scale', '\(scale)'); }
+              else { document.addEventListener('readystatechange', set, { once: true }); }
+            })();
+            """
+    }
+
+    static func textScaleScript() -> WKUserScript {
+        WKUserScript(source: textScaleSource(), injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
@@ -48,6 +68,26 @@ struct WebView: UIViewRepresentable {
         var loadedGeneration = -1
         private var downloads: [WKDownload: URL] = [:]
         private var previewing: URL?
+        private var textSizeObserver: NSObjectProtocol?
+
+        /// Follows changes of the system text size while the app runs.
+        func followTextSize() {
+            textSizeObserver = NotificationCenter.default.addObserver(
+                forName: UIContentSizeCategory.didChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let view = self?.webView else { return }
+                let scripts = view.configuration.userContentController
+                scripts.removeAllUserScripts()
+                scripts.addUserScript(WebView.textScaleScript())
+                view.evaluateJavaScript(WebView.textScaleSource())
+            }
+        }
+
+        deinit {
+            if let textSizeObserver {
+                NotificationCenter.default.removeObserver(textSizeObserver)
+            }
+        }
 
         /// An attachment of the node (`/attachment/<id>`): shown in Quick Look.
         private func isAttachment(_ url: URL) -> Bool {

@@ -42,6 +42,10 @@ function Shell({ store }: { store: AppStore }) {
             device={store.session.value?.device !== undefined}
             prefs={store.prefs ?? undefined}
             onShortcuts={() => (store.shortcutsOpen.value = true)}
+            profile={store.client.api}
+            onProfileChanged={(profile) =>
+              store.profiles.put({ address: profile.address, name: profile.name, imageUrl: profile.imageUrl })
+            }
             onClose={store.closeSettings}
           />
         </main>

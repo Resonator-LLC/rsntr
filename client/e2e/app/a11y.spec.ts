@@ -154,3 +154,36 @@ test("screen readers hear replies others write, not their own; ? lists the short
   await annaContext.close();
   await benContext.close();
 });
+
+// A 2x1 red PNG.
+const PHOTO = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4z8AARAAI/gH/xp559wAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+test("people set their name and photo in Settings, and others see them", async () => {
+  const context = await browsers.chromium!.newContext();
+  const page = await context.newPage();
+  await page.goto(servers.baseUrl);
+  await signIn(page, bob);
+  await page.locator(".topbar-net").click();
+  const editor = page.locator("[data-testid=profile-editor]");
+  await expect(editor).toBeVisible();
+  await page.getByLabel("Name", { exact: true }).fill("Bob Builder");
+  await editor.locator("[data-action=save-name]").click();
+  await expect(editor.locator("[data-testid=profile-status]")).toHaveText("Name saved.");
+  await editor.locator("[data-testid=photo-input]").setInputFiles({ name: "me.png", mimeType: "image/png", buffer: PHOTO });
+  await expect(editor.locator("[data-testid=profile-status]")).toHaveText("Photo changed.");
+  await expect(editor.locator("img.avatar-xl")).toHaveAttribute("src", /\/avatar\//);
+  await expect(editor.locator("[data-action=remove-photo]")).toBeVisible();
+  expect.soft(await violations(page), "profile editor").toEqual([]);
+  await context.close();
+
+  const other = await browsers.chromium!.newContext();
+  const alicePage = await other.newPage();
+  await alicePage.goto(`${servers.baseUrl}/#${waveId}`);
+  await signIn(alicePage, alice);
+  await expect(alicePage.locator(".blip-names").first()).toHaveText("Bob Builder");
+  await expect(alicePage.locator(".blip img.avatar").first()).toHaveAttribute("src", /\/avatar\/bob/);
+  await other.close();
+});

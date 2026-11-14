@@ -163,6 +163,8 @@ pub(crate) struct Context {
     /// devices (`replicate_own_attachments`); unset otherwise and after
     /// shutdown.
     copies: Mutex<Option<Arc<crate::copies::Copies>>>,
+    /// Names and avatars, when there is an HTTP front end.
+    pub profiles: std::sync::OnceLock<resonator_server::profile::Profiles>,
 }
 
 /// The answer to a request being applied once, with the domain it came
@@ -211,6 +213,7 @@ impl Context {
             pending_wake: Notify::new(),
             push: None,
             copies: Mutex::new(None),
+            profiles: std::sync::OnceLock::new(),
         }
     }
 

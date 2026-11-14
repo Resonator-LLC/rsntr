@@ -70,6 +70,24 @@ export class ProfileStore {
     return entry.value;
   }
 
+  /** Shows a profile known to be current (the user's own, just changed). */
+  put(profile: Profile): void {
+    const entry = this.profiles.get(profile.address);
+    if (entry === undefined) {
+      this.profiles.set(profile.address, signal(profile));
+    } else {
+      entry.value = profile;
+    }
+  }
+
+  /** Fetches every profile shown so far again (names and avatars change). */
+  refreshAll(): void {
+    for (const address of this.profiles.keys()) {
+      this.pending.add(address);
+    }
+    this.schedule();
+  }
+
   /** Forgets everything (on sign-out). */
   clear(): void {
     this.profiles.clear();

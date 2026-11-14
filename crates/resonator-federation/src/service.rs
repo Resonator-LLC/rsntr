@@ -75,6 +75,7 @@ use resonator_model::version::HashedVersion;
 pub const CAPABILITIES: &[&str] = &[
     "probe",
     "echo",
+    "fetch-profile",
     "submit",
     "history",
     "signer-info",
@@ -718,6 +719,12 @@ impl FederationSetup {
                         config.federation.replicate_max_bytes(),
                     )),
                 );
+            }
+            let _ = ctx.profiles.set(app.profiles.clone());
+            if !app.profiles.set_remote(Arc::new(crate::profiles::Fetcher {
+                ctx: Arc::clone(&ctx),
+            })) {
+                tracing::warn!("profiles are already fetched from other domains");
             }
             if !app.set_remote_probe(Arc::new(Prober {
                 ctx: Arc::clone(&ctx),
@@ -1384,6 +1391,9 @@ impl RequestHandler for ServerHandler {
                 }
                 federation_request::Op::Holdings(_) => {
                     return crate::recovery::holdings(ctx, peer).await;
+                }
+                federation_request::Op::FetchProfile(request) => {
+                    return crate::profiles::serve(ctx, peer, request).await;
                 }
                 federation_request::Op::SyncSummary(request) if ctx.person_mode => {
                     return crate::sync::serve(ctx, peer, request).await;

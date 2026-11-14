@@ -2633,3 +2633,121 @@ async fn directory_can_be_switched_off() {
     assert_eq!(server.get("/directory", Some(&cookie)).await.status(), 404);
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn people_set_their_name_and_avatar() {
+    let server = TestServer::start().await;
+    let alice = server.user("alice").await;
+    let bob = server.user("bob").await;
+    let me: serde_json::Value = server
+        .get("/profile/me", Some(&alice))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(me["name"], "Alice");
+    assert_eq!(me["customName"], false);
+    assert_eq!(me["hasAvatar"], false);
+    assert_eq!(server.get("/profile/me", None).await.status(), 403);
+
+    let set_name = |name: &str| {
+        server
+            .http
+            .post(server.url("/profile/me"))
+            .header("Cookie", &alice)
+            .json(&json!({ "name": name }))
+            .send()
+    };
+    let named: serde_json::Value = set_name("  Alice   Liddell ")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(named["name"], "Alice Liddell");
+    assert_eq!(named["customName"], true);
+    assert!(
+        named["imageUrl"]
+            .as_str()
+            .unwrap()
+            .starts_with("/iniavatars/100x100/alice@example.com?n=")
+    );
+    assert_eq!(set_name("\u{202e}evil").await.unwrap().status(), 400);
+    assert_eq!(set_name(&"x".repeat(65)).await.unwrap().status(), 400);
+
+    // Others see the name: in profiles and in the directory.
+    let profiles: serde_json::Value = server
+        .get(
+            "/profile?addresses=alice@example.com,bob@example.com",
+            Some(&bob),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(profiles["1"][0]["2"], "Alice Liddell");
+    assert_eq!(profiles["1"][1]["2"], "Bob");
+    let directory: serde_json::Value = server
+        .get("/directory", Some(&bob))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(directory["accounts"][0]["name"], "Alice Liddell");
+    // The initials follow the name.
+    let svg = server
+        .get("/iniavatars/100x100/alice@example.com", None)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(svg.contains(">AL</text>"), "{svg}");
+
+    // An avatar: any image, kept as a square PNG.
+    let mut jpeg = Vec::new();
+    image::RgbImage::from_pixel(600, 300, image::Rgb([10, 120, 200]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut jpeg),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
+    let put = |body: Vec<u8>| {
+        server
+            .http
+            .put(server.url("/profile/me/avatar"))
+            .header("Cookie", &alice)
+            .body(body)
+            .send()
+    };
+    assert_eq!(put(b"not a picture".to_vec()).await.unwrap().status(), 415);
+    let with: serde_json::Value = put(jpeg).await.unwrap().json().await.unwrap();
+    assert_eq!(with["hasAvatar"], true);
+    assert_eq!(with["name"], "Alice Liddell");
+    let url = with["imageUrl"].as_str().unwrap().to_owned();
+    assert!(url.starts_with("/avatar/alice@example.com?v="), "{url}");
+    let png = server.get(&url, Some(&bob)).await;
+    assert_eq!(png.status(), 200);
+    assert_eq!(png.headers()["content-type"], "image/png");
+    let png = image::load_from_memory(&png.bytes().await.unwrap()).unwrap();
+    assert_eq!((png.width(), png.height()), (256, 256));
+    assert_eq!(server.get(&url, None).await.status(), 403);
+
+    // Back to the initials; the name stays.
+    let removed: serde_json::Value = server
+        .http
+        .delete(server.url("/profile/me/avatar"))
+        .header("Cookie", &alice)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(removed["hasAvatar"], false);
+    assert_eq!(removed["name"], "Alice Liddell");
+    // An empty name goes back to the derived one.
+    let cleared: serde_json::Value = set_name("").await.unwrap().json().await.unwrap();
+    assert_eq!(cleared["name"], "Alice");
+    assert_eq!(cleared["imageUrl"], "/iniavatars/100x100/alice@example.com");
+    server.shutdown().await;
+}

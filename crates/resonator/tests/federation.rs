@@ -1237,3 +1237,64 @@ async fn signed_in_users_probe_remote_addresses() {
     assert!(limited);
     a.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn names_and_avatars_are_fetched_from_their_domain() {
+    let (_site_a, _site_b, a, b) = pair().await;
+    let alice = a.cookie("alice").await;
+    let bob = b.cookie("bob").await;
+    // Bob sets a name and an avatar on B.
+    let named = b
+        .http
+        .post(b.url("/profile/me"))
+        .header("Cookie", &bob)
+        .json(&json!({"name": "Bob the Builder"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(named.status(), 200);
+    let set = b
+        .http
+        .put(b.url("/profile/me/avatar"))
+        .header("Cookie", &bob)
+        .body(png(300, 200))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(set.status(), 200);
+
+    // Alice on A sees them.
+    let profiles = |cookie: String| {
+        let a = &a;
+        let bob = b.address("bob");
+        async move {
+            a.http
+                .get(a.url("/profile"))
+                .query(&[("addresses", format!("{bob},nobody@{}", A))])
+                .header("Cookie", cookie)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let seen = profiles(alice.clone()).await;
+    assert_eq!(seen["1"][0]["2"], "Bob the Builder", "{seen}");
+    let url = seen["1"][0]["3"].as_str().unwrap().to_owned();
+    assert!(url.starts_with("/avatar/"), "{url}");
+    let avatar = a
+        .http
+        .get(a.url(&url))
+        .header("Cookie", &alice)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(avatar.status(), 200);
+    let image = image::load_from_memory(&avatar.bytes().await.unwrap()).unwrap();
+    assert_eq!((image.width(), image.height()), (200, 200));
+    assert_eq!(seen["1"][1]["2"], "Nobody");
+    b.stop().await;
+    a.stop().await;
+}

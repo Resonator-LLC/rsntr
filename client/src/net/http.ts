@@ -126,10 +126,34 @@ export interface WaveHttpApiOptions {
   readonly bearerToken?: string;
 }
 
+/** The signed-in user's own profile (`/profile/me`). */
+export interface MyProfile {
+  readonly address: string;
+  readonly name: string;
+  /** Whether the name was set (not derived from the address). */
+  readonly customName: boolean;
+  /** Absolute URL of the avatar (the initials without a picture). */
+  readonly imageUrl: string;
+  readonly hasAvatar: boolean;
+}
+
+/** A refused profile change, with the server's reason. */
+export class ProfileError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProfileError";
+  }
+}
+
 export interface RequestOptions {
-  readonly method?: "GET" | "POST" | "HEAD" | "DELETE";
+  readonly method?: "GET" | "POST" | "PUT" | "HEAD" | "DELETE";
   readonly json?: unknown;
   readonly form?: FormData;
+  /** Sent as it is, with its own content type (an image). */
+  readonly blob?: Blob;
 }
 
 interface RawResponse {
@@ -239,8 +263,13 @@ export class HttpTransport {
   async request(path: string, options: RequestOptions = {}): Promise<RawResponse> {
     const url = this.url(path);
     const headers: Record<string, string> = { Accept: "application/json" };
-    let body: string | FormData | undefined;
-    if (options.json !== undefined) {
+    let body: string | FormData | Blob | undefined;
+    if (options.blob !== undefined) {
+      if (options.blob.type !== "") {
+        headers["Content-Type"] = options.blob.type;
+      }
+      body = options.blob;
+    } else if (options.json !== undefined) {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(options.json);
     } else if (options.form !== undefined) {
@@ -582,6 +611,50 @@ export class WaveHttpApi {
   fetchProfiles(addresses: readonly string[]): Promise<ProfileResponse> {
     const list = addresses.map(encodeURIComponent).join(",");
     return this.transport.getMessage(`/profile/?addresses=${list}`, ProfileResponse);
+  }
+
+  /** `GET /profile/me`: the signed-in user's name and avatar. */
+  async myProfile(): Promise<MyProfile> {
+    return this.myProfileCall("/profile/me");
+  }
+
+  /** `POST /profile/me`: sets the name ("" goes back to the derived one). */
+  async setMyName(name: string): Promise<MyProfile> {
+    return this.myProfileCall("/profile/me", { method: "POST", json: { name } });
+  }
+
+  /** `PUT /profile/me/avatar`: a picture, cropped to a square by the server. */
+  async setMyAvatar(image: Blob): Promise<MyProfile> {
+    return this.myProfileCall("/profile/me/avatar", { method: "PUT", blob: image });
+  }
+
+  /** `DELETE /profile/me/avatar`: back to the initials. */
+  async removeMyAvatar(): Promise<MyProfile> {
+    return this.myProfileCall("/profile/me/avatar", { method: "DELETE" });
+  }
+
+  private async myProfileCall(path: string, options: RequestOptions = {}): Promise<MyProfile> {
+    const response = await this.transport.request(path, options);
+    if (response.status !== 200) {
+      let message = "";
+      try {
+        const body = JSON.parse(response.text) as unknown;
+        if (isObject(body) && typeof body["message"] === "string") {
+          message = body["message"];
+        }
+      } catch {
+        message = "";
+      }
+      throw new ProfileError(response.status, message !== "" ? message : `HTTP ${response.status}`);
+    }
+    const body = jsonObject(response);
+    return {
+      address: stringField(body, "address", response),
+      name: stringField(body, "name", response),
+      customName: body["customName"] === true,
+      imageUrl: this.resolve(stringField(body, "imageUrl", response)),
+      hasAvatar: body["hasAvatar"] === true,
+    };
   }
 
   /**

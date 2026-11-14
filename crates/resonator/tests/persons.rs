@@ -2415,3 +2415,57 @@ async fn a_co_host_takes_over_only_after_the_lease_ran_out() {
         }
     }
 }
+
+/// A name and avatar set on one device of a person reach the other, and
+/// the later change wins.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn names_and_avatars_follow_a_person_to_every_device() {
+    let world = World::new(false);
+    let (p1, p2, cookie1, cookie2, _wave) = two_devices_of_p(&world, |_| {}).await;
+    let me = |node: &Node, cookie: &str| {
+        let request = node
+            .http
+            .get(format!("http://{}/profile/me", node.addr))
+            .header("Cookie", cookie.to_owned());
+        async move {
+            request
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let set_name = |node: &Node, cookie: &str, name: &str| {
+        let request = node
+            .http
+            .post(format!("http://{}/profile/me", node.addr))
+            .header("Cookie", cookie.to_owned())
+            .json(&serde_json::json!({ "name": name }));
+        async move { assert_eq!(request.send().await.unwrap().status(), 200) }
+    };
+    set_name(&p2, &cookie2, "Alice on the tablet").await;
+    let avatar = p2
+        .http
+        .put(format!("http://{}/profile/me/avatar", p2.addr))
+        .header("Cookie", cookie2.clone())
+        .body(png(64, 64))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(avatar.status(), 200);
+    wait_until("the name and avatar on p1", || async {
+        let seen = me(&p1, &cookie1).await;
+        seen["name"] == "Alice on the tablet" && seen["hasAvatar"] == true
+    })
+    .await;
+    set_name(&p1, &cookie1, "Alice").await;
+    wait_until("the newer name on p2", || async {
+        me(&p2, &cookie2).await["name"] == "Alice"
+    })
+    .await;
+    assert_eq!(me(&p2, &cookie2).await["hasAvatar"], true);
+    p2.stop().await;
+    p1.stop().await;
+}

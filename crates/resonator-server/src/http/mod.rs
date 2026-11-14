@@ -20,6 +20,7 @@ mod auth_handlers;
 mod device_handlers;
 mod person_handlers;
 mod probe_handlers;
+mod profile_handlers;
 mod search_handlers;
 mod wave_handlers;
 
@@ -62,6 +63,8 @@ pub struct AppInner {
     pub attachments: AttachmentService,
     /// Set if a welcome wave is configured.
     pub welcome: Option<WelcomeService>,
+    /// Names and avatars people set.
+    pub profiles: crate::profile::Profiles,
     pub metrics: Arc<Metrics>,
     pub socket: Arc<SocketContext>,
     trusted_proxies: Vec<IpNet>,
@@ -161,6 +164,12 @@ impl AppState {
                 });
             });
         }
+        let profiles = crate::profile::Profiles::new(
+            server.database(),
+            &config.domain,
+            Arc::clone(auth.clock()),
+            crate::attachment::thumbnail::DecodeLimits::default(),
+        );
         let metrics = Arc::new(Metrics::default());
         let kept = config.device_token.as_ref().map(|token| token.0.clone());
         let device = config
@@ -184,6 +193,7 @@ impl AppState {
             search,
             attachments,
             welcome,
+            profiles,
             metrics,
             socket,
             shutdown,
@@ -600,6 +610,19 @@ pub fn router_with(state: AppState, extra: Router<AppState>) -> Router {
         .route("/profile/", get(wave::profiles))
         .route("/profile/{*rest}", get(wave::profiles))
         .route("/iniavatars/{*path}", get(wave::initials_avatar))
+        .route(
+            "/profile/me",
+            get(profile_handlers::get_me).post(profile_handlers::set_name),
+        )
+        .route(
+            "/profile/me/avatar",
+            axum::routing::put(profile_handlers::set_avatar)
+                .delete(profile_handlers::remove_avatar)
+                .layer(DefaultBodyLimit::max(
+                    crate::profile::MAX_AVATAR_UPLOAD + 1024,
+                )),
+        )
+        .route("/avatar/{address}", get(profile_handlers::avatar))
         .route("/locale", get(wave::get_locale).post(wave::set_locale))
         .route("/locale/", get(wave::get_locale).post(wave::set_locale))
         .route(

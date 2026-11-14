@@ -292,16 +292,25 @@ pub(super) async fn directory(
         Ok(found) => found,
         Err(_) => return internal_error("cannot read the accounts"),
     };
-    let accounts = found
+    let found = found
         .into_iter()
         // The account that owns welcome waves is not someone to talk to.
         .filter(|(address, _)| !address.starts_with("welcome-bot@"))
         .take(limit)
-        .map(|(address, kind)| {
+        .collect::<Vec<_>>();
+    let addresses = found.iter().map(|(a, _)| a.clone()).collect::<Vec<_>>();
+    let shown = match state.profiles.show(&addresses).await {
+        Ok(shown) => shown,
+        Err(_) => return internal_error("cannot read the profiles"),
+    };
+    let accounts = found
+        .into_iter()
+        .zip(shown)
+        .map(|((address, kind), profile)| {
             json!({
                 "address": address,
-                "name": profile_name(&address),
-                "image_url": format!("/iniavatars/100x100/{address}"),
+                "name": profile.name,
+                "image_url": profile.image_url,
                 "kind": kind,
             })
         })
@@ -309,25 +318,9 @@ pub(super) async fn directory(
     json(StatusCode::OK, json!({ "accounts": accounts }))
 }
 
-/// The display name of an address: the capitalised parts of its name
-/// (`FetchProfilesService.SIMPLE_PROFILES_FETCHER`).
+/// The display name derived from an address.
 pub(super) fn profile_name(address: &str) -> String {
-    let name = address.split('@').next().unwrap_or("");
-    if name.is_empty() {
-        // The shared domain participant, `@example.com`.
-        return address.to_owned();
-    }
-    name.split(['.', '_'])
-        .filter(|fragment| !fragment.is_empty())
-        .map(|fragment| {
-            let mut chars = fragment.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    crate::profile::derived_name(address)
 }
 
 /// Most addresses one profile request may name.
@@ -351,16 +344,23 @@ pub(super) async fn profiles(
     let Some(addresses) = params.get("addresses") else {
         return failure(StatusCode::BAD_REQUEST, "Missing addresses parameter");
     };
-    let profiles = addresses
+    let addresses = addresses
         .split(',')
         .take(MAX_PROFILE_ADDRESSES)
-        .map(|address| FetchedProfile {
-            address: Some(address.to_owned()),
-            name: Some(profile_name(address)),
-            image_url: Some(format!("/iniavatars/100x100/{address}")),
-            profile_url: Some(String::new()),
-        })
+        .map(str::to_owned)
         .collect::<Vec<_>>();
+    let profiles = match state.profiles.show(&addresses).await {
+        Ok(shown) => shown
+            .into_iter()
+            .map(|profile| FetchedProfile {
+                address: Some(profile.address),
+                name: Some(profile.name),
+                image_url: Some(profile.image_url),
+                profile_url: Some(String::new()),
+            })
+            .collect::<Vec<_>>(),
+        Err(_) => return internal_error("cannot read the profiles"),
+    };
     let mut kinds = Vec::with_capacity(profiles.len());
     for profile in &profiles {
         let address = profile.address.as_deref().unwrap_or("");
@@ -401,11 +401,9 @@ pub(super) async fn profiles(
         .into_response()
 }
 
-/// The initials shown for an address: the first letters of the first two
-/// parts of its name.
-fn initials(address: &str) -> String {
-    profile_name(address)
-        .split(' ')
+/// The initials of a name: the first letters of its first two parts.
+fn initials(name: &str) -> String {
+    name.split(' ')
         .filter_map(|part| part.chars().find(|c| c.is_alphanumeric()))
         .take(2)
         .flat_map(char::to_uppercase)
@@ -414,7 +412,10 @@ fn initials(address: &str) -> String {
 
 /// `GET /iniavatars/<width>x<height>/<address>`: an avatar with the
 /// address's initials, as SVG. (The original serves one fixed JPEG.)
-pub(super) async fn initials_avatar(Path(path): Path<String>) -> Response {
+pub(super) async fn initials_avatar(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> Response {
     let (size, address) = path.split_once('/').unwrap_or(("100x100", path.as_str()));
     let (width, height) = size
         .split_once('x')
@@ -427,7 +428,12 @@ pub(super) async fn initials_avatar(Path(path): Path<String>) -> Response {
         hash.wrapping_mul(31).wrapping_add(byte.into())
     }) % 360;
     // Alphanumeric characters only, so there is nothing to escape.
-    let text = initials(&address);
+    // A name set by its owner gives the initials (its URL carries `?n=`).
+    let name = match state.profiles.store().get(&address).await {
+        Ok(Some(profile)) if !profile.name.is_empty() => profile.name,
+        _ => profile_name(&address),
+    };
+    let text = initials(&name);
     let font_size = width.min(height) * 2 / 5;
     let svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" \
@@ -530,12 +536,12 @@ mod tests {
 
     #[test]
     fn initials_are_safe_text() {
-        assert_eq!(initials("john.smith@example.com"), "JS");
-        assert_eq!(initials("alice@example.com"), "A");
-        assert_eq!(initials("a.b.c@example.com"), "AB");
-        assert_eq!(initials("<script>@example.com"), "S");
-        assert_eq!(initials("@example.com"), "E");
-        assert_eq!(initials("&<>\"@x"), "");
+        assert_eq!(initials(&profile_name("john.smith@example.com")), "JS");
+        assert_eq!(initials(&profile_name("alice@example.com")), "A");
+        assert_eq!(initials(&profile_name("a.b.c@example.com")), "AB");
+        assert_eq!(initials(&profile_name("<script>@example.com")), "S");
+        assert_eq!(initials(&profile_name("@example.com")), "E");
+        assert_eq!(initials(&profile_name("&<>\"@x")), "");
     }
 
     #[test]

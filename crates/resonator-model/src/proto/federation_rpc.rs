@@ -20,7 +20,8 @@
 //! are `lease`, `sync-summary`, `pair` (only on ALPN `resonator/pair/1`),
 //! `person-info`, `holdings` and `co-hosts`; 35 is `pair-code`, 36
 //! `push-targets`, 37 `attachment-copies` (answered by `ack`) and 38
-//! `own-attachments` (answered by tag 34). Tags up to 39 stay reserved.
+//! `own-attachments` (answered by tag 34); 39 is `fetch-profile`
+//! (answered by tag 35).
 //! Wavelets are named by their `wave://` URI, as in the original's
 //! federation messages.
 //!
@@ -734,6 +735,66 @@ wave_message!(FetchAttachmentResult {
     required: [file_name, size, creator, sha256, created_at],
 });
 
+/// `fetch-profile`: asks the domain of some addresses (its server, or a
+/// device of the person) for the names and avatars their owners set, or
+/// a device of a person asks another for the person's own. At most
+/// [`MAX_FETCH_PROFILE`] wants.
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct FetchProfile {
+    #[prost(message, repeated, tag = "1")]
+    pub want: Vec<ProfileWant>,
+}
+wave_message!(FetchProfile { repeated: [want] });
+
+/// Most wants in one [`FetchProfile`].
+pub const MAX_FETCH_PROFILE: usize = 50;
+
+/// One address asked for, and the version the asker has.
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct ProfileWant {
+    /// Required.
+    #[prost(string, optional, tag = "1")]
+    pub address: Option<String>,
+    /// The `updated_at` of the version the asker has; only newer ones are
+    /// sent.
+    #[prost(int64, optional, tag = "2")]
+    pub have_updated_at: Option<i64>,
+}
+wave_message!(ProfileWant {
+    required: [address]
+});
+
+/// The answer to a [`FetchProfile`]: the newer versions. Addresses the
+/// domain does not know, or has nothing newer of, are left out.
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct FetchProfileResult {
+    #[prost(message, repeated, tag = "1")]
+    pub profile: Vec<ProfileEntry>,
+}
+wave_message!(FetchProfileResult {
+    repeated: [profile]
+});
+
+/// A version of a profile.
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct ProfileEntry {
+    /// Required.
+    #[prost(string, optional, tag = "1")]
+    pub address: Option<String>,
+    /// Required. Empty: the name derived from the address.
+    #[prost(string, optional, tag = "2")]
+    pub name: Option<String>,
+    /// Required. Milliseconds since the epoch, set by the owner.
+    #[prost(int64, optional, tag = "3")]
+    pub updated_at: Option<i64>,
+    /// The avatar, a PNG; absent without one.
+    #[prost(bytes = "vec", optional, tag = "4")]
+    pub avatar: Option<Vec<u8>>,
+}
+wave_message!(ProfileEntry {
+    required: [address, name, updated_at]
+});
+
 /// A piece of the bytes following a response.
 #[derive(Clone, PartialEq, Eq, prost::Message)]
 pub struct Chunk {
@@ -1114,7 +1175,7 @@ pub struct FederationRequest {
     pub id: Option<String>,
     #[prost(
         oneof = "federation_request::Op",
-        tags = "10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38"
+        tags = "10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39"
     )]
     pub op: Option<federation_request::Op>,
 }
@@ -1168,6 +1229,8 @@ pub mod federation_request {
         AttachmentCopies(super::AttachmentCopies),
         #[prost(message, tag = "38")]
         OwnAttachments(super::OwnAttachments),
+        #[prost(message, tag = "39")]
+        FetchProfile(super::FetchProfile),
     }
 }
 
@@ -1200,6 +1263,7 @@ impl WaveMessage for FederationRequest {
             Some(federation_request::Op::PushTargets(m)) => m.check_initialized(),
             Some(federation_request::Op::AttachmentCopies(m)) => m.check_initialized(),
             Some(federation_request::Op::OwnAttachments(m)) => m.check_initialized(),
+            Some(federation_request::Op::FetchProfile(m)) => m.check_initialized(),
         }
     }
 }
@@ -1212,7 +1276,7 @@ pub struct FederationResponse {
     pub id: Option<String>,
     #[prost(
         oneof = "federation_response::Result",
-        tags = "2, 10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34"
+        tags = "2, 10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35"
     )]
     pub result: Option<federation_response::Result>,
 }
@@ -1259,6 +1323,8 @@ pub mod federation_response {
         PairCode(super::PairCodeResult),
         #[prost(message, tag = "34")]
         OwnAttachments(super::OwnAttachmentsResult),
+        #[prost(message, tag = "35")]
+        FetchProfile(super::FetchProfileResult),
     }
 }
 
@@ -1288,6 +1354,7 @@ impl WaveMessage for FederationResponse {
             Some(federation_response::Result::Holdings(m)) => m.check_initialized(),
             Some(federation_response::Result::PairCode(m)) => m.check_initialized(),
             Some(federation_response::Result::OwnAttachments(m)) => m.check_initialized(),
+            Some(federation_response::Result::FetchProfile(m)) => m.check_initialized(),
         }
     }
 }

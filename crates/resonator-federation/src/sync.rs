@@ -279,7 +279,11 @@ pub(crate) async fn run(ctx: Arc<Context>, cancel: CancellationToken) {
             }
             match result {
                 // Attachments of the person this device lacks.
-                Ok(_) => crate::copies::catch_up_with(&ctx, device),
+                Ok(_) => {
+                    crate::copies::catch_up_with(&ctx, device);
+                    // The person's name and avatar, as set on that device.
+                    crate::profiles::sync_with(&ctx, device).await;
+                }
                 Err(error) => {
                     tracing::trace!(peer = %device.fmt_short(), %error, "no sync with a device");
                 }

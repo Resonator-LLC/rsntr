@@ -66,10 +66,14 @@ function blipHeader(ui: WaveUi, blipId: string): BlipHeader {
     return { avatar: null, names: "anon", time: 0 };
   }
   const contributors = meta.contributors.length > 0 ? meta.contributors : [meta.author];
-  const names = contributors
-    .slice(0, MAX_CONTRIBUTORS)
-    .map((address) => firstName(ui.profiles.get(address).name))
-    .join(", ");
+  // One author: the whole name they chose; several: first names.
+  const names =
+    contributors.length === 1
+      ? ui.profiles.get(contributors[0]!).name
+      : contributors
+          .slice(0, MAX_CONTRIBUTORS)
+          .map((address) => firstName(ui.profiles.get(address).name))
+          .join(", ");
   return { avatar: contributors[0] ?? null, names: names === "" ? "anon" : names, time: meta.lastModifiedTime };
 }
 

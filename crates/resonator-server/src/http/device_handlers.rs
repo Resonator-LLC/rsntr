@@ -225,15 +225,24 @@ pub(super) async fn list(
         Ok(found) => found,
         Err(error) => return internal_error(error),
     };
-    let accounts = found
+    let found = found
         .into_iter()
         .filter(|contact| !contact.address.starts_with("welcome-bot@"))
         .take(limit)
-        .map(|contact| {
+        .collect::<Vec<_>>();
+    let addresses = found.iter().map(|c| c.address.clone()).collect::<Vec<_>>();
+    let shown = match state.profiles.show(&addresses).await {
+        Ok(shown) => shown,
+        Err(error) => return internal_error(error),
+    };
+    let accounts = found
+        .into_iter()
+        .zip(shown)
+        .map(|(contact, profile)| {
             json!({
                 "address": contact.address,
-                "name": super::wave_handlers::profile_name(&contact.address),
-                "image_url": format!("/iniavatars/100x100/{}", contact.address),
+                "name": profile.name,
+                "image_url": profile.image_url,
                 "kind": contact.kind,
                 "added": contact.added,
             })
@@ -315,7 +324,11 @@ pub(super) async fn add(State(state): State<AppState>, context: Context, body: B
     };
     let mut body = json!({
         "address": address.address(),
-        "name": super::wave_handlers::profile_name(address.address()),
+        "name": match state.profiles.show(&[address.address().to_owned()]).await {
+            Ok(shown) => shown.into_iter().next().map(|p| p.name),
+            Err(_) => None,
+        }
+        .unwrap_or_else(|| crate::profile::derived_name(address.address())),
         "added": added,
     });
     if let Some(probe) = probe {

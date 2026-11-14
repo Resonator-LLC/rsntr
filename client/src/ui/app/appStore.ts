@@ -35,6 +35,8 @@ export interface AppTimers {
   clearTimeout(handle: unknown): void;
 }
 
+const PROFILE_REFRESH_MS = 15 * 60 * 1000;
+
 const DEFAULT_TIMERS: AppTimers = {
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -146,6 +148,7 @@ export class AppStore {
   private readonly clock: () => number;
   private readonly subscriptions: Unsubscribe[] = [];
   private savedTimer: unknown = null;
+  private profilesTimer: unknown = null;
   private lastForcedEnd = Number.NEGATIVE_INFINITY;
   private disposed = false;
   /** The connection was up once: a later "connected" is a reconnect. */
@@ -160,6 +163,7 @@ export class AppStore {
     this.timers = options.timers ?? DEFAULT_TIMERS;
     this.clock = options.clock ?? Date.now;
     this.route.value = parseFragment(this.location.fragment());
+    this.refreshProfilesLater();
     this.settingsOpen.value = isSettingsFragment(this.location.fragment());
     this.subscriptions.push(
       this.location.onChange(() => this.onLocationChanged()),
@@ -168,6 +172,9 @@ export class AppStore {
         if (state === "connected") {
           if (this.wasConnected) {
             this.update?.onReconnected();
+            // Back from sleep or the background: names and avatars may
+            // have changed meanwhile.
+            this.profiles.refreshAll();
           }
           this.wasConnected = true;
         }
@@ -187,6 +194,19 @@ export class AppStore {
     if (this.savedTimer !== null) {
       this.timers.clearTimeout(this.savedTimer);
     }
+    if (this.profilesTimer !== null) {
+      this.timers.clearTimeout(this.profilesTimer);
+    }
+  }
+
+  /** Fetches the names and avatars shown again every 15 minutes. */
+  private refreshProfilesLater(): void {
+    this.profilesTimer = this.timers.setTimeout(() => {
+      if (!this.disposed) {
+        this.profiles.refreshAll();
+        this.refreshProfilesLater();
+      }
+    }, PROFILE_REFRESH_MS);
   }
 
   // ---- session ----

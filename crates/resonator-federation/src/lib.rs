@@ -62,6 +62,7 @@ pub mod outbox;
 pub mod pair_code;
 pub mod pairing;
 pub mod person;
+mod profiles;
 pub mod push;
 pub mod recovery;
 pub mod remote;

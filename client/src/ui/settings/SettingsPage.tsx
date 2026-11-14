@@ -14,6 +14,7 @@ import { copyText } from "../app/clipboard";
 
 import { codeGroups, codeHint, completeCodeWord, suggestCodeWords } from "../../net/pairCode";
 import type { JoinStage, PersonDevice, PersonOverview } from "../../net/person";
+import type { MyProfile } from "../../net/http";
 import { BackIcon } from "../wave/icons";
 import {
   type SettingsApi,
@@ -42,6 +43,10 @@ export interface SettingsPageProps {
   readonly prefs?: PrefsStore;
   /** Opens the list of keyboard shortcuts. */
   readonly onShortcuts?: () => void;
+  /** The user's name and avatar; the editor shows with it. */
+  readonly profile?: ProfileEditorApi;
+  /** Told about a changed own profile (to show it everywhere at once). */
+  readonly onProfileChanged?: (profile: MyProfile) => void;
   /** For tests. */
   readonly store?: SettingsStore;
   readonly now?: () => number;
@@ -580,6 +585,152 @@ function Contacts({ store }: { readonly store: SettingsStore }) {
   );
 }
 
+/** The calls of the name and avatar editor (`WaveHttpApi` has them). */
+export interface ProfileEditorApi {
+  myProfile(): Promise<MyProfile>;
+  setMyName(name: string): Promise<MyProfile>;
+  setMyAvatar(image: Blob): Promise<MyProfile>;
+  removeMyAvatar(): Promise<MyProfile>;
+}
+
+/** Largest picture accepted (the server's limit). */
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
+/** The name and photo others see next to what the user writes. */
+function ProfileEditor(props: { readonly api: ProfileEditorApi; readonly onChanged?: (profile: MyProfile) => void }) {
+  const { api, onChanged } = props;
+  const [profile, setProfile] = useState<MyProfile | null>(null);
+  const [draft, setDraft] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let live = true;
+    api.myProfile().then(
+      (loaded) => {
+        if (live) {
+          setProfile(loaded);
+          setDraft(loaded.customName ? loaded.name : "");
+        }
+      },
+      () => live && setStatus("Could not load your name and photo."),
+    );
+    return () => {
+      live = false;
+    };
+  }, [api]);
+  const run = async (change: () => Promise<MyProfile>, done: string): Promise<void> => {
+    setBusy(true);
+    setStatus("");
+    try {
+      const changed = await change();
+      setProfile(changed);
+      setDraft(changed.customName ? changed.name : "");
+      onChanged?.(changed);
+      setStatus(done);
+    } catch (error) {
+      setStatus(error instanceof Error && error.message !== "" ? error.message : "That did not work. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = (event: Event): void => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (file === undefined) {
+      return;
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      setStatus("That picture is larger than 5 MB.");
+      return;
+    }
+    void run(() => api.setMyAvatar(file), "Photo changed.");
+  };
+  const unchanged = profile !== null && draft.trim() === (profile.customName ? profile.name : "");
+  return (
+    <div class="settings-profile" data-testid="profile-editor">
+      <div class="settings-row settings-profile-photo">
+        {profile !== null ? (
+          <img class="avatar avatar-xl" src={profile.imageUrl} alt="" width={64} height={64} />
+        ) : (
+          <span class="avatar avatar-xl" aria-hidden="true" />
+        )}
+        <div class="settings-row-main">
+          <span>Photo</span>
+          <span class="settings-row-sub">Shown next to what you write.</span>
+        </div>
+        <span class="settings-row-actions">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            class="visually-hidden"
+            tabIndex={-1}
+            aria-hidden="true"
+            data-testid="photo-input"
+            onChange={pick}
+          />
+          <button
+            type="button"
+            class="btn"
+            data-action="change-photo"
+            disabled={busy || profile === null}
+            onClick={() => fileRef.current?.click()}
+          >
+            {profile?.hasAvatar === true ? "Change photo" : "Add photo"}
+          </button>
+          {profile?.hasAvatar === true ? (
+            <button
+              type="button"
+              class="btn btn-ghost"
+              data-action="remove-photo"
+              disabled={busy}
+              onClick={() => void run(() => api.removeMyAvatar(), "Photo removed.")}
+            >
+              Remove
+            </button>
+          ) : null}
+        </span>
+      </div>
+      <form
+        class="settings-profile-name"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run(() => api.setMyName(draft), draft.trim() === "" ? "Name reset." : "Name saved.");
+        }}
+      >
+        <span class="settings-profile-label">
+          <label for="settings-name">Name</label>
+          <span class="settings-profile-hint" id="settings-name-hint">
+            Others see it with your address. Leave it empty to use the name from your address.
+          </span>
+        </span>
+        <span class="settings-inline-form">
+          <input
+            id="settings-name"
+            class="input"
+            type="text"
+            maxLength={64}
+            autoComplete="name"
+            aria-describedby="settings-name-hint"
+            placeholder={profile !== null && !profile.customName ? profile.name : ""}
+            value={draft}
+            disabled={profile === null}
+            onInput={(event) => setDraft((event.currentTarget as HTMLInputElement).value)}
+          />
+          <button type="submit" class="btn btn-primary" data-action="save-name" disabled={busy || profile === null || unchanged}>
+            Save
+          </button>
+        </span>
+      </form>
+      <p class="settings-profile-status" role="status" data-testid="profile-status">
+        {status}
+      </p>
+    </div>
+  );
+}
+
 /** The whole address, wrapped as needed, selectable, with a Copy button. */
 function Address({ address }: { readonly address: string }) {
   const [copied, setCopied] = useState<"yes" | "failed" | null>(null);
@@ -724,6 +875,7 @@ export function SettingsPage(props: SettingsPageProps) {
     body =
       props.address !== undefined && props.address !== "" ? (
         <Section title="You" id="you">
+          {props.profile !== undefined ? <ProfileEditor api={props.profile} onChanged={props.onProfileChanged} /> : null}
           <Address address={props.address} />
         </Section>
       ) : null;
@@ -750,6 +902,7 @@ export function SettingsPage(props: SettingsPageProps) {
       <>
         {props.address !== undefined && props.address !== "" ? (
           <Section title="You" id="you">
+            {props.profile !== undefined ? <ProfileEditor api={props.profile} onChanged={props.onProfileChanged} /> : null}
             <Address address={props.address} />
           </Section>
         ) : null}
@@ -765,6 +918,7 @@ export function SettingsPage(props: SettingsPageProps) {
     body = (
       <>
         <Section title="You" id="you">
+          {props.profile !== undefined ? <ProfileEditor api={props.profile} onChanged={props.onProfileChanged} /> : null}
           {props.address !== undefined && props.address !== "" ? <Address address={props.address} /> : null}
           <div class="settings-row">
             <div class="settings-row-main">

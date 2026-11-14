@@ -15,6 +15,7 @@ mod epoch_store;
 mod federation_store;
 mod migrations;
 mod pending_store;
+mod profile_store;
 mod robot_store;
 
 use std::path::{Path, PathBuf};
@@ -39,6 +40,7 @@ pub use federation_store::{
 };
 pub use migrations::SCHEMA_VERSION;
 pub use pending_store::{PendingStore, PendingSubmit};
+pub use profile_store::{ProfileRecord, ProfileStore, StoredProfile};
 pub use robot_store::{AgentTrigger, AgentUsage, RobotRegistration, RobotStore, TriggerState};
 
 /// Failure of the storage layer (`PersistenceException` in the original).
@@ -332,6 +334,11 @@ impl Database {
     /// The contacts added by hand (device mode).
     pub fn contact_store(&self) -> ContactStore {
         ContactStore::new(self.clone())
+    }
+
+    /// Names and avatars: of this domain's accounts, and fetched copies.
+    pub fn profile_store(&self) -> ProfileStore {
+        ProfileStore::new(self.clone())
     }
 
     /// Number of writes queued or running; at most

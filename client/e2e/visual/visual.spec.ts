@@ -58,8 +58,12 @@ test.afterAll(async () => {
   await servers?.stop();
 });
 
-/** Times change from run to run; they are covered. */
-const masks = (page: Page) => [page.locator("time"), page.locator(".digest-date, .blip-time")];
+/** Times change from run to run: they are covered, and get one width
+ *  (a later hour is wider), so the text beside them does not move. */
+const shot = (page: Page) => ({
+  mask: [page.locator("time"), page.locator(".digest-date, .blip-time")],
+  style: ".digest-date, .blip-time { display: inline-block; width: 4.5em; overflow: hidden; white-space: nowrap; }",
+});
 
 async function noSidewaysScroll(page: Page, where: string): Promise<void> {
   const overflow = await page.evaluate(() => {
@@ -108,18 +112,25 @@ for (const [size, { width, height, mobile }] of Object.entries(SIZES)) {
         await signIn(page, anna);
         await expect(page.locator(".digest")).toHaveCount(1);
         await expect(page.locator(".topbar-net")).toHaveText(/Online/);
-        await expect(page).toHaveScreenshot(`${name}-list.png`, { mask: masks(page) });
+        await expect(page).toHaveScreenshot(`${name}-list.png`, shot(page));
         await noSidewaysScroll(page, "list");
 
         await page.locator(".digest-link").first().click();
         await expect(page.locator(".blip-main")).toHaveCount(3);
-        await expect(page).toHaveScreenshot(`${name}-wave.png`, { mask: masks(page) });
+        await expect(page).toHaveScreenshot(`${name}-wave.png`, shot(page));
         await noSidewaysScroll(page, "wave");
 
         await page.locator(".topbar-net").click();
         await expect(page.locator("[data-section=accessibility]")).toBeVisible();
-        await expect(page).toHaveScreenshot(`${name}-settings.png`, { mask: masks(page) });
+        // The name and photo editor, loaded (the initials picture too).
+        await expect(page.locator("[data-action=change-photo]")).toBeEnabled();
+        await expect
+          .poll(() => page.locator("img.avatar-xl").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
+          .toBe(true);
+        await expect(page).toHaveScreenshot(`${name}-settings.png`, shot(page));
         await noSidewaysScroll(page, "settings");
+        await page.locator("[data-section=you]").scrollIntoViewIfNeeded();
+        await expect(page).toHaveScreenshot(`${name}-you.png`, shot(page));
         await context.close();
       });
     }

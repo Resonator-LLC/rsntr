@@ -408,6 +408,90 @@ describe("SettingsPage", () => {
     expect(root.querySelector("[data-action=connect-now]")).toBeNull();
   });
 
+  test("You: the name and photo others see, saved and told to the rest of the app", async () => {
+    const calls: string[] = [];
+    let current = { address: "ann@example.com", name: "Ann", customName: false, imageUrl: "/ini/ann", hasAvatar: false };
+    const api = {
+      myProfile: async () => current,
+      setMyName: async (name: string) => {
+        calls.push(`name ${name}`);
+        if (name.includes("\u202e")) {
+          throw new Error("A name cannot hold control or text-direction characters.");
+        }
+        current = { ...current, name: name.trim() === "" ? "Ann" : name.trim(), customName: name.trim() !== "" };
+        return current;
+      },
+      setMyAvatar: async (image: Blob) => {
+        calls.push(`avatar ${image.size}`);
+        current = { ...current, imageUrl: "/avatar/ann?v=1", hasAvatar: true };
+        return current;
+      },
+      removeMyAvatar: async () => {
+        calls.push("remove");
+        current = { ...current, imageUrl: "/ini/ann", hasAvatar: false };
+        return current;
+      },
+    };
+    const told: string[] = [];
+    root = document.createElement("div");
+    document.body.append(root);
+    await act(async () =>
+      render(
+        <SettingsPage
+          api={new FakeNode()}
+          onClose={() => {}}
+          device={false}
+          address="ann@example.com"
+          profile={api}
+          onProfileChanged={(p) => told.push(`${p.name} ${p.imageUrl}`)}
+        />,
+        root!,
+      ),
+    );
+    await act(flush);
+    const editor = root.querySelector("[data-testid=profile-editor]")!;
+    const input = editor.querySelector<HTMLInputElement>("#settings-name")!;
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("Ann");
+    expect(editor.querySelector<HTMLButtonElement>("[data-action=save-name]")!.disabled).toBe(true);
+    expect(editor.querySelector("[data-action=remove-photo]")).toBeNull();
+
+    const type = async (text: string) => {
+      await act(async () => {
+        input.value = text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type("Ann Lee");
+    await act(async () => {
+      editor.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await act(flush);
+    expect(calls).toEqual(["name Ann Lee"]);
+    expect(told).toEqual(["Ann Lee /ini/ann"]);
+    expect(editor.querySelector("[data-testid=profile-status]")!.textContent).toBe("Name saved.");
+
+    await type("\u202eevil");
+    await act(async () => {
+      editor.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await act(flush);
+    expect(editor.querySelector("[data-testid=profile-status]")!.textContent).toContain("text-direction");
+    expect(told).toHaveLength(1);
+
+    const file = editor.querySelector<HTMLInputElement>("[data-testid=photo-input]")!;
+    Object.defineProperty(file, "files", { value: [new File([new Uint8Array(10)], "me.png", { type: "image/png" })], configurable: true });
+    await act(async () => {
+      file.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(flush);
+    expect(calls.at(-1)).toBe("avatar 10");
+    expect(editor.querySelector<HTMLImageElement>("img.avatar-xl")!.getAttribute("src")).toBe("/avatar/ann?v=1");
+    await click(editor.querySelector("[data-action=remove-photo]"));
+    expect(calls.at(-1)).toBe("remove");
+    expect(editor.querySelector("[data-action=remove-photo]")).toBeNull();
+  });
+
   test("Accessibility: the choices change the preferences and the attributes of <html>", async () => {
     const prefs = new PrefsStore(null, null);
     let shortcuts = 0;

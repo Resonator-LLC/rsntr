@@ -32,6 +32,7 @@ pub mod config;
 pub mod frontend;
 pub mod http;
 pub mod metrics;
+pub mod profile;
 pub mod rpc;
 pub mod search;
 pub mod storage;

@@ -468,6 +468,26 @@ CREATE TABLE push_targets (
 ) WITHOUT ROWID;
 "#,
     },
+    Migration {
+        name: "profiles",
+        sql: r#"
+-- The name and avatar people set for themselves. `own` rows belong to
+-- accounts of this domain (set here, or by another device of the same
+-- person); the others are copies fetched from the domain of the address
+-- (`fetched_at`, for refreshing). `avatar` is a 256x256 PNG made here
+-- from the upload or checked when fetched, `avatar_sha256` its hash.
+-- `updated_at` (ms, set by the owner) decides which version wins.
+CREATE TABLE profiles (
+    address       TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    avatar        BLOB,
+    avatar_sha256 BLOB,
+    updated_at    INTEGER NOT NULL,
+    own           INTEGER NOT NULL,
+    fetched_at    INTEGER NOT NULL
+) WITHOUT ROWID;
+"#,
+    },
 ];
 
 const INITIAL: Migration = Migration {

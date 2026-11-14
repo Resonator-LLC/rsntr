@@ -31,15 +31,16 @@ function Shell({ store }: { store: AppStore }) {
         </div>
       ) : null}
       {settings ? (
-        <div class="app-body app-body-settings">
+        <main class="app-body app-body-settings" id="main">
           <SettingsPage
             api={store.client.api.person}
             address={store.session.value?.address ?? ""}
             onClose={store.closeSettings}
           />
-        </div>
+        </main>
       ) : (
-      <div class={`app-body ${waveOpen ? "app-body-wave" : "app-body-list"}`}>
+      // One main landmark around both panels: on phones only one shows.
+      <main class={`app-body ${waveOpen ? "app-body-wave" : "app-body-list"}`} id="main">
         <div class="app-search">
           <SearchPanel
             client={store.client}
@@ -50,7 +51,7 @@ function Shell({ store }: { store: AppStore }) {
             refreshToken={store.refreshToken.value}
           />
         </div>
-        <main class="app-main">
+        <div class="app-main">
           <WavePanel
             client={store.client}
             profiles={store.profiles}
@@ -61,8 +62,8 @@ function Shell({ store }: { store: AppStore }) {
             onNavigate={store.navigate}
             linkFor={store.linkFor}
           />
-        </main>
-      </div>
+        </div>
+      </main>
       )}
     </div>
   );

@@ -42,6 +42,10 @@
   border-radius: var(--radius-1);
   padding: 2px var(--sp-1);
 }
+/* The page's one h1, styled as the brand. */
+.topbar-product {
+  font: inherit;
+}
 
 .topbar-status {
   display: flex;

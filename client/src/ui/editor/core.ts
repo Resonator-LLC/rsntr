@@ -942,6 +942,20 @@ export class EditorCore {
     });
   }
 
+  /** Whether Tab (or Shift-Tab) indents here. It does in lists and on
+   * indented lines; elsewhere Tab leaves the editor, so the keyboard is
+   * never trapped in a message (WCAG 2.1.2). The toolbar still indents
+   * anything. */
+  tabIndents(delta: 1 | -1): boolean {
+    const lines = this.selectedLines();
+    if (lines.length === 0) {
+      return false;
+    }
+    return delta > 0
+      ? lines.every((l) => l.type === "li" || l.indent > 0)
+      : lines.some((l) => l.indent > 0);
+  }
+
   /** Tab and Shift-Tab. */
   indent(delta: 1 | -1): boolean {
     return this.act("other", () => {

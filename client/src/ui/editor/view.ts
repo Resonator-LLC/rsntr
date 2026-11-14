@@ -649,8 +649,11 @@ export class EditorView implements BlipView {
       this.runAction(() => this.core.exec(command));
     };
     if (key === "Tab" && !mod && !e.altKey) {
-      e.preventDefault();
       this.syncFromDom();
+      if (!this.core.tabIndents(e.shiftKey ? -1 : 1)) {
+        return;
+      }
+      e.preventDefault();
       this.runAction(() => this.core.indent(e.shiftKey ? -1 : 1));
       return;
     }

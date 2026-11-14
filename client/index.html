@@ -2,13 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- An app, not a document: no zoom (iOS zooms into focused text under
-         16px and then leaves the page panned sideways), the whole screen
+    <!-- Pinch-zoom stays on for people who need it (WCAG 1.4.4). Editable
+         text is at least 16px on phones, so iOS does not zoom into a field
+         on focus and leave the page panned sideways. The whole screen
          under the notch and home bar (see the safe-area insets in the CSS),
          and the layout shrinks above the on-screen keyboard. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#1f4f9e" media="(prefers-color-scheme: light)" />

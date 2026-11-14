@@ -33,7 +33,7 @@ export function TopBar({ store }: { store: AppStore }) {
         store.closeWave();
       }}>
         <WaveMark />
-        <span class="topbar-product">Resonator</span>
+        <h1 class="topbar-product">Resonator</h1>
       </a>
       <div class="topbar-status">
         <span class={`topbar-saved ${unsaved ? "is-unsaved" : "is-saved"}`} title="Whether your changes have reached the server">

@@ -261,11 +261,13 @@ test("390x844: @mention a person from the participants, by touch", async ({ brow
   expect(problems).toEqual([]);
 });
 
-test("390x844: the viewport is an app's: no zoom, safe areas, a manifest", async ({ browser }) => {
+test("390x844: the viewport is an app's, pinch-zoom allowed: safe areas, a manifest", async ({ browser }) => {
   const { page } = await phone(browser, "390x844");
   await page.goto(servers.baseUrl);
   const viewport = await page.locator('meta[name="viewport"]').getAttribute("content");
-  expect(viewport).toContain("maximum-scale=1");
+  // Pinch-zoom stays on (WCAG 1.4.4); fields of 16px keep iOS from zooming on focus.
+  expect(viewport).not.toContain("maximum-scale");
+  expect(viewport).not.toContain("user-scalable=no");
   expect(viewport).toContain("viewport-fit=cover");
   const manifest = await page.locator('link[rel="manifest"]').getAttribute("href");
   expect(manifest).not.toBeNull();

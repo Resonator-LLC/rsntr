@@ -539,6 +539,8 @@ function ViewToolbar() {
         type="button"
         class="btn btn-ghost wave-tool"
         data-action={archived ? "to-inbox" : "to-archive"}
+        aria-label={archived ? "Move to the inbox" : "Move to the archive"}
+        title={archived ? "Move to the inbox" : "Move to the archive"}
         onClick={() => store.setArchived(!archived)}
       >
         {archived ? <InboxIcon /> : <ArchiveIcon />}

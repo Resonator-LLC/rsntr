@@ -15,6 +15,7 @@ import type { ProfileStore } from "../profiles/profileStore";
 import { MESSAGES, authErrorMessage, normaliseAddress } from "./authMessages";
 import type { UpdateCheck } from "./updateCheck";
 import { EMPTY_ROUTE, formatFragment, parseFragment, sameRoute, urlForRoute, waveRoute } from "./router";
+import { holdTyping } from "./typeAhead";
 
 /** The part of the browser the shell's routing uses. */
 export interface BrowserLocation {
@@ -455,9 +456,11 @@ export class AppStore {
     }
     this.creatingWave.value = true;
     this.problem.value = null;
+    const dropTyping = holdTyping();
     try {
       const { wave } = await this.client.createWave();
       if (this.phase.value !== "signedIn") {
+        dropTyping();
         return;
       }
       const waveId = wave.waveId.serialise();
@@ -468,6 +471,7 @@ export class AppStore {
       // The original searches again half a second after creating a wave.
       this.waveChanged();
     } catch {
+      dropTyping();
       if (this.phase.value === "signedIn") {
         this.problem.value =
           this.connection.value === "connected"

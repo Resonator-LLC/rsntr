@@ -16,7 +16,7 @@
 
 import { memo } from "preact/compat";
 import { createPortal } from "preact/compat";
-import { useContext, useEffect, useRef } from "preact/hooks";
+import { useContext, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 
 import { Avatar } from "../profiles/Avatar";
 import { firstName } from "../profiles/profileStore";
@@ -146,8 +146,10 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
     };
   }, [vm]);
 
+  // Layout effects: the editor of a new reply takes focus in the same task
+  // as the click or key that made it, so no typed character is lost.
   const needView = vm?.needView.value ?? false;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (needView) {
       activate();
     }
@@ -173,7 +175,7 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
   }, [focusRequest]);
 
   const editing = vm?.editing.value ?? false;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (view === null) {
       return;
@@ -331,24 +333,29 @@ function ReplyIndicator({ store, id }: { store: ConversationStore; id: string })
   if (editing !== null && blips[blips.length - 1] === editing) {
     return null;
   }
+  // A list item of its own, as a list holds only list items (WCAG 1.3.1).
   if (id === ROOT_THREAD) {
     return (
-      <button type="button" class="reply-box" onClick={() => store.continueThread(id)}>
-        Click here to reply
-      </button>
+      <div class="thread-end" role="listitem">
+        <button type="button" class="reply-box" onClick={() => store.continueThread(id)}>
+          Click here to reply
+        </button>
+      </div>
     );
   }
   return (
-    <button
-      type="button"
-      class="continuation"
-      aria-label="Continue this thread"
-      title="Continue this thread"
-      onClick={() => store.continueThread(id)}
-    >
-      <PlusIcon />
-      <span class="continuation-bar" />
-    </button>
+    <div class="thread-end" role="listitem">
+      <button
+        type="button"
+        class="continuation"
+        aria-label="Continue this thread"
+        title="Continue this thread"
+        onClick={() => store.continueThread(id)}
+      >
+        <PlusIcon />
+        <span class="continuation-bar" />
+      </button>
+    </div>
   );
 }
 

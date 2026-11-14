@@ -203,8 +203,12 @@
   transition: border-color var(--t-fast), background var(--t-fast);
 }
 .thread-root > .blip + .blip > .blip-main,
-.thread-root > .blip + .reply-box {
+.thread-root > .blip + .thread-end > .reply-box {
   margin-top: var(--sp-1);
+}
+/* The list item around the reply box and the continuation: no box. */
+.thread-end {
+  display: contents;
 }
 .thread-root > .blip:not(:first-child) {
   border-top: 1px solid var(--c-border);

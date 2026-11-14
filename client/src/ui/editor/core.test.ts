@@ -288,6 +288,21 @@ describe("Tab", () => {
     f.core.indent(-1);
     expect(f.body()).toBe('<line t="li"/>a<line/>b<line/>c');
   });
+
+  it("indents by Tab only in lists and indented lines", () => {
+    const f = coreFixture('<line t="li"/>a<line/>b<line i="1"/>c');
+    f.select(3, 3);
+    expect(f.core.tabIndents(1)).toBe(true);
+    expect(f.core.tabIndents(-1)).toBe(false);
+    f.select(6, 6);
+    expect(f.core.tabIndents(1)).toBe(false);
+    expect(f.core.tabIndents(-1)).toBe(false);
+    f.select(9, 9);
+    expect(f.core.tabIndents(1)).toBe(true);
+    expect(f.core.tabIndents(-1)).toBe(true);
+    f.select(3, 6);
+    expect(f.core.tabIndents(1)).toBe(false);
+  });
 });
 
 describe("commands", () => {

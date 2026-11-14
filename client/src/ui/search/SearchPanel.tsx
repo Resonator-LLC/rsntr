@@ -260,7 +260,8 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
   };
 
   return (
-    <section class="search" aria-label="Search">
+    <section class="search" aria-labelledby="search-heading">
+      <h2 class="visually-hidden" id="search-heading">Waves</h2>
       <div class="search-head">
         <form class="search-form" role="search" onSubmit={submit}>
           <label class="search-box">

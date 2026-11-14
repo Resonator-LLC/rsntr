@@ -1,5 +1,6 @@
-// The settings of a device node (person mode), laid out as an app's
-// settings screen: this person and device, the devices (revoke), hosting
+// The settings, laid out as an app's settings screen: the connection; on
+// any server the address and contacts; on a device node (person mode) also
+// this person and device, the devices (revoke), hosting
 // (lease, anchor), pairing (a short code, a QR code and link) and joining
 // by a code or link, the
 // recovery phrase (admin devices, behind a confirmation) and recovering
@@ -27,6 +28,15 @@ export interface SettingsPageProps {
   readonly onClose: () => void;
   /** The signed-in address (`name@<person domain>`), shown whole with Copy. */
   readonly address?: string;
+  /** False: an account on a server, not a device node, so there are no
+   *  device or contact settings to load (default true). */
+  readonly device?: boolean;
+  /** The connection to the server, with a way to try again now. */
+  readonly connection?: {
+    readonly status: "online" | "offline" | "connecting";
+    readonly text: string;
+    readonly connectNow: () => void;
+  };
   /** For tests. */
   readonly store?: SettingsStore;
   readonly now?: () => number;
@@ -588,24 +598,53 @@ function Address({ address }: { readonly address: string }) {
   );
 }
 
+function Connection({ connection }: { readonly connection: NonNullable<SettingsPageProps["connection"]> }) {
+  return (
+    <div class="settings-row">
+      <div class="settings-row-main">
+        <span>Server</span>
+        <span class={`settings-row-sub settings-net is-${connection.status}`} data-testid="connection">
+          <span class="settings-net-dot" aria-hidden="true" />
+          {connection.text}
+        </span>
+      </div>
+      {connection.status !== "online" ? (
+        <button type="button" class="btn" data-action="connect-now" onClick={connection.connectNow}>
+          Connect now
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function SettingsPage(props: SettingsPageProps) {
   const store = useMemo(() => props.store ?? new SettingsStore(props.api), [props.store, props.api]);
   const [now, setNow] = useState(() => (props.now ?? Date.now)());
+  const device = props.device ?? true;
   useEffect(() => {
-    void store.load();
+    if (device) {
+      void store.load();
+    }
     const timer = setInterval(() => setNow((props.now ?? Date.now)()), 30_000);
     return () => {
       clearInterval(timer);
       store.dispose();
     };
-  }, [store]);
+  }, [store, device]);
 
   const overview = store.overview.value;
   const message = store.message.value;
   const restart = store.restart.value;
 
   let body;
-  if (restart !== null) {
+  if (!device) {
+    body =
+      props.address !== undefined && props.address !== "" ? (
+        <Section title="You" id="you">
+          <Address address={props.address} />
+        </Section>
+      ) : null;
+  } else if (restart !== null) {
     body = (
       <div class="settings-restart notice" role="status">
         <p>
@@ -626,7 +665,11 @@ export function SettingsPage(props: SettingsPageProps) {
   } else if (overview === null) {
     body = (
       <>
-        <p class="settings-help">This server is not a device of a person: there are no device settings here.</p>
+        {props.address !== undefined && props.address !== "" ? (
+          <Section title="You" id="you">
+            <Address address={props.address} />
+          </Section>
+        ) : null}
         <Section title="Contacts" id="contacts">
           <Contacts store={store} />
         </Section>
@@ -712,6 +755,11 @@ export function SettingsPage(props: SettingsPageProps) {
                 Dismiss
               </button>
             </div>
+          ) : null}
+          {props.connection !== undefined ? (
+            <Section title="Connection" id="connection">
+              <Connection connection={props.connection} />
+            </Section>
           ) : null}
           {body}
         </div>

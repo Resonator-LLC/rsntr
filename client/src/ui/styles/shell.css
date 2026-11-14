@@ -81,11 +81,19 @@
   color: inherit;
   font-size: var(--fs-sm);
 }
+/* The connection, and the way into Settings. */
 button.topbar-net {
-  cursor: pointer;
+  gap: var(--sp-2);
+  min-height: 2rem;
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border: 1px solid var(--c-topbar-text-2);
   background: var(--c-topbar-control);
+  color: var(--c-topbar-text);
+  white-space: nowrap;
+  cursor: pointer;
 }
-button.topbar-net:hover {
+button.topbar-net:hover,
+button.topbar-net[aria-pressed="true"] {
   background: var(--c-topbar-control-hover);
 }
 
@@ -115,14 +123,6 @@ button.topbar-net:hover {
 }
 .topbar-net.is-connecting .topbar-net-dot {
   background: var(--c-topbar-warn);
-}
-
-.topbar-user {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-  font-size: var(--fs-sm);
 }
 
 .topbar-signout {
@@ -399,8 +399,16 @@ button.topbar-net:hover {
   height: 3rem;
 }
 
-/* Very large text on a phone: the mark stands for the name. */
+/* Very large text on a phone: the mark stands for the name, the status
+   for the settings gear. */
 @container app (max-width: 18em) {
+  .topbar,
+  .topbar-status {
+    gap: var(--sp-1);
+  }
+  .topbar-net .icon {
+    display: none;
+  }
   .topbar-product {
     position: absolute;
     width: 1px;

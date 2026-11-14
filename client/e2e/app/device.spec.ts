@@ -89,11 +89,15 @@ test("the token opens the inbox signed in; a wave with an @mention from the cont
   // The token is gone from the address bar: the server redirected to `/`.
   expect(new URL(page.url()).search).toBe("");
   await expect(page.locator(".auth-form")).toHaveCount(0);
-  await expect(page.locator(".topbar-user")).toHaveAttribute("title", ME);
   await expect(page.locator(".topbar-device")).toHaveCount(0);
   await expect(page.locator(".topbar-signout")).toHaveCount(0);
   await expect(page.locator(".search-empty")).toBeVisible();
   await expect(page.locator(".topbar-net")).toHaveText(/Online/);
+  // This device node is not in person mode: Settings has the address, and
+  // asking for the person is answered 404.
+  await page.locator(".topbar-settings").click();
+  await expect(page.locator("[data-testid=my-address]")).toHaveText(ME);
+  await page.locator(".settings-back").click();
 
   await page.locator("[data-action=new-wave]").click();
   await expect(editing(page)).toBeFocused();
@@ -116,7 +120,7 @@ test("the token opens the inbox signed in; a wave with an @mention from the cont
   await expect(page.locator(".digest-link")).toHaveCount(1);
   await shoot(page, "device-01-wave");
   // The directory was never asked: contacts stand in for it.
-  expect(problems).toEqual([]);
+  expect(problems.filter((p) => p !== "http 404 /person")).toEqual([]);
   await context.close();
 });
 

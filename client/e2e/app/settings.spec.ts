@@ -52,7 +52,7 @@ test("the person, this device and a pairing link with its QR code", async ({ bro
   const { context, page, problems } = await settingsPage(browser);
   expect(new URL(page.url()).hash).toBe("#settings");
   // The person domain is the account's domain.
-  const address = (await page.locator(".topbar-user").getAttribute("title")) ?? "";
+  const address = (await page.locator("[data-testid=my-address]").textContent()) ?? "";
   const domain = address.split("@")[1]?.split(" ")[0] ?? "";
   expect(domain.length).toBe(52);
   await expect(page.locator(".settings-person")).toHaveText(domain);

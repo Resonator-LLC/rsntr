@@ -380,6 +380,33 @@ describe("SettingsPage", () => {
     await act(flush);
   };
 
+  test("an account on a server: the connection with Connect now and the address, nothing loaded", async () => {
+    const node = new FakeNode();
+    root = document.createElement("div");
+    document.body.append(root);
+    let connects = 0;
+    const page = (status: "online" | "offline") => (
+      <SettingsPage
+        api={node}
+        onClose={() => {}}
+        device={false}
+        address="ann@example.com"
+        connection={{ status, text: status === "online" ? "Online" : "Offline", connectNow: () => connects++ }}
+      />
+    );
+    await act(async () => render(page("offline"), root!));
+    await act(flush);
+    expect(root.querySelector("[data-testid=connection]")?.textContent).toBe("Offline");
+    await click(root.querySelector("[data-action=connect-now]"));
+    expect(connects).toBe(1);
+    expect(root.querySelector("[data-testid=my-address]")?.textContent).toBe("ann@example.com");
+    expect(root.querySelector("[data-section=devices]")).toBeNull();
+    expect(node.calls).toEqual([]);
+    await act(async () => render(page("online"), root!));
+    expect(root.querySelector("[data-testid=connection]")?.textContent).toBe("Online");
+    expect(root.querySelector("[data-action=connect-now]")).toBeNull();
+  });
+
   test("an admin device: devices, pairing with a QR code and link, the phrase behind a confirmation", async () => {
     const node = new FakeNode();
     const { el } = await mount(node);
@@ -519,12 +546,4 @@ describe("SettingsPage", () => {
     expect(closed()).toBe(1);
   });
 
-  test("outside person mode only contacts are shown", async () => {
-    const node = new FakeNode();
-    node.view = null;
-    const { el } = await mount(node);
-    expect(el.textContent).toContain("not a device of a person");
-    expect(el.querySelector("[data-section=contacts]")).not.toBeNull();
-    expect(el.querySelector("[data-section=devices]")).toBeNull();
-  });
 });

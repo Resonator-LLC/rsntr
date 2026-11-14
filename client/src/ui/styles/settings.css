@@ -396,25 +396,6 @@
   margin: var(--sp-2) var(--sp-3) 0;
 }
 
-/* The settings button of the top bar (device mode). */
-.topbar-settings {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2rem;
-  min-height: 2rem;
-  padding: 0 var(--sp-1);
-  border: 1px solid rgb(255 255 255 / 28%);
-  border-radius: var(--radius-1);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-.topbar-settings:hover,
-.topbar-settings[aria-pressed="true"] {
-  background: rgb(255 255 255 / 16%);
-}
-
 @container app (max-width: 47.99em) {
   .settings-page {
     border: 0;
@@ -442,4 +423,22 @@
 .settings-copy {
   flex: none;
   min-width: 5.5rem;
+}
+
+.settings-net {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.settings-net-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-round);
+  background: var(--c-ok);
+}
+.settings-net.is-offline .settings-net-dot {
+  background: var(--c-danger);
+}
+.settings-net.is-connecting .settings-net-dot {
+  background: var(--c-warning);
 }

@@ -1,17 +1,15 @@
-// The bar at the top: product, saved state, connection, user, sign out
+// The bar at the top: product, saved state, and one button that shows the
+// connection and opens Settings (where the address is), sign out
 // (`TopBar.gxp`, `SavedStateIndicator` and the network status of
 // `WebClient` in Apache Wave; Apache License 2.0).
 
-import { Avatar } from "../profiles/Avatar";
 import { type AppStore, NET_STATUS_TEXT, SAVED_TEXT, UNSAVED_TEXT, netStatus } from "./appStore";
 import { HostPendingIndicator } from "./HostPendingIndicator";
 import { SettingsIcon, SignOutIcon, WaveMark } from "./icons";
 
 export function TopBar({ store }: { store: AppStore }) {
-  const address = store.session.value?.address ?? "";
   // Device mode: the app wrapping the node signs in, and there is nothing
-  // to sign out of. The bar shows only the avatar; the whole address is in
-  // Settings (and in the avatar's tooltip).
+  // to sign out of.
   const device = store.session.value?.device;
   const unsaved = store.unsavedShown.value;
   const net = netStatus(store.connection.value);
@@ -50,38 +48,19 @@ export function TopBar({ store }: { store: AppStore }) {
             New version · Reload
           </button>
         ) : null}
-        {net === "online" ? (
-          <span class="topbar-net is-online" role="status">
-            <span class="topbar-net-dot" aria-hidden="true" />
-            {NET_STATUS_TEXT.online}
-          </span>
-        ) : (
-          <button
-            class={`topbar-net is-${net}`}
-            type="button"
-            title="Connect now"
-            onClick={store.reconnect}
-          >
-            <span class="topbar-net-dot" aria-hidden="true" />
-            {NET_STATUS_TEXT[net]}
-          </button>
-        )}
-      </div>
-      <div class="topbar-user" title={address} data-device={device === undefined ? undefined : "true"}>
-        {address !== "" ? <Avatar profiles={store.profiles} address={address} size="sm" decorative /> : null}
-      </div>
-      {device !== undefined ? (
         <button
-          class="topbar-settings"
+          class={`topbar-net topbar-settings is-${net}`}
           type="button"
-          aria-label="Settings"
+          aria-label={`${NET_STATUS_TEXT[net]}, settings`}
           title="Settings"
           aria-pressed={store.settingsOpen.value}
           onClick={() => (store.settingsOpen.value ? store.closeSettings() : store.openSettings())}
         >
+          <span class="topbar-net-dot" aria-hidden="true" />
+          <span class="topbar-net-text">{NET_STATUS_TEXT[net]}</span>
           <SettingsIcon />
         </button>
-      ) : null}
+      </div>
       {device === undefined ? (
         <button class="topbar-signout" type="button" onClick={signOut} aria-label="Sign out" title="Sign out">
           <SignOutIcon />

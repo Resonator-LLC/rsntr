@@ -70,8 +70,11 @@ test("registration through the UI, sign out, sign in", async ({ browser }) => {
   await page.getByLabel("Re-enter password").fill("a good password");
   await shoot(page, "03-register");
   await page.locator(".auth-form button[type=submit]").click();
-  await expect(page.locator(".topbar-user")).toHaveAttribute("title", new RegExp(`^${name}@`));
   await expect(page.locator(".search-empty")).toBeVisible();
+  // The address is in Settings, behind the connection button.
+  await page.locator(".topbar-settings").click();
+  await expect(page.locator("[data-testid=my-address]")).toHaveText(new RegExp(`^${name}@`));
+  await page.locator(".settings-back").click();
   await page.locator(".topbar-signout").click();
   await expect(page.locator(".auth-form")).toBeVisible();
   await signIn(page, { name, address: `${name}@example.com`, password: "a good password" });
@@ -257,7 +260,11 @@ test("offline: edits are kept and sent when the connection is back", async ({ br
     const t = await a.page.locator(".topbar-net").textContent();
     console.log(`after online ${i}s: ${t}`);
     if (t?.includes("Online")) break;
-    if (i === 3) await a.page.locator("button.topbar-net").click({ timeout: 2000 }).catch((e) => console.log("click failed", e.message));
+    if (i === 3) {
+      await a.page.locator(".topbar-settings").click();
+      await a.page.locator("[data-action=connect-now]").click({ timeout: 2000 }).catch((e) => console.log("click failed", e.message));
+      await a.page.locator(".settings-back").click();
+    }
     await a.page.waitForTimeout(1000);
   }
   await expect(a.page.locator(".topbar-net")).toHaveText(/Online/, { timeout: 30_000 });

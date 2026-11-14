@@ -8,7 +8,7 @@ import { useEffect } from "preact/hooks";
 import { SearchPanel } from "../search/SearchPanel";
 import { SettingsPage } from "../settings/SettingsPage";
 import { WavePanel } from "../wave/WavePanel";
-import type { AppStore } from "./appStore";
+import { type AppStore, NET_STATUS_TEXT, netStatus } from "./appStore";
 import { AuthScreen } from "./AuthScreen";
 import { WaveMark } from "./icons";
 import { TopBar } from "./TopBar";
@@ -17,8 +17,9 @@ function Shell({ store }: { store: AppStore }) {
   const route = store.route.value;
   const problem = store.problem.value;
   const waveOpen = route.waveId !== null;
-  // Device mode: the settings page instead of the panels.
-  const settings = store.settingsOpen.value && store.session.value?.device !== undefined;
+  // The settings page instead of the panels.
+  const settings = store.settingsOpen.value;
+  const net = netStatus(store.connection.value);
   return (
     <div class="app">
       <TopBar store={store} />
@@ -35,6 +36,8 @@ function Shell({ store }: { store: AppStore }) {
           <SettingsPage
             api={store.client.api.person}
             address={store.session.value?.address ?? ""}
+            connection={{ status: net, text: NET_STATUS_TEXT[net], connectNow: store.reconnect }}
+            device={store.session.value?.device !== undefined}
             onClose={store.closeSettings}
           />
         </main>

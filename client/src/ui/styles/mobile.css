@@ -100,6 +100,7 @@ button,
 
   /* 44px tap targets. */
   .topbar-signout,
+  button.topbar-net,
   .search-folder,
   .wave-tool,
   .reply-box,

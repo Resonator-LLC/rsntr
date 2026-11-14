@@ -23,7 +23,7 @@ import { firstName } from "../profiles/profileStore";
 import type { AnchorHost, BlipView } from "../editor/api";
 import { type WaveUi, WaveUiContext } from "./context";
 import { formatFullDate, formatPastDate } from "./dates";
-import { ChevronIcon, MoreIcon, PlusIcon } from "./icons";
+import { ChevronIcon, EditIcon, MoreIcon, PlusIcon, ReplyIcon } from "./icons";
 import type { BlipVM, ConversationStore } from "./store";
 import { ROOT_THREAD } from "./traversal";
 
@@ -279,6 +279,20 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
         </header>
         <div ref={hostRef} class="blip-content" />
         {portals}
+        {editing ? null : (
+          // Always visible, so they are found; in the tab order of the
+          // focused message only, so Tab does not stop at every message.
+          <div class="blip-actions">
+            <button type="button" class="blip-action" data-action="reply" tabIndex={focused ? 0 : -1} onClick={() => store.reply(id)}>
+              <ReplyIcon />
+              Reply
+            </button>
+            <button type="button" class="blip-action" data-action="edit" tabIndex={focused ? 0 : -1} onClick={() => store.startEditing(id)}>
+              <EditIcon />
+              Edit
+            </button>
+          </div>
+        )}
       </article>
       {below.length > 0 ? (
         <div class="blip-replies">

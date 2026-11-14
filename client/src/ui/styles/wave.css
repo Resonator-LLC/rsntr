@@ -301,18 +301,35 @@
 .blip-menu-btn {
   width: 1.75rem;
   height: 1.75rem;
-  opacity: 0;
 }
-.blip-main:hover .blip-menu-btn,
-.blip-focused .blip-menu-btn,
-.blip-menu-btn:focus-visible,
-.blip-menu-btn[aria-expanded="true"] {
-  opacity: 1;
+
+/* Reply and Edit under every message. */
+.blip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-inline-start: calc(-1 * var(--sp-2));
 }
-@media (hover: none) {
-  .blip-menu-btn {
-    opacity: 1;
-  }
+.blip-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 1.75rem;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.blip-action:hover {
+  background: var(--c-surface-3);
+  color: var(--c-text);
+}
+.blip-action .icon {
+  width: 1rem;
+  height: 1rem;
 }
 
 .blip-content {

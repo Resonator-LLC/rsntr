@@ -70,6 +70,35 @@ for (const engine of ["chromium", "webkit"]) {
     await page.close();
   });
 
+  test(`${engine}: Reply and Edit under a message are always there and work`, async () => {
+    const page = await browsers[engine]!.newPage();
+    await page.goto(servers.baseUrl);
+    await signIn(page, await createUser(servers, "actions"));
+    await page.locator("[data-action=new-wave]").click();
+    await page.keyboard.type("Actions");
+    await expect(editing(page)).toContainText("Actions");
+    await page.keyboard.press("Shift+Enter");
+    await expect(editing(page)).toHaveCount(0);
+    await expect(page.locator(".wave-title")).toHaveText("Actions");
+    const first = page.locator(".thread-root > .blip").first().locator(".blip-main").first();
+    // Visible without hovering or focusing the message.
+    await page.mouse.move(0, 0);
+    await expect(first.locator(".blip-actions [data-action=reply]")).toBeVisible();
+    await expect(first.locator(".blip-menu-btn")).toBeVisible();
+    await first.locator(".blip-actions [data-action=reply]").click();
+    await page.keyboard.type("Via the button");
+    await page.keyboard.press("Shift+Enter");
+    await expect(page.locator(".blip-replies .blip-content").first()).toHaveText("Via the button");
+    await first.locator(".blip-actions [data-action=edit]").click();
+    await expect(editing(page)).toBeFocused();
+    await expect(first.locator(".blip-actions")).toHaveCount(0);
+    await page.keyboard.press("End");
+    await page.keyboard.type(" edited");
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".wave-title")).toHaveText("Actions edited");
+    await page.close();
+  });
+
   test(`${engine}: Tab leaves a message being edited, and indents only in lists`, async () => {
     const page = await browsers[engine]!.newPage();
     await page.goto(servers.baseUrl);

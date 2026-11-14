@@ -1,17 +1,17 @@
 # The official servers. Each wave domain is its own resonator instance.
-(resonator) {
+# No snippet arguments: Ubuntu's Caddy (2.6) predates `{args[0]}`.
+
+rsntr.net {
 	encode zstd gzip
 	# Metrics stay on the host.
 	respond /metrics 404
-	reverse_proxy {args[0]}
-}
-
-rsntr.net {
-	import resonator 127.0.0.1:9898
+	reverse_proxy 127.0.0.1:9898
 }
 
 resonator.network {
-	import resonator 127.0.0.1:9897
+	encode zstd gzip
+	respond /metrics 404
+	reverse_proxy 127.0.0.1:9897
 }
 
 psh.rsntr.net {

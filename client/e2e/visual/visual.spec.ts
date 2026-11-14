@@ -28,7 +28,7 @@ test.beforeAll(async ({ browser }) => {
   await page.goto(servers.baseUrl);
   await signIn(page, ben);
   await page.locator("[data-action=new-wave]").click();
-  await page.keyboard.type("Launch plan");
+  await page.keyboard.type("Launch plan for the Friday evening at the riverside venue");
   await page.keyboard.press("Enter");
   await page.keyboard.type("The venue is booked for Friday. Details are at https://rsntr.net and in the attached notes.");
   await page.locator(".edit-done").click();

@@ -25,9 +25,13 @@
   font-size: var(--fs-xl);
   font-weight: 650;
   line-height: 1.3;
+  /* A long title takes two lines, then ends in an ellipsis. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .wave-title-empty {
   color: var(--c-text-3);
@@ -147,7 +151,7 @@
 .wave-toolbar {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-0);
   padding: var(--sp-1) var(--sp-3);
   border-bottom: 1px solid var(--c-border);
   background: var(--c-surface-2);
@@ -257,7 +261,7 @@
 .blip-unread-mark {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   color: var(--c-unread);
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -312,7 +316,7 @@
 }
 
 .blip-content {
-  padding: 2px 0 var(--sp-1);
+  padding: var(--sp-0) 0 var(--sp-1);
   min-height: 1.45em;
 }
 
@@ -338,10 +342,10 @@
 .thread-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-0);
   align-self: flex-start;
   min-height: 1.5rem;
-  padding: 0 var(--sp-2) 0 2px;
+  padding: 0 var(--sp-2) 0 var(--sp-0);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-round);
   background: var(--c-surface);
@@ -368,7 +372,7 @@
 .thread-toggle[aria-expanded="true"] {
   border-color: transparent;
   background: transparent;
-  padding-inline-end: 2px;
+  padding-inline-end: var(--sp-0);
 }
 .thread-toggle-unread {
   border-color: var(--c-unread);
@@ -389,7 +393,7 @@
 .doc-anchor:not(:empty) {
   display: inline-block;
   vertical-align: baseline;
-  margin: 0 2px;
+  margin: 0 var(--sp-0);
   white-space: normal;
 }
 .doc-anchor:has(> .thread-inline:not(.thread-collapsed)) {
@@ -491,15 +495,15 @@
 .wave-tag {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 2px 0 var(--sp-2);
+  gap: var(--sp-0);
+  padding: 0 var(--sp-0) 0 var(--sp-2);
   border-radius: var(--radius-round);
   background: var(--c-surface-3);
   color: var(--c-text);
 }
 .wave-tag-remove {
   display: inline-flex;
-  padding: 2px;
+  padding: var(--sp-0);
   border: 0;
   border-radius: var(--radius-round);
   background: transparent;
@@ -600,16 +604,6 @@
   }
   .wave-scroll {
     padding: var(--sp-2) var(--sp-2) var(--sp-5);
-  }
-  /* Hidden from sight only: the label stays the button's name. */
-  .wave-tool-label-wide {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
   .blip-replies {
     margin-inline-start: var(--sp-2);
@@ -790,5 +784,20 @@
   }
   .blip-meta {
     flex-wrap: wrap;
+  }
+}
+
+/* A narrow wave panel (a phone, a tablet beside the list, large text):
+   the toolbar keeps its short labels. Hidden from sight only: the label
+   stays the button's name. */
+@container wave (max-width: 46em) {
+  .wave-tool-label-wide {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }

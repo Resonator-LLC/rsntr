@@ -46,7 +46,7 @@
   font-size: var(--fs-lg);
   letter-spacing: 0.01em;
   border-radius: var(--radius-1);
-  padding: 2px var(--sp-1);
+  padding: var(--sp-0) var(--sp-1);
 }
 /* On the blue bar the focus ring is light, so it shows. */
 .topbar :focus-visible {
@@ -73,9 +73,9 @@
 .topbar-net {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-1);
   border: 0;
-  padding: 2px var(--sp-2);
+  padding: var(--sp-0) var(--sp-2);
   border-radius: var(--radius-round);
   background: transparent;
   color: inherit;
@@ -91,7 +91,7 @@ button.topbar-net:hover {
 
 .topbar-update {
   border: 0;
-  padding: 2px var(--sp-2);
+  padding: var(--sp-0) var(--sp-2);
   border-radius: var(--radius-round);
   background: var(--c-topbar-warn);
   color: var(--c-topbar-warn-text);
@@ -180,6 +180,7 @@ button.topbar-net:hover {
 
 .app-main {
   flex: 1;
+  container: wave / inline-size;
 }
 
 @container app (max-width: 60em) {

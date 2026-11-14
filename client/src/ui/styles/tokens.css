@@ -77,6 +77,7 @@
   --lh: 1.45;
 
   /* Spacing scale */
+  --sp-0: 0.125rem;
   --sp-1: 0.25rem;
   --sp-2: 0.5rem;
   --sp-3: 0.75rem;

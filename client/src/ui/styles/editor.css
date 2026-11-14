@@ -99,7 +99,7 @@
   flex-direction: column;
   vertical-align: bottom;
   max-width: 100%;
-  margin: 2px 2px;
+  margin: var(--sp-0) var(--sp-0);
   padding: var(--sp-1);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-2);
@@ -110,7 +110,7 @@
 .doc-image-link {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0);
   color: inherit;
   text-decoration: none;
 }
@@ -149,7 +149,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-0);
   padding: var(--sp-1) var(--sp-2);
   overflow-x: auto;
   scrollbar-width: thin;
@@ -198,7 +198,7 @@
   font: inherit;
   font-size: var(--fs-sm);
   padding: 0 var(--sp-1);
-  margin: 0 2px;
+  margin: 0 var(--sp-0);
 }
 .edit-select-narrow { max-width: 6.5rem; }
 

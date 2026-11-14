@@ -107,7 +107,7 @@
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  gap: 2px;
+  gap: var(--sp-0);
 }
 
 .settings-row-sub {
@@ -208,7 +208,7 @@
   cursor: pointer;
 }
 .settings-check input {
-  margin-top: 2px;
+  margin-top: var(--sp-0);
   flex: none;
 }
 

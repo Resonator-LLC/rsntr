@@ -1,5 +1,6 @@
 // What the components of the wave panel share.
 
+import type { Announcer } from "./announce";
 import type { Signal } from "@preact/signals";
 import { createContext } from "preact";
 
@@ -23,6 +24,8 @@ export interface AnchoredState {
 
 export interface WaveUi {
   readonly store: ConversationStore;
+  /** Announces messages others add (the live region of the wave). */
+  readonly announcer: Announcer;
   readonly profiles: ProfileStore;
   readonly createView: BlipViewFactory;
   readonly lazy: LazyActivator;

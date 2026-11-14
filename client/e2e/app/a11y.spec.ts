@@ -110,3 +110,47 @@ for (const [client, { engine, options }] of Object.entries(CLIENTS)) {
     });
   }
 }
+
+test("screen readers hear replies others write, not their own; ? lists the shortcuts", async () => {
+  const anna = await createUser(servers, "anna");
+  const ben = await createUser(servers, "ben");
+  const annaContext = await browsers.chromium!.newContext();
+  const annaPage = await annaContext.newPage();
+  await annaPage.goto(servers.baseUrl);
+  await signIn(annaPage, anna);
+  await annaPage.locator("[data-action=new-wave]").click();
+  await annaPage.keyboard.type("Announcements");
+  await expect(annaPage.locator(".blip-editing .doc[contenteditable=true]")).toContainText("Announcements");
+  await annaPage.keyboard.press("Shift+Enter");
+  await annaPage.locator(".wave-add-participant").click();
+  await annaPage.locator("#wave-add-participant-input").fill(ben.address);
+  await annaPage.locator("#wave-add-participant-input").press("Enter");
+  await expect(annaPage.locator(`.wave-participant[data-participant="${ben.address}"]`)).toBeVisible();
+  await expect(annaPage.locator(".topbar-saved")).toHaveText("Saved", { timeout: 15_000 });
+  const announcer = annaPage.locator("[data-testid=wave-announcer]");
+  await expect(announcer).toHaveText("");
+
+  const benContext = await browsers.chromium!.newContext();
+  const benPage = await benContext.newPage();
+  await benPage.goto(servers.baseUrl);
+  await signIn(benPage, ben);
+  await benPage.locator(".digest-link").first().click();
+  await benPage.locator(".blip-actions [data-action=reply]").first().click();
+  await benPage.keyboard.type("Sounds good");
+  await benPage.keyboard.press("Shift+Enter");
+  await expect(announcer).toHaveText(/^Ben\S* replied to you\s?$/, { timeout: 15_000 });
+  // Ben's own page says nothing about his reply.
+  await expect(benPage.locator("[data-testid=wave-announcer]")).toHaveText("");
+
+  // "?" opens the shortcuts; Escape closes them and focus comes back.
+  await annaPage.locator(".blip-main").first().focus();
+  await annaPage.keyboard.press("?");
+  const dialog = annaPage.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(dialog).toBeVisible();
+  expect.soft(await violations(annaPage), "shortcuts").toEqual([]);
+  await annaPage.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(annaPage.locator(".blip-main").first()).toBeFocused();
+  await annaContext.close();
+  await benContext.close();
+});

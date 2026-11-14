@@ -129,6 +129,8 @@ export class AppStore {
   readonly route: Signal<Route> = signal<Route>(EMPTY_ROUTE);
   /** The settings page is shown instead of the panels (device mode). */
   readonly settingsOpen: Signal<boolean> = signal(false);
+  /** The keyboard shortcuts dialog ("?"). */
+  readonly shortcutsOpen: Signal<boolean> = signal(false);
   /** The wave "New wave" made, while it is the one shown. */
   readonly newWaveId: Signal<string | null> = signal<string | null>(null);
   readonly creatingWave: Signal<boolean> = signal(false);

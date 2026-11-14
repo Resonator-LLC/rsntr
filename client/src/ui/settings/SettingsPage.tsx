@@ -40,6 +40,8 @@ export interface SettingsPageProps {
   };
   /** Display and accessibility preferences; the section shows with them. */
   readonly prefs?: PrefsStore;
+  /** Opens the list of keyboard shortcuts. */
+  readonly onShortcuts?: () => void;
   /** For tests. */
   readonly store?: SettingsStore;
   readonly now?: () => number;
@@ -608,6 +610,7 @@ const PREF_LABELS = {
   motion: { system: "As the system", reduce: "Reduce" },
   spacing: { normal: "Normal", reading: "More, for reading" },
   targets: { normal: "Normal", large: "Large" },
+  announce: { all: "All", replies: "Replies to me", none: "None" },
 } as const;
 
 const PREF_NAMES: Record<keyof typeof PREF_LABELS, string> = {
@@ -617,10 +620,11 @@ const PREF_NAMES: Record<keyof typeof PREF_LABELS, string> = {
   motion: "Motion",
   spacing: "Text spacing",
   targets: "Buttons",
+  announce: "Read out new messages",
 };
 
 /** Text size, theme, contrast, motion, spacing, targets and links. */
-function Accessibility({ prefs }: { readonly prefs: PrefsStore }) {
+function Accessibility({ prefs, onShortcuts }: { readonly prefs: PrefsStore; readonly onShortcuts?: () => void }) {
   const current = prefs.prefs.value;
   const select = <K extends keyof typeof PREF_LABELS>(key: K) => (
     <div class="settings-row settings-pref" key={key}>
@@ -650,6 +654,7 @@ function Accessibility({ prefs }: { readonly prefs: PrefsStore }) {
       {select("motion")}
       {select("spacing")}
       {select("targets")}
+      {select("announce")}
       <div class="settings-row">
         <label class="settings-check">
           <input
@@ -661,6 +666,14 @@ function Accessibility({ prefs }: { readonly prefs: PrefsStore }) {
           <span>Underline links</span>
         </label>
       </div>
+      {onShortcuts !== undefined ? (
+        <div class="settings-row">
+          <span class="settings-row-main">Keyboard shortcuts</span>
+          <button type="button" class="btn" data-action="shortcuts" onClick={onShortcuts}>
+            Show
+          </button>
+        </div>
+      ) : null}
       <p class="settings-help settings-preview" data-testid="prefs-preview">
         Preview: the venue is booked for Friday, details at <a href="https://rsntr.net" target="_blank" rel="noreferrer">rsntr.net</a>.
       </p>
@@ -833,7 +846,7 @@ export function SettingsPage(props: SettingsPageProps) {
           ) : null}
           {props.prefs !== undefined ? (
             <Section title="Accessibility" id="accessibility">
-              <Accessibility prefs={props.prefs} />
+              <Accessibility prefs={props.prefs} onShortcuts={props.onShortcuts} />
             </Section>
           ) : null}
           {body}

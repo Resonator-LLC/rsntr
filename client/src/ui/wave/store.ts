@@ -112,6 +112,8 @@ export interface StoreOptions {
   readonly onChanged?: () => void;
   /** Receives what an action throws (e.g. an edit the wavelet refuses). */
   readonly onError?: (error: unknown) => void;
+  /** A blip someone else added (another session or device, any author). */
+  readonly onRemoteBlipAdded?: (blipId: string) => void;
 }
 
 type OpListener = (event: DocumentOpEvent) => void;
@@ -215,7 +217,12 @@ export class ConversationStore implements BlipTree {
       structural();
     };
     this.unsubscribe.push(
-      e.on("blipAdded", structural),
+      e.on("blipAdded", ({ blipId, local }) => {
+        structural();
+        if (!local) {
+          this.options.onRemoteBlipAdded?.(blipId);
+        }
+      }),
       e.on("blipDeleted", structural),
       e.on("threadAdded", parentDirty),
       e.on("threadDeleted", parentDirty),

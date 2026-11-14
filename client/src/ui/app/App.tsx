@@ -11,6 +11,7 @@ import { WavePanel } from "../wave/WavePanel";
 import { type AppStore, NET_STATUS_TEXT, netStatus } from "./appStore";
 import { AuthScreen } from "./AuthScreen";
 import { WaveMark } from "./icons";
+import { ShortcutsDialog, typingIn } from "./ShortcutsDialog";
 import { TopBar } from "./TopBar";
 
 function Shell({ store }: { store: AppStore }) {
@@ -22,6 +23,7 @@ function Shell({ store }: { store: AppStore }) {
   const net = netStatus(store.connection.value);
   return (
     <div class="app">
+      {store.shortcutsOpen.value ? <ShortcutsDialog onClose={() => (store.shortcutsOpen.value = false)} /> : null}
       <TopBar store={store} />
       {problem !== null ? (
         <div class="app-problem notice notice-error" role="alert">
@@ -39,6 +41,7 @@ function Shell({ store }: { store: AppStore }) {
             connection={{ status: net, text: NET_STATUS_TEXT[net], connectNow: store.reconnect }}
             device={store.session.value?.device !== undefined}
             prefs={store.prefs ?? undefined}
+            onShortcuts={() => (store.shortcutsOpen.value = true)}
             onClose={store.closeSettings}
           />
         </main>
@@ -106,6 +109,22 @@ export function App({ store }: { store: AppStore }) {
       }
     };
     window.addEventListener("beforeunload", onBeforeUnload);
+    // "?" lists the keyboard shortcuts, unless it is typed into something.
+    const onKey = (event: KeyboardEvent): void => {
+      if (
+        event.key === "?" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.defaultPrevented &&
+        !typingIn(event.target) &&
+        store.phase.value === "signedIn"
+      ) {
+        event.preventDefault();
+        store.shortcutsOpen.value = true;
+      }
+    };
+    window.addEventListener("keydown", onKey);
     // Back from the background: reconnect now, not after the backoff.
     const onVisible = (): void => {
       if (document.visibilityState === "visible") {
@@ -116,6 +135,7 @@ export function App({ store }: { store: AppStore }) {
     window.addEventListener("pageshow", onVisible);
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("keydown", onKey);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pageshow", onVisible);
     };

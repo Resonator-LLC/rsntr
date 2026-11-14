@@ -40,6 +40,7 @@ describe("prefs", () => {
       "data-spacing": "normal",
       "data-targets": "normal",
       "data-underline-links": null,
+      "data-announce": "all",
     });
     const chosen = { ...DEFAULT_PREFS, theme: "light", contrast: "normal", underlineLinks: true } as const;
     expect(attributes(chosen, { dark: true, moreContrast: true, reduceMotion: false })).toMatchObject({

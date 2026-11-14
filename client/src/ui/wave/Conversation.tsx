@@ -206,7 +206,10 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
   const now = Date.now();
   const time = header.time === 0 ? now : header.time;
   const timeText = formatPastDate(time, now);
-  const label = `${header.names}, ${formatFullDate(time)}${unread ? ", unread" : ""}`;
+  // Author, time, unread, and how many replies, for screen readers.
+  const replyCount = replies.reduce((n, r) => n + (store.threads.get(r.threadId)?.total.value ?? 0), 0);
+  const repliesText = replyCount === 0 ? "" : `, ${replyCount} ${replyCount === 1 ? "reply" : "replies"}`;
+  const label = `${header.names}, ${formatFullDate(time)}${unread ? ", unread" : ""}${repliesText}`;
 
   const below: string[] = [];
   const portals = [];

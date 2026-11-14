@@ -410,11 +410,12 @@ describe("SettingsPage", () => {
 
   test("Accessibility: the choices change the preferences and the attributes of <html>", async () => {
     const prefs = new PrefsStore(null, null);
+    let shortcuts = 0;
     const html = document.createElement("html");
     const stop = prefs.apply(html);
     root = document.createElement("div");
     document.body.append(root);
-    await act(async () => render(<SettingsPage api={new FakeNode()} onClose={() => {}} device={false} prefs={prefs} />, root!));
+    await act(async () => render(<SettingsPage api={new FakeNode()} onClose={() => {}} device={false} prefs={prefs} onShortcuts={() => shortcuts++} />, root!));
     const section = root.querySelector("[data-section=accessibility]")!;
     expect(section).not.toBeNull();
     const size = section.querySelector<HTMLSelectElement>("select[data-pref=textSize]")!;
@@ -433,6 +434,14 @@ describe("SettingsPage", () => {
     await click(section.querySelector("input[data-pref=underlineLinks]"));
     expect(html.hasAttribute("data-underline-links")).toBe(true);
     expect(prefs.prefs.value).toMatchObject({ textSize: "150", contrast: "more", underlineLinks: true });
+    const announce = section.querySelector<HTMLSelectElement>("select[data-pref=announce]")!;
+    await act(async () => {
+      announce.value = "replies";
+      announce.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(html.getAttribute("data-announce")).toBe("replies");
+    await click(section.querySelector("[data-action=shortcuts]"));
+    expect(shortcuts).toBe(1);
     stop();
   });
 

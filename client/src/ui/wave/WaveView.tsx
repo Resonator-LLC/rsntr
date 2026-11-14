@@ -7,9 +7,10 @@
 // reply, shift-enter continues the thread, ctrl-e edits, shift-delete
 // deletes; `EditSession`: shift-enter and escape end an edit session).
 
+import { Announcer } from "./announce";
 import type { DirectoryEntry, ProbeResult } from "../../net/http";
 import { signal } from "@preact/signals";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 
 import type { OpenWave } from "../../client";
@@ -99,6 +100,19 @@ function touchFirst(): boolean {
   return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 }
 
+/** The live region of messages others add (its own component: an announcement re-renders only it). */
+function Announcements() {
+  const ui = useContext(WaveUiContext);
+  if (ui === null) {
+    return null;
+  }
+  return (
+    <div class="visually-hidden" role="status" aria-live="polite" data-testid="wave-announcer">
+      {ui.announcer.text.value}
+    </div>
+  );
+}
+
 function isTyping(target: Element): boolean {
   return (
     target.closest(
@@ -141,7 +155,26 @@ export function WaveView(props: WaveViewProps) {
         }, CHANGE_DEBOUNCE_MS);
       }
     };
-    const store = new ConversationStore(wave, observable, { onChanged: notify });
+    // Messages others add, for screen readers; described once they are in the structure.
+    let storeRef: ConversationStore | null = null;
+    const announcer = new Announcer({
+      viewer: props.viewer,
+      name: (address) => props.profiles.get(address).name,
+      describe: (blipId) => {
+        const meta = storeRef?.blipMeta(blipId);
+        if (storeRef === null || meta === null || meta === undefined) {
+          return null;
+        }
+        const threadId = storeRef.threadOf(blipId);
+        const parent = threadId === null ? null : storeRef.parentBlipOf(threadId);
+        return { author: meta.author, parentAuthor: parent === null ? null : (storeRef.blipMeta(parent)?.author ?? null) };
+      },
+    });
+    const store = new ConversationStore(wave, observable, {
+      onChanged: notify,
+      onRemoteBlipAdded: (blipId) => announcer.add(blipId),
+    });
+    storeRef = store;
     const serialiser = ModernIdSerialiser.INSTANCE;
     const waveIdString = serialiser.serialiseWaveId(wave.waveId);
     const waveletIdString = serialiser.serialiseWaveletId(store.waveletId);
@@ -152,6 +185,7 @@ export function WaveView(props: WaveViewProps) {
         : new AttachmentIdGenerator("local", Math.random().toString(36).slice(2, 12));
     return {
       store,
+      announcer,
       profiles: props.profiles,
       createView: props.createView ?? defaultBlipViewFactory,
       lazy: new LazyActivator({ root: null, eager: props.eagerViews === true }),
@@ -212,6 +246,7 @@ export function WaveView(props: WaveViewProps) {
     }
     return () => {
       ui.store.dispose();
+      ui.announcer.dispose();
       ui.lazy.dispose();
     };
   }, [ui]);
@@ -421,6 +456,7 @@ export function WaveView(props: WaveViewProps) {
         <ParticipantCard />
         <Dialogs />
         <MentionPopup />
+        <Announcements />
       </section>
     </WaveUiContext.Provider>
   );

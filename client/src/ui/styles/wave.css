@@ -337,11 +337,18 @@
 
 /* ---- reply threads ---- */
 
+/*
+ * One axis for a reply thread: the parent's avatar centre, the toggle's
+ * chevron and the thread line all sit on it. --thread-axis is the axis
+ * inside .blip-replies; the margin puts it under the avatar (which sits at
+ * --sp-3 plus the 2px focus border).
+ */
 .blip-replies {
+  --thread-axis: 0.75rem;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  margin: 0 0 var(--sp-1) calc(var(--avatar-md) / 2 + var(--sp-3));
+  margin: 0 0 var(--sp-1) calc(var(--sp-3) + 2px + var(--avatar-md) / 2 - var(--thread-axis));
 }
 
 .thread-reply {
@@ -351,7 +358,7 @@
 .thread-below > .thread-body {
   padding-inline-start: var(--thread-indent);
   border-inline-start: 2px solid var(--c-border);
-  margin-inline-start: 0.6rem;
+  margin-inline-start: calc(var(--thread-axis) - 1px);
 }
 
 .thread-toggle {
@@ -360,7 +367,8 @@
   gap: var(--sp-0);
   align-self: flex-start;
   min-height: 1.5rem;
-  padding: 0 var(--sp-2) 0 var(--sp-0);
+  /* The chevron (1rem) centred on the thread axis. */
+  padding: 0 var(--sp-2) 0 calc(var(--thread-axis, 0.75rem) - 0.5rem - 1px);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-round);
   background: var(--c-surface);
@@ -384,10 +392,18 @@
 .thread-toggle[aria-expanded="true"] .thread-count-unread {
   display: none;
 }
+/* Open: a round button on top of the thread line, covering its start. */
 .thread-toggle[aria-expanded="true"] {
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  min-height: 0;
+  padding: 0;
   border-color: transparent;
-  background: transparent;
-  padding-inline-end: var(--sp-0);
+  background: var(--c-surface);
+}
+.thread-toggle[aria-expanded="true"]:hover {
+  background: var(--c-surface-3);
 }
 .thread-toggle-unread {
   border-color: var(--c-unread);
@@ -396,7 +412,7 @@
 }
 .thread-below > .thread-toggle {
   position: absolute;
-  inset-inline-start: -0.15rem;
+  inset-inline-start: calc(var(--thread-axis) - 0.75rem);
   top: 0;
   z-index: 1;
 }
@@ -619,9 +635,6 @@
   }
   .wave-scroll {
     padding: var(--sp-2) var(--sp-2) var(--sp-5);
-  }
-  .blip-replies {
-    margin-inline-start: var(--sp-2);
   }
   .thread-below > .thread-body {
     padding-inline-start: var(--sp-2);

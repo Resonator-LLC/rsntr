@@ -15,6 +15,14 @@
 # Needs Xcode, xcodegen and the Rust targets aarch64-apple-ios and
 # aarch64-apple-ios-sim. The web client is embedded from client/dist.
 set -eu
+
+# Runs a long xcodebuild quietly: its last lines on success, more and a
+# failing exit on failure (a pipe into tail would hide the failure).
+quiet() {
+  log=$(mktemp)
+  if "$@" > "$log" 2>&1; then tail -3 "$log"; rm -f "$log"
+  else status=$?; tail -40 "$log"; rm -f "$log"; exit "$status"; fi
+}
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 what=${1:-simulator}
@@ -68,25 +76,25 @@ case "$what" in
     archive="$root/target/ios/Resonator.xcarchive"
     rm -rf "$archive" "$root/target/ios/export"
     # shellcheck disable=SC2086
-    xcodebuild -project "$here/Resonator.xcodeproj" -scheme Resonator -configuration Release \
+    quiet xcodebuild -project "$here/Resonator.xcodeproj" -scheme Resonator -configuration Release \
       -destination generic/platform=iOS -archivePath "$archive" $auth \
-      CURRENT_PROJECT_VERSION="${BUILD_NUMBER:-1}" "$@" archive | tail -3
+      CURRENT_PROJECT_VERSION="${BUILD_NUMBER:-1}" "$@" archive
     # shellcheck disable=SC2086
-    xcodebuild -exportArchive -archivePath "$archive" -exportOptionsPlist "$here/ExportOptions.plist" \
-      -exportPath "$root/target/ios/export" $auth | tail -3
+    quiet xcodebuild -exportArchive -archivePath "$archive" -exportOptionsPlist "$here/ExportOptions.plist" \
+      -exportPath "$root/target/ios/export" $auth
     echo "uploaded build ${BUILD_NUMBER:-1} to App Store Connect"
     ;;
   device)
     : "${RESONATOR_TEAM:?set RESONATOR_TEAM to the Apple developer team ID}"
-    xcodebuild -project "$here/Resonator.xcodeproj" -scheme Resonator -configuration Debug \
+    quiet xcodebuild -project "$here/Resonator.xcodeproj" -scheme Resonator -configuration Debug \
       -destination generic/platform=iOS -derivedDataPath "$derived" \
-      -allowProvisioningUpdates "$@" build | tail -3
+      -allowProvisioningUpdates "$@" build
     echo "$derived/Build/Products/Debug-iphoneos/Resonator.app"
     ;;
   simulator | run)
-    xcodebuild -project "$here/Resonator.xcodeproj" -scheme Resonator -configuration Debug \
+    quiet xcodebuild -project "$here/Resonator.xcodeproj" -scheme Resonator -configuration Debug \
       -destination generic/platform='iOS Simulator' -derivedDataPath "$derived" \
-      CODE_SIGNING_ALLOWED=NO "$@" build | tail -3
+      CODE_SIGNING_ALLOWED=NO "$@" build
     app="$derived/Build/Products/Debug-iphonesimulator/Resonator.app"
     echo "$app"
     if [ "$what" = run ]; then

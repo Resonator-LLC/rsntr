@@ -106,6 +106,12 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: client/package-lock.json
+      - name: Xcode 26 (App Store Connect requires the iOS 26 SDK)
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          [ -n "$x" ] || { echo "no Xcode 26 on this runner:" >&2; ls -d /Applications/Xcode* >&2; exit 1; }
+          sudo xcode-select -s "$x"
+          xcodebuild -version
       - name: Tools
         run: |
           brew install xcodegen

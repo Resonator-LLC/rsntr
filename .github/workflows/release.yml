@@ -236,6 +236,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Xcode 26 (App Store Connect requires the iOS 26 SDK)
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          [ -n "$x" ] || { echo "no Xcode 26 on this runner:" >&2; ls -d /Applications/Xcode* >&2; exit 1; }
+          sudo xcode-select -s "$x"
+          xcodebuild -version
       - run: |
           brew install xcodegen
           rustup toolchain install stable --profile minimal

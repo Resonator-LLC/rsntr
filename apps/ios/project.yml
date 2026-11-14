@@ -8,7 +8,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.4.0"
+    MARKETING_VERSION: "0.4.1"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: ${RESONATOR_TEAM}
     # The official network's relays; override on the xcodebuild command

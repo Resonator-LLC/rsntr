@@ -30,7 +30,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = setting("resonator.versionCode", "RESONATOR_VERSION_CODE", "400").toInt()
-        versionName = setting("resonator.versionName", "RESONATOR_VERSION_NAME", "0.4.0")
+        versionName = setting("resonator.versionName", "RESONATOR_VERSION_NAME", "0.4.1")
         // The official network's relays; empty for iroh's public relays
         // and no push.
         buildConfigField("String", "IROH_RELAY",

@@ -126,8 +126,8 @@
   border-radius: var(--radius-1);
   background: var(--c-surface-2);
   color: var(--c-text-2);
-  font-size: 9px;
-  line-height: 12px;
+  font-size: var(--fs-xs);
+  line-height: 1.25;
   white-space: nowrap;
   text-overflow: ellipsis;
   pointer-events: none;
@@ -155,10 +155,11 @@
   scrollbar-width: none;
 }
 .wave-tool {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-  min-height: 2rem;
+  min-height: var(--tap);
   padding: 0 var(--sp-2);
   font-size: var(--fs-sm);
   white-space: nowrap;
@@ -452,11 +453,9 @@
   background: transparent;
   color: var(--c-text-3);
   cursor: pointer;
-  opacity: 0.55;
 }
 .continuation:hover,
 .continuation:focus-visible {
-  opacity: 1;
   color: var(--c-accent);
 }
 .continuation .icon {
@@ -588,7 +587,7 @@
 
 /* ---- phones ---- */
 
-@media (max-width: 47.99rem) {
+@container app (max-width: 47.99em) {
   .wave-back {
     display: inline-flex;
   }
@@ -602,8 +601,15 @@
   .wave-scroll {
     padding: var(--sp-2) var(--sp-2) var(--sp-5);
   }
+  /* Hidden from sight only: the label stays the button's name. */
   .wave-tool-label-wide {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .blip-replies {
     margin-inline-start: var(--sp-2);
@@ -770,4 +776,19 @@
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-2);
+}
+
+/* Very large text on a phone: the avatar moves into the line with the name,
+   so the text gets the whole width. */
+@container app (max-width: 18em) {
+  .blip-main {
+    padding-inline-start: var(--sp-3);
+  }
+  .blip-avatar {
+    position: static;
+    flex: none;
+  }
+  .blip-meta {
+    flex-wrap: wrap;
+  }
 }

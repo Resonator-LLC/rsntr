@@ -12,5 +12,6 @@ reference/
 
 # Playwright run state
 client/e2e/.results/
+client/e2e/.results-visual/
 client/test-results/
 client/playwright-report/

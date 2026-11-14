@@ -252,3 +252,28 @@
     pointer-events: auto;
   }
 }
+
+/* Very large text on a phone: the search field, the folders and the list
+   rows wrap instead of squeezing. */
+@container app (max-width: 18em) {
+  .search-head,
+  .search-folders {
+    flex-wrap: wrap;
+  }
+  .search-form {
+    flex-basis: 100%;
+  }
+  .digest-link {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .digest-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .digest-info {
+    grid-column: 2;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+}

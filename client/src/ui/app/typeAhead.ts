@@ -40,18 +40,19 @@ export function holdTyping(doc: Document = document): () => void {
       return;
     }
     stop();
-    // After the editor has placed its caret, typed as input events, the
-    // way the editor receives the keyboard.
+    // After the editor has placed its caret, as the input events through
+    // which the editor receives typing.
     queueMicrotask(() => {
       if (doc.activeElement !== target) {
         return;
       }
       for (const text of held.join("").split(/(\n)/)) {
-        if (text === "\n") {
-          doc.execCommand("insertParagraph");
-        } else if (text !== "") {
-          doc.execCommand("insertText", false, text);
+        if (text === "") {
+          continue;
         }
+        const init: InputEventInit =
+          text === "\n" ? { inputType: "insertParagraph" } : { inputType: "insertText", data: text };
+        target.dispatchEvent(new InputEvent("beforeinput", { ...init, bubbles: true, cancelable: true }));
       }
     });
   };

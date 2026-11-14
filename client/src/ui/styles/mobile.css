@@ -178,7 +178,7 @@ button,
   padding-top: env(safe-area-inset-top);
 }
 
-@media (max-width: 47.99rem) {
+@container app (max-width: 47.99em) {
   .app-body {
     padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);

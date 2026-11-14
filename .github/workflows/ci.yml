@@ -65,6 +65,17 @@ jobs:
           name: e2e-results
           path: client/e2e/.results
           retention-days: 7
+      # Screenshots, in the browsers of the official Playwright image (see
+      # client/playwright.visual.config.ts).
+      - name: Screenshot tests
+        if: success() || failure()
+        run: cd client && RESONATOR_BINARY="$PWD/../target/debug/resonator-server" RESONATOR_NODE_BINARY="$PWD/../target/debug/resonator" npm run test:visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-results
+          path: client/e2e/.results-visual
+          retention-days: 7
 
   android:
     runs-on: ubuntu-latest

@@ -20,9 +20,13 @@ export interface User {
   readonly password: string;
 }
 
-/** Registers an account through the HTTP API (fast) and returns it. */
-export async function createUser(servers: TestServers, prefix = "user"): Promise<User> {
-  const name = uniqueName(prefix);
+/**
+ * Registers an account through the HTTP API (fast) and returns it. The
+ * name is the prefix plus a unique suffix, or exactly `prefix` with `exact`
+ * (for screenshots, which must not change from run to run).
+ */
+export async function createUser(servers: TestServers, prefix = "user", exact = false): Promise<User> {
+  const name = exact ? prefix : uniqueName(prefix);
   const password = "correct horse battery";
   const response = await fetch(`${servers.backendUrl}/auth/register`, {
     method: "POST",

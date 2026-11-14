@@ -224,7 +224,7 @@
   width: min(14rem, 100%);
   aspect-ratio: 1;
   padding: var(--sp-2);
-  background: #ffffff;
+  background: #ffffff; /* a QR code needs a white quiet zone, in dark mode too */
   border-radius: var(--radius-1);
 }
 .settings-qr svg {
@@ -415,7 +415,7 @@
   background: rgb(255 255 255 / 16%);
 }
 
-@media (max-width: 47.99rem) {
+@container app (max-width: 47.99em) {
   .settings-page {
     border: 0;
     border-radius: 0;

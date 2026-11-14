@@ -6,6 +6,9 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
   testMatch: "**/*.spec.ts",
+  // Screenshots run against the pinned browsers of the Playwright image:
+  // `npm run test:visual` (playwright.visual.config.ts).
+  testIgnore: "visual/**",
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

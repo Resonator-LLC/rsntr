@@ -178,7 +178,7 @@
   color: var(--c-accent);
 }
 .edit-button:disabled { opacity: 0.4; cursor: default; }
-.edit-button:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.edit-button:focus-visible { box-shadow: var(--focus-ring); }
 
 .edit-done {
   background: var(--c-accent);
@@ -231,9 +231,9 @@
   cursor: pointer;
 }
 .edit-swatch[aria-pressed="true"] { border-color: var(--c-accent); box-shadow: var(--focus-ring); }
-.edit-swatch:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.edit-swatch:focus-visible { box-shadow: var(--focus-ring); }
 
-@media (max-width: 40rem) {
+@container app (max-width: 40em) {
   .edit-row { flex-wrap: nowrap; }
   .edit-align, .edit-select-narrow, [data-command="superscript"], [data-command="subscript"] { display: none; }
 }

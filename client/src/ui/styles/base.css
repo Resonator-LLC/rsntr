@@ -16,6 +16,7 @@ body,
   height: 100%;
 }
 
+
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -56,7 +57,10 @@ a {
 }
 
 :focus-visible {
-  outline: none;
+  /* The ring is a shadow; the transparent outline is what Windows contrast
+     themes paint instead, as they drop shadows. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
@@ -125,7 +129,7 @@ a {
 .btn-danger {
   border-color: var(--c-danger);
   background: var(--c-danger);
-  color: #fff;
+  color: var(--c-text-on-danger);
 }
 
 .btn-ghost {
@@ -340,4 +344,19 @@ a {
 .notice-error {
   background: var(--c-danger-soft);
   color: var(--c-danger);
+}
+
+/* Windows contrast themes: system colours replace ours, and borders and
+   shadows that only differ in colour vanish, so focus and the current blip
+   get a real outline. */
+@media (forced-colors: active) {
+  .blip-main.blip-focused,
+  .search-box:focus-within,
+  .doc-editable:focus {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+  .blip-main.blip-focused:focus-visible {
+    outline-width: 3px;
+  }
 }

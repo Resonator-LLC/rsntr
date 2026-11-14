@@ -10,10 +10,16 @@
   stroke-linecap: round;
 }
 
+/* The layout breaks by the width of .app in em, that is in the page's text
+   size (`@container app`), not by the screen width: with larger text the
+   app turns into one column sooner and never overflows (WCAG 1.4.4,
+   1.4.10). Not on #app: Chromium keeps the old em there when the text size
+   changes before the app is drawn. */
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
+  container: app / inline-size;
 }
 
 /* ---- top bar ---- */
@@ -42,6 +48,10 @@
   border-radius: var(--radius-1);
   padding: 2px var(--sp-1);
 }
+/* On the blue bar the focus ring is light, so it shows. */
+.topbar :focus-visible {
+  box-shadow: 0 0 0 2px var(--c-topbar), 0 0 0 4px var(--c-topbar-text);
+}
 /* The page's one h1, styled as the brand. */
 .topbar-product {
   font: inherit;
@@ -57,7 +67,7 @@
 }
 
 .topbar-saved.is-unsaved {
-  color: #ffd27a;
+  color: var(--c-topbar-warn);
 }
 
 .topbar-net {
@@ -73,38 +83,38 @@
 }
 button.topbar-net {
   cursor: pointer;
-  background: rgb(255 255 255 / 12%);
+  background: var(--c-topbar-control);
 }
 button.topbar-net:hover {
-  background: rgb(255 255 255 / 22%);
+  background: var(--c-topbar-control-hover);
 }
 
 .topbar-update {
   border: 0;
   padding: 2px var(--sp-2);
   border-radius: var(--radius-round);
-  background: #ffd27a;
-  color: #1f2a44;
+  background: var(--c-topbar-warn);
+  color: var(--c-topbar-warn-text);
   font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
 .topbar-update:hover {
-  background: #ffe2a6;
+  background: var(--c-topbar-warn-hover);
 }
 
 .topbar-net-dot {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: var(--radius-round);
-  background: #6ee07f;
+  background: var(--c-topbar-ok);
 }
 .topbar-net.is-offline .topbar-net-dot {
-  background: #ff8a80;
+  background: var(--c-topbar-bad);
 }
 .topbar-net.is-connecting .topbar-net-dot {
-  background: #ffd27a;
+  background: var(--c-topbar-warn);
 }
 
 .topbar-user {
@@ -121,7 +131,7 @@ button.topbar-net:hover {
   gap: var(--sp-1);
   min-height: 2rem;
   padding: 0 var(--sp-2);
-  border: 1px solid rgb(255 255 255 / 28%);
+  border: 1px solid var(--c-topbar-text-2);
   border-radius: var(--radius-1);
   background: transparent;
   color: inherit;
@@ -129,7 +139,7 @@ button.topbar-net:hover {
   cursor: pointer;
 }
 .topbar-signout:hover {
-  background: rgb(255 255 255 / 12%);
+  background: var(--c-topbar-control);
 }
 
 .app-problem {
@@ -172,14 +182,14 @@ button.topbar-net:hover {
   flex: 1;
 }
 
-@media (max-width: 60rem) {
-  :root {
+@container app (max-width: 60em) {
+  .app-body {
     --search-w: 20rem;
   }
 }
 
 /* Phones: one panel at a time. */
-@media (max-width: 47.99rem) {
+@container app (max-width: 47.99em) {
   .app-body {
     padding: 0;
     gap: 0;
@@ -386,4 +396,16 @@ button.topbar-net:hover {
 .app-splash .wave-mark {
   width: 3rem;
   height: 3rem;
+}
+
+/* Very large text on a phone: the mark stands for the name. */
+@container app (max-width: 18em) {
+  .topbar-product {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }

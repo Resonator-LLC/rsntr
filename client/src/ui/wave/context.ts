@@ -18,7 +18,8 @@ export type DialogState =
   | { readonly kind: "addParticipant" }
   | { readonly kind: "removeSelf"; readonly address: string }
   | { readonly kind: "attachment"; readonly file: File }
-  | { readonly kind: "app"; readonly file: File };
+  | { readonly kind: "app"; readonly file: File }
+  | { readonly kind: "appLog"; readonly gadgetId: string; readonly name: string };
 
 export interface AnchoredState {
   readonly anchor: HTMLElement;

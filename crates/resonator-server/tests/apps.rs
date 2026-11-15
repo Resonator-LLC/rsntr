@@ -15,8 +15,9 @@ use std::time::Duration;
 use resonator_apps::{UiEvent, UiNode};
 use resonator_model::docop::{Attributes, DocInitialization, DocOpBuilder};
 use resonator_model::id::{ParticipantId, WaveId};
-use resonator_server::apps::{AppManager, AppSignal, GRANT_KEY, OpenError};
+use resonator_server::apps::{AppManager, AppSignal, GRANT_KEY, OpenError, app_wavelet};
 use resonator_server::attachment::AttachmentId;
+use resonator_server::waveserver::WaveletProvider;
 
 use common::{DOMAIN, participant};
 use net::{TIMEOUT, TestServer};
@@ -195,6 +196,82 @@ async fn an_allowed_gadget_runs_and_keeps_its_kv() {
         apps.open(&user("carol"), &wave, GADGET).await,
         Err(OpenError::NotParticipant)
     ));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn posts_go_through_the_app_wavelet_to_every_instance() {
+    let (server, wave, app, bundle) = setup(300).await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let (alice, bob) = (user("alice"), user("bob"));
+    allow(&server, &alice, &wave, &app).await;
+    allow(&server, &bob, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let bobs = apps.open(&bob, &wave, GADGET).await.unwrap();
+
+    // Each click posts ("inc", count); Bob's counter follows the messages.
+    for _ in 0..3 {
+        alices.event(0, click()).await.unwrap();
+    }
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        if count(&bobs.render(0).await.unwrap()) == "3" {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Bob's counter did not follow"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // The app wavelet has the conversation's participants and one document
+    // per message, by Alice.
+    let name = app_wavelet(&wave, GADGET).unwrap();
+    let snapshot = |server: &TestServer| {
+        let server = server.app().server().clone();
+        let name = name.clone();
+        async move { server.get_snapshot(&name).await.unwrap().unwrap().snapshot }
+    };
+    let data = snapshot(&server).await;
+    assert_eq!(data.participants(), [alice.clone(), bob.clone()]);
+    let messages: Vec<_> = data
+        .documents()
+        .filter(|d| d.id().starts_with("msg+"))
+        .collect();
+    assert_eq!(messages.len(), 3);
+    assert!(messages.iter().all(|d| *d.author() == alice));
+
+    // Someone joining the conversation joins the app wavelet too.
+    let carol = user("carol");
+    edit_root(server.app().server(), &alice, &wave, |conversation| {
+        conversation.add_participant(&carol).unwrap();
+    })
+    .await;
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while !snapshot(&server).await.participants().contains(&carol) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Carol was not added"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Carol's instance, once she allows it, follows the next post (the
+    // counter reads only its kv at start, not the earlier messages).
+    allow(&server, &carol, &wave, &app).await;
+    let carols = apps.open(&carol, &wave, GADGET).await.unwrap();
+    assert_eq!(count(&carols.render(0).await.unwrap()), "0");
+    alices.event(0, click()).await.unwrap();
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while count(&carols.render(0).await.unwrap()) != "4" {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Carol's counter did not catch up"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     server.shutdown().await;
 }
 

@@ -162,6 +162,18 @@ test("Insert app runs the counter in the blip, and clicks reach it", async ({ br
   await expect(page.locator(".topbar-saved")).toHaveText("Saved", { timeout: 15_000 });
   await shoot(page, "apps-01-counter");
 
+  // Each click posted ("inc", count) to the app wavelet: the Log shows them,
+  // and the wave shows nothing else (no blip, no unread).
+  await page.locator(".doc-app .app-log-button").click();
+  const items = page.locator(".app-log-item");
+  await expect(items).toHaveCount(2, { timeout: 15_000 });
+  await expect(items.nth(0).locator(".app-log-kind")).toHaveText("inc");
+  await expect(items.nth(1).locator(".app-log-body")).toHaveText("2");
+  await expect(items.nth(0).locator(".app-log-author")).toHaveText(/^me@/);
+  await shoot(page, "apps-02-log");
+  await page.locator(".dialog-actions .btn-primary").click();
+  await expect(page.locator(".blip")).toHaveCount(1);
+
   // After a reload the app starts again from its kv, already allowed.
   await page.reload();
   await expect(page.locator(".doc-app .app-status")).toHaveText("Running", { timeout: 60_000 });

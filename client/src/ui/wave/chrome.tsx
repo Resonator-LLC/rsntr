@@ -13,6 +13,7 @@ import type { DirectoryEntry, ProbeResult } from "../../net/http";
 import { Avatar } from "../profiles/Avatar";
 import { baseFileName } from "./attachments";
 import { type WaveUi, WaveUiContext } from "./context";
+import { AppLog } from "../waveapps/AppLog";
 import { Dialog } from "./Dialog";
 import {
   ArchiveIcon,
@@ -978,5 +979,7 @@ export function Dialogs() {
       return <AttachmentDialog file={dialog.file} onClose={close} />;
     case "app":
       return <InsertAppDialog file={dialog.file} onClose={close} />;
+    case "appLog":
+      return <AppLog wave={ui.store.wave} gadgetId={dialog.gadgetId} name={dialog.name} onClose={close} />;
   }
 }

@@ -1298,3 +1298,217 @@ async fn names_and_avatars_are_fetched_from_their_domain() {
     b.stop().await;
     a.stop().await;
 }
+
+// ---- wave apps ----
+
+const COUNTER: &[u8] = include_bytes!("../../resonator-apps/tests/fixtures/counter_rs.wasm");
+const GADGET: &str = "g1";
+
+/// A bundle of the Rust counter and its app id.
+fn counter_bundle() -> (Vec<u8>, String) {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zip.start_file("manifest.json", options).unwrap();
+    zip.write_all(br#"{"name":"counter","version":"1","permissions":["wave","kv"]}"#)
+        .unwrap();
+    zip.start_file("app.wasm", options).unwrap();
+    zip.write_all(COUNTER).unwrap();
+    let bytes = zip.finish().unwrap().into_inner();
+    let id = resonator_apps::Bundle::from_zip(&bytes).unwrap().id();
+    (bytes, id)
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// Appends a blip holding the counter's gadget to the root as `author`.
+async fn insert_counter(
+    node: &Node,
+    author: &ParticipantId,
+    root: &WaveletName,
+    app: &str,
+    bundle: &str,
+) {
+    use resonator_model::conversation::WaveletBasedConversation;
+    use resonator_model::docop::{Attributes, DocOpBuilder};
+    use resonator_model::id::IdGeneratorImpl;
+    use resonator_model::wavelet::OpBasedWavelet;
+    use resonator_server::waveserver::WaveletProvider;
+
+    let data = node
+        .server()
+        .get_snapshot(root)
+        .await
+        .unwrap()
+        .unwrap()
+        .snapshot;
+    let content = DocOpBuilder::new()
+        .element_start("body", Attributes::new())
+        .element_start("line", Attributes::new())
+        .element_end()
+        .element_start(
+            "gadget",
+            Attributes::from_pairs([("app", app), ("bundle", bundle), ("id", GADGET)]).unwrap(),
+        )
+        .element_end()
+        .element_end()
+        .build_initialization()
+        .unwrap();
+    let domain = node.domain.clone();
+    let mut ids = IdGeneratorImpl::new(&domain, || "appseed".to_owned());
+    let mut wavelet = OpBasedWavelet::new(data, author.clone(), now_millis());
+    {
+        let mut conversation = WaveletBasedConversation::new(&mut wavelet, &mut ids).unwrap();
+        conversation
+            .append_blip_with_content("", Some(&content))
+            .unwrap();
+    }
+    let delta = wavelet.take_delta().unwrap();
+    node.server().submit_delta(root, &delta).await.unwrap();
+}
+
+/// Allows the gadget's app for `user` in their user-data wavelet, on their
+/// own server.
+async fn allow_app(node: &Node, user: &ParticipantId, root: &WaveletName, app: &str) {
+    use resonator_model::data::WaveletData;
+    use resonator_model::id::util::build_user_data_wavelet_id;
+    use resonator_model::supplement::{
+        DefaultFollow, SupplementedWaveImpl, WaveletBasedSupplement, WaveletDataView,
+    };
+    use resonator_model::version::HashedVersionFactory;
+    use resonator_model::wavelet::OpBasedWavelet;
+    use resonator_server::apps::GRANT_KEY;
+    use resonator_server::waveserver::WaveletProvider;
+
+    let server = node.server();
+    let root_data = server.get_snapshot(root).await.unwrap().unwrap().snapshot;
+    let name = WaveletName::of(
+        root.wave_id.clone(),
+        build_user_data_wavelet_id(user).unwrap(),
+    );
+    let mut udw = match server.get_snapshot(&name).await.unwrap() {
+        Some(committed) => OpBasedWavelet::new(committed.snapshot, user.clone(), now_millis()),
+        None => {
+            let data = WaveletData::empty(
+                &name,
+                user.clone(),
+                HashedVersionFactory::create_version_zero(&name),
+                now_millis(),
+            );
+            let mut udw = OpBasedWavelet::new(data, user.clone(), now_millis());
+            udw.add_participant(user).unwrap();
+            udw
+        }
+    };
+    {
+        let view = WaveletDataView::new(user.clone(), [&root_data]);
+        let state = WaveletBasedSupplement::create(&mut udw).unwrap();
+        let mut supplement = SupplementedWaveImpl::new(state, view, DefaultFollow::Always);
+        supplement
+            .set_gadget_state(GADGET, GRANT_KEY, Some(app))
+            .unwrap();
+    }
+    let delta = udw.take_delta().unwrap();
+    server.submit_delta(&name, &delta).await.unwrap();
+}
+
+fn count(nodes: &[resonator_apps::UiNode]) -> String {
+    nodes[1].text.clone().unwrap_or_default()
+}
+
+fn click() -> resonator_apps::UiEvent {
+    resonator_apps::UiEvent {
+        node: 2,
+        name: "click".into(),
+        value: None,
+        fields: vec![],
+    }
+}
+
+async fn wait_for_count(session: &resonator_server::apps::AppSession, wanted: &str) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let now = count(&session.render(0).await.unwrap());
+        if now == wanted {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "count stayed {now}, wanted {wanted}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wave_app_runs_on_both_servers_and_its_messages_travel() {
+    let site_a = Site::new(Some(A));
+    let site_b = Site::new(None);
+    let mut config_a = site_a.config(&[&site_b]);
+    let mut config_b = site_b.config(&[&site_a]);
+    config_a.apps.enabled = true;
+    config_b.apps.enabled = true;
+    let a = Node::start(config_a).await;
+    let b = Node::start(config_b).await;
+    let alice_cookie = a.cookie("alice").await;
+    let alice_token = a.token_for(&alice_cookie).await;
+    let bob_token = b.token("bob").await;
+    let (alice, bob) = (
+        ParticipantId::new_unchecked(&a.address("alice")),
+        ParticipantId::new_unchecked(&b.address("bob")),
+    );
+
+    let (wave, wavelet, _) = a.create_wave(&alice_token, &[&a.address("alice")]).await;
+    a.run(
+        &alice_token,
+        json!([add_participant(&wave, &wavelet, &b.address("bob"))]),
+    )
+    .await;
+    converged((&a, &alice_token), (&b, &bob_token), &wave, &wavelet).await;
+    let root = name(&wave, &wavelet);
+
+    // The bundle is an attachment on A; the gadget names it.
+    let (bytes, app) = counter_bundle();
+    let bundle = format!("{A}/counter");
+    assert_eq!(a.upload(&alice_cookie, &bundle, &wave, &bytes).await, 201);
+    insert_counter(&a, &alice, &root, &app, &bundle).await;
+    allow_app(&a, &alice, &root, &app).await;
+    allow_app(&b, &bob, &root, &app).await;
+    converged((&a, &alice_token), (&b, &bob_token), &wave, &wavelet).await;
+
+    let apps_a = a.app.as_ref().unwrap().state().apps.clone().unwrap();
+    let apps_b = b.app.as_ref().unwrap().state().apps.clone().unwrap();
+    let alices = apps_a.open(&alice, &root.wave_id, GADGET).await.unwrap();
+    // B fetches the bundle from A to run Bob's instance.
+    let bobs = {
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            match apps_b.open(&bob, &root.wave_id, GADGET).await {
+                Ok(session) => break session,
+                Err(error) => {
+                    assert!(tokio::time::Instant::now() < deadline, "Bob's app: {error}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    };
+
+    // Alice's posts are created at the host, A, and reach Bob's instance on B.
+    for _ in 0..3 {
+        alices.event(0, click()).await.unwrap();
+    }
+    wait_for_count(&bobs, "3").await;
+    // Bob's post goes to the host and back to Alice's instance.
+    bobs.event(0, click()).await.unwrap();
+    wait_for_count(&alices, "4").await;
+
+    drop((alices, bobs));
+    a.stop().await;
+    b.stop().await;
+}

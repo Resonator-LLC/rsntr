@@ -418,3 +418,20 @@ html.lightbox-shown body {
   0%, 70% { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* The Log of a wave app. */
+.app-log { max-height: 60vh; overflow: auto; }
+.app-log-empty { color: var(--c-text-3); margin: 0; }
+.app-log-list { list-style: none; margin: 0; padding: 0; }
+.app-log-item { padding: var(--sp-1) 0; border-bottom: 1px solid var(--c-border); }
+.app-log-item:last-child { border-bottom: 0; }
+.app-log-meta { display: flex; flex-wrap: wrap; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--c-text-3); }
+.app-log-author { color: var(--c-text); font-weight: 600; }
+.app-log-kind { font-family: ui-monospace, monospace; }
+.app-log-body {
+  margin: var(--sp-1) 0 0;
+  font-family: ui-monospace, monospace;
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -8,9 +8,13 @@
 //! the node goes to the background. Messages it missed meanwhile stay in
 //! the app wavelet.
 
+mod wavelet;
+
+pub use wavelet::{app_wavelet, gadget_of, is_app_wavelet};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -30,7 +34,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::attachment::{AttachmentId, AttachmentService};
 use crate::config::AppsConfig;
 use crate::storage::{AppKvScope, AppKvStore};
-use crate::waveserver::{WaveBusEvent, WaveServer};
+use crate::waveserver::{WaveBusEvent, WaveServer, WaveletProvider};
 
 /// The `m/gadgets` key whose value allows a gadget's app: the app id
 /// (`sha256:<hex>`) the user allowed.
@@ -93,6 +97,9 @@ struct Running {
     handle: InstanceHandle,
     signals: broadcast::Sender<AppSignal>,
     viewers: AtomicUsize,
+    /// The sequence number of the last message of the app wavelet handed
+    /// to the instance.
+    delivered: AtomicU64,
     /// When the last viewer left; `None` while someone views it.
     idle_since: Mutex<Option<Instant>>,
     /// The task applying the instance's effects.
@@ -180,6 +187,12 @@ impl Drop for AppSession {
             *lock(&self.running.idle_since) = Some(Instant::now());
         }
     }
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -401,6 +414,8 @@ impl AppManager {
             .load(&scope)
             .await
             .map_err(|e| OpenError::Failed(e.to_string()))?;
+        let messages = self.messages(key, 0).await;
+        let delivered = messages.last().map_or(0, |m| m.seq);
         let component = self
             .component(&gadget.app, bundle.wasm)
             .await
@@ -417,6 +432,7 @@ impl AppManager {
             },
             snapshot: Snapshot {
                 kv,
+                messages,
                 ..Snapshot::default()
             },
             deadlines: Deadlines::default(),
@@ -444,11 +460,20 @@ impl AppManager {
             handle,
             signals,
             viewers: AtomicUsize::new(0),
+            delivered: AtomicU64::new(delivered),
             idle_since: Mutex::new(Some(Instant::now())),
             effects: effects_task,
         });
         lock(&self.0.instances).insert(key.clone(), Arc::clone(&running));
         tracing::info!(app = %name, wave = %key.wave, gadget = %key.gadget, "started app");
+        // Messages that came while it started, and the participants of the
+        // app wavelet as they should be.
+        let manager = self.clone();
+        let started = key.clone();
+        tokio::spawn(async move {
+            manager.deliver(&started).await;
+            manager.mirror(&started).await;
+        });
         Ok(running)
     }
 
@@ -464,6 +489,113 @@ impl AppManager {
             .map_err(|e| AppError::Compile(e.to_string()))??;
         lock(&self.0.components).insert(app.to_owned(), component.clone());
         Ok(component)
+    }
+
+    /// The messages of the app wavelet of `key` after `since`, if the
+    /// account may read it.
+    async fn messages(&self, key: &AppKey, since: u64) -> Vec<resonator_apps::WaveMessage> {
+        let Some(name) = app_wavelet(&key.wave, &key.gadget) else {
+            return Vec::new();
+        };
+        self.0
+            .server
+            .with_wavelet(&name, |data| {
+                if data.participants().contains(&key.account) {
+                    wavelet::messages(data, since)
+                } else {
+                    Vec::new()
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    /// Hands the instance of `key` the messages it has not seen.
+    async fn deliver(&self, key: &AppKey) {
+        let Some(running) = lock(&self.0.instances).get(key).cloned() else {
+            return;
+        };
+        let since = running.delivered.load(Ordering::Acquire);
+        let messages = self.messages(key, since).await;
+        let Some(last) = messages.last().map(|m| m.seq) else {
+            return;
+        };
+        // Two deliveries may race; the instance drops what it has seen.
+        running.delivered.fetch_max(last, Ordering::AcqRel);
+        if let Err(error) = running.handle.send(Event::Messages(messages)).await {
+            tracing::debug!(wave = %key.wave, gadget = %key.gadget, %error, "could not hand messages to an app");
+        }
+    }
+
+    /// The participants of the conversation of `key`.
+    async fn root_participants(&self, wave: &WaveId) -> Option<Vec<ParticipantId>> {
+        self.0
+            .server
+            .with_wavelet(&Self::root(wave).ok()?, |data| data.participants().to_vec())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Posts a message of the app of `key` to its app wavelet, creating it
+    /// with the conversation's participants if need be.
+    async fn post(&self, key: &AppKey, kind: &str, body: &str) -> Result<(), String> {
+        let name = app_wavelet(&key.wave, &key.gadget)
+            .ok_or_else(|| "the gadget id cannot name an app wavelet".to_owned())?;
+        let root = self
+            .root_participants(&key.wave)
+            .await
+            .ok_or_else(|| "the wave is gone".to_owned())?;
+        if !root.contains(&key.account) {
+            return Err("not a participant of the wave".to_owned());
+        }
+        // A wavelet created meanwhile by another node: the second try sees it.
+        let mut last_error = String::new();
+        for _ in 0..2 {
+            let current = self
+                .0
+                .server
+                .get_snapshot(&name)
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|committed| committed.snapshot);
+            let delta = wavelet::post_delta(
+                &name,
+                current,
+                &root,
+                &key.account,
+                kind,
+                body,
+                now_millis(),
+            )?;
+            match self.0.server.submit_delta(&name, &delta).await {
+                Ok(_) => return Ok(()),
+                Err(error) => last_error = error.to_string(),
+            }
+        }
+        Err(last_error)
+    }
+
+    /// Brings the participants of the app wavelet of `key` up to date with
+    /// the conversation's, as the instance's account if it is one of them.
+    async fn mirror(&self, key: &AppKey) {
+        let Some(name) = app_wavelet(&key.wave, &key.gadget) else {
+            return;
+        };
+        let Some(root) = self.root_participants(&key.wave).await else {
+            return;
+        };
+        let Ok(Some(current)) = self.0.server.get_snapshot(&name).await else {
+            return;
+        };
+        if let Some(delta) =
+            wavelet::mirror_delta(current.snapshot, &root, &key.account, now_millis())
+            && let Err(error) = self.0.server.submit_delta(&name, &delta).await
+        {
+            tracing::debug!(wave = %key.wave, gadget = %key.gadget, %error, "could not update the app wavelet's participants");
+        }
     }
 
     /// Stops the instance of `key`, telling its viewers why.
@@ -498,6 +630,19 @@ impl AppManager {
             let WaveBusEvent::Update { wavelet_name, .. } = event else {
                 continue;
             };
+            if let Some(gadget) = gadget_of(&wavelet_name.wavelet_id) {
+                let listening: Vec<AppKey> = lock(&self.0.instances)
+                    .keys()
+                    .filter(|key| key.wave == wavelet_name.wave_id && key.gadget == gadget)
+                    .cloned()
+                    .collect();
+                for key in listening {
+                    self.deliver(&key).await;
+                }
+                continue;
+            }
+            let root_changed =
+                Self::root(&wavelet_name.wave_id).is_ok_and(|root| root == wavelet_name);
             let affected: Vec<AppKey> = lock(&self.0.instances)
                 .keys()
                 .filter(|key| key.wave == wavelet_name.wave_id)
@@ -509,6 +654,10 @@ impl AppManager {
                     && self.allowed(&key).await != Some(app)
                 {
                     self.stop(&key, AppSignal::Stopped);
+                } else if root_changed {
+                    // Off the watcher: the submit may wait for another node.
+                    let manager = self.clone();
+                    tokio::spawn(async move { manager.mirror(&key).await });
                 }
             }
         }
@@ -582,10 +731,14 @@ impl Applier {
                         tracing::info!(app = %self.name, "{message}")
                     }
                 },
-                // The app wavelet and the peer channel come later; until
-                // then posts and peer traffic go nowhere.
-                Effect::Post { .. }
-                | Effect::Send { .. }
+                Effect::Post { kind, body } => {
+                    if let Err(error) = self.manager.post(&self.key, &kind, &body).await {
+                        tracing::info!(app = %self.name, %error, "could not post the app's message");
+                    }
+                }
+                // The peer channel comes later; until then peer traffic
+                // goes nowhere.
+                Effect::Send { .. }
                 | Effect::Open { .. }
                 | Effect::Write { .. }
                 | Effect::Close { .. } => {}

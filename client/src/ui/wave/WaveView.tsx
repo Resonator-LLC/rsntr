@@ -81,6 +81,7 @@ function waveAppsUi(
   waveId: string,
   wave: OpenWave,
   attachments: WaveAttachments | null,
+  dialog: WaveUi["dialog"],
 ): WaveAppsUi {
   return {
     waveId,
@@ -90,7 +91,9 @@ function waveAppsUi(
       wave.writeSupplement((s) => s.setGadgetState(gadgetId, APP_GRANT_KEY, appId));
     },
     attachmentUrl: (id) => attachments?.attachmentUrl(id) ?? null,
-    showLog: null,
+    showLog: (gadgetId, name) => {
+      dialog.value = { kind: "appLog", gadgetId, name };
+    },
   };
 }
 
@@ -208,6 +211,7 @@ export function WaveView(props: WaveViewProps) {
     const waveIdString = serialiser.serialiseWaveId(wave.waveId);
     const waveletIdString = serialiser.serialiseWaveletId(store.waveletId);
     const mentionKeys: WaveUi["mentionKeys"] = { current: null };
+    const dialog: WaveUi["dialog"] = signal(null);
     const attachments =
       props.attachmentService !== null
         ? new WaveAttachments(
@@ -229,7 +233,7 @@ export function WaveView(props: WaveViewProps) {
       attachments,
       apps:
         props.apps !== undefined && props.apps !== null
-          ? waveAppsUi(props.apps, waveIdString, wave, attachments)
+          ? waveAppsUi(props.apps, waveIdString, wave, attachments, dialog)
           : null,
       newAttachmentId: () => idGenerator.next(),
       viewer: props.viewer,
@@ -238,7 +242,7 @@ export function WaveView(props: WaveViewProps) {
       probe: props.probe ?? null,
       menu: signal(null),
       participantCard: signal(null),
-      dialog: signal(null),
+      dialog,
       waveLinkHref: (value) => {
         const route = routeOfWaveLink(value);
         if (route === null) {

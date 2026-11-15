@@ -35,3 +35,6 @@ tokio-tungstenite = "0.29"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+# Wave apps across two nodes, for tests/federation.rs.
+resonator-apps = { path = "../resonator-apps" }
+zip = { version = "2", default-features = false }

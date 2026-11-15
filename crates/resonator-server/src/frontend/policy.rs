@@ -22,13 +22,18 @@ pub trait WaveletPolicy: Send + Sync + 'static {
 }
 
 /// The default policy: a user-data wavelet (`user+<address>`) may only be
-/// created, written and read by the user it belongs to.
+/// created, written and read by the user it belongs to; an app wavelet
+/// (`app+<gadget>`) is written only by the node's wave apps, never from a
+/// client.
 ///
 /// The original enforces nothing here: any participant may create any
 /// wavelet id, including another user's data wavelet, which it could then
 /// fill before the owner's client first writes to it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultPolicy;
+
+/// The prefix of app wavelet ids (`apps::wavelet`).
+const APP_WAVELET_PREFIX: &str = "app+";
 
 impl DefaultPolicy {
     fn owns(participant: &ParticipantId, wavelet_name: &WaveletName) -> bool {
@@ -50,6 +55,11 @@ impl WaveletPolicy for DefaultPolicy {
         participant: &ParticipantId,
         wavelet_name: &WaveletName,
     ) -> Result<(), String> {
+        if wavelet_name.wavelet_id.id().starts_with(APP_WAVELET_PREFIX) {
+            return Err(format!(
+                "{wavelet_name} is written by its app, not by clients"
+            ));
+        }
         if Self::owns(participant, wavelet_name) {
             Ok(())
         } else {
@@ -90,5 +100,14 @@ mod tests {
             assert!(policy.may_access(&bob, &name(other)), "{other}");
             assert!(policy.may_submit(&bob, &name(other)).is_ok(), "{other}");
         }
+    }
+
+    #[test]
+    fn app_wavelets_are_read_but_not_written_by_clients() {
+        let alice = ParticipantId::of("alice@example.com").unwrap();
+        let policy = DefaultPolicy;
+        let app = name("app+g1");
+        assert!(policy.may_access(&alice, &app));
+        assert!(policy.may_submit(&alice, &app).is_err());
     }
 }

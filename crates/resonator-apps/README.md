@@ -31,7 +31,7 @@ in document order, each naming its parent by index.
   as `Effect`s and carried out after the call returns, so a call never
   blocks on the node.
 - The manifest grants permissions (`wave`, `kv`, `peers`, `streams`,
-  `media`). An ungranted write returns `Err("permission denied")`; an
+  `media`, `camera`). An ungranted write returns `Err("permission denied")`; an
   ungranted read returns nothing.
 - Every call has a deadline (200 ms for events, 50 ms for `render`),
   enforced by epoch interruption with a 10 ms tick. Memory is limited to

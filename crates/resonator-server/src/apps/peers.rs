@@ -7,11 +7,17 @@
 //! A peer's id is `<participant>` for an instance on this node and
 //! `<participant>/<device key>` for one on another device.
 //!
-//! An app with the `media` permission also has the peer `viewer` (marked
-//! `local`): the person in front of this node. Their microphone comes as
-//! a datagram stream from it (one Opus frame per datagram), and what the
-//! app writes on a stream it opens to it goes to the viewer's speaker
-//! (a channel byte, then an Opus frame).
+//! An app with the `media` or `camera` permission also has the peer
+//! `viewer` (marked `local`): the person in front of this node.
+//!
+//! - `media`: their microphone comes as a datagram stream from it (one
+//!   Opus frame per datagram); what the app sends it, or writes on a
+//!   datagram stream it opens to it, goes to their speaker (a channel byte,
+//!   then an Opus frame).
+//! - `camera`: their camera comes as a reliable stream from it (a flags
+//!   byte, then an encoded frame: bit 0 a key frame, bits 1-3 the codec,
+//!   0 VP8 and 1 H.264); what the app writes on a reliable stream it opens
+//!   to it is shown to them (a channel byte, then a camera frame).
 
 use async_trait::async_trait;
 use resonator_apps::StreamMode;
@@ -127,23 +133,39 @@ pub(super) struct PeerState {
     viewer: Option<Peer>,
     /// The stream of the viewer's microphone.
     mic: Option<u64>,
+    /// The stream of the viewer's camera.
+    camera: Option<u64>,
 }
 
 /// The id of the peer in front of this node.
 pub const VIEWER: &str = "viewer";
 
-/// What the app writes to the viewer: frames for its speaker.
+/// Most bytes of a camera frame, either way.
+pub const MAX_VIDEO_FRAME: usize = 256 * 1024;
+
+/// What the app writes to the viewer: frames for its speaker, or with
+/// `video` for its screen.
 struct ViewerTx {
     signals: tokio::sync::broadcast::Sender<super::AppSignal>,
+    video: bool,
 }
 
 impl StreamTx for ViewerTx {
     fn write(&self, data: Vec<u8>) -> Result<(), String> {
-        if data.len() < 2 || data.len() > 4096 {
-            return Err("a speaker frame is a channel byte and up to 4095 bytes".to_owned());
-        }
         // Nobody listening is no error.
-        let _ = self.signals.send(super::AppSignal::Media(data));
+        if self.video {
+            if data.len() < 3 || data.len() > MAX_VIDEO_FRAME + 1 {
+                return Err(
+                    "a video frame is a channel byte, a flags byte and up to 256 KiB".to_owned(),
+                );
+            }
+            let _ = self.signals.send(super::AppSignal::Video(data));
+        } else {
+            if data.len() < 2 || data.len() > 4096 {
+                return Err("a speaker frame is a channel byte and up to 4095 bytes".to_owned());
+            }
+            let _ = self.signals.send(super::AppSignal::Media(data));
+        }
         Ok(())
     }
 
@@ -311,12 +333,15 @@ impl AppManager {
         }
     }
 
-    /// Gives an app with the `media` permission its `viewer` peer.
+    /// Gives an app with the `media` or `camera` permission its `viewer`
+    /// peer.
     pub(super) fn announce_viewer(&self, key: &AppKey) {
         let Some(running) = lock(&self.0.instances).get(key).cloned() else {
             return;
         };
-        if !grants(&running, resonator_apps::Permission::Media) {
+        if !grants(&running, resonator_apps::Permission::Media)
+            && !grants(&running, resonator_apps::Permission::Camera)
+        {
             return;
         }
         let viewer = Peer {
@@ -329,31 +354,47 @@ impl AppManager {
         self.update_peers(&running, |_| true);
     }
 
-    /// A frame of the viewer's microphone, for the instance of `key`.
+    /// A frame of the viewer's microphone (or, with `video`, camera), for
+    /// the instance of `key`.
     pub(super) fn viewer_media(
         &self,
         key: &AppKey,
         running: &Arc<Running>,
         frame: Vec<u8>,
+        video: bool,
     ) -> Result<(), String> {
         if !self.is_current(key, running) {
             return Err("the app stopped".to_owned());
         }
-        if !grants(running, resonator_apps::Permission::Media) {
-            return Err("the app takes no media".to_owned());
+        let (permission, refusal) = if video {
+            (
+                resonator_apps::Permission::Camera,
+                "the app takes no camera",
+            )
+        } else {
+            (resonator_apps::Permission::Media, "the app takes no media")
+        };
+        if !grants(running, permission) {
+            return Err(refusal.to_owned());
         }
         let opened = {
             let mut state = lock(&running.peers);
-            match state.mic {
+            let known = if video { state.camera } else { state.mic };
+            match known {
                 Some(stream) => (stream, false),
                 None => {
                     let stream = running.next_incoming.fetch_add(1, Ordering::AcqRel);
-                    // What the app writes back goes to the speaker.
-                    let silent: Arc<dyn StreamTx> = Arc::new(ViewerTx {
+                    // What the app writes back goes to the speaker or screen.
+                    let back: Arc<dyn StreamTx> = Arc::new(ViewerTx {
                         signals: running.signals.clone(),
+                        video,
                     });
-                    state.streams.insert(stream, silent);
-                    state.mic = Some(stream);
+                    state.streams.insert(stream, back);
+                    if video {
+                        state.camera = Some(stream);
+                    } else {
+                        state.mic = Some(stream);
+                    }
                     (stream, true)
                 }
             }
@@ -365,11 +406,16 @@ impl AppManager {
                 .try_send(Event::Stream {
                     stream,
                     from: VIEWER.to_owned(),
-                    mode: StreamMode::Datagram,
+                    mode: if video {
+                        StreamMode::Reliable
+                    } else {
+                        StreamMode::Datagram
+                    },
                 })
                 .map_err(|e| e.to_string())?;
         }
-        // A full mailbox drops the frame, as a datagram would be.
+        // A full mailbox drops the frame, as a datagram would be (for
+        // video too: a late frame is worth less than the next one).
         let _ = running.handle.try_send(Event::StreamData {
             stream,
             data: frame,
@@ -586,15 +632,20 @@ impl AppManager {
         let target = |to: &str| lock(&running.peers).peers.get(to).cloned();
         let has_viewer = lock(&running.peers).viewer.is_some();
         match effect {
-            Effect::Open { to, stream, .. } if to == VIEWER && has_viewer => {
+            Effect::Open { to, stream, mode } if to == VIEWER && has_viewer => {
+                // Reliable streams carry video, for an app with `camera`.
+                let video = matches!(mode, StreamMode::Reliable)
+                    && grants(&running, resonator_apps::Permission::Camera);
                 let tx: Arc<dyn StreamTx> = Arc::new(ViewerTx {
                     signals: running.signals.clone(),
+                    video,
                 });
                 lock(&running.peers).streams.insert(stream, tx);
             }
             Effect::Send { to, data } if to == VIEWER && has_viewer => {
                 let _ = ViewerTx {
                     signals: running.signals.clone(),
+                    video: false,
                 }
                 .write(data);
             }

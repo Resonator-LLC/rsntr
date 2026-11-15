@@ -50,6 +50,7 @@ shows "Apps are off" and nothing runs.
 | `peers` | see and message the same app on other devices |
 | `streams` | open reliable or datagram streams to them |
 | `media` | hear the microphone while the person turns it on, and play sound |
+| `camera` | see the camera while the person turns it on, and show video |
 
 ## Instances and limits
 
@@ -94,7 +95,7 @@ The Log button in the app box shows the messages read-only.
 - `<participant>/<device>` for one on another node, reached over the iroh
   ALPN `resonator/app/1`;
 - `viewer` (`local`), the browser in front of this node, for apps with
-  `media`.
+  `media` or `camera`.
 
 On `resonator/app/1` every stream starts with a length-prefixed JSON
 header (`hello`, `bye`, `send`, `open`). The connection's key must speak
@@ -104,7 +105,7 @@ a reliable stream is a bi stream of length-prefixed frames, and a datagram
 stream is QUIC datagrams tagged with the stream. Without federation there
 are no remote peers.
 
-## Sound
+## Sound and video
 
 With `media`, the box header has a Mic button. While it is on, the client
 captures the microphone, encodes Opus with WebCodecs and sends each frame
@@ -112,8 +113,19 @@ captures the microphone, encodes Opus with WebCodecs and sends each frame
 `viewer`. Whatever the app sends to `viewer` (a channel byte, then an Opus
 frame) comes back in `AppUpdate`s with status `media` and is decoded and
 played, one decoder per channel. The app never touches the devices.
-`getUserMedia` needs a secure page: `localhost`, HTTPS, or the iOS and
-Android apps (which ask the system for the microphone once).
+With `camera`, the bar also has a camera button. Camera frames are
+encoded with WebCodecs (VP8, or H.264 where there is no VP8; 320x240 at
+15 frames a second, a key frame every 2 seconds) and reach the app on a
+reliable stream from `viewer`, each a flags byte (bit 0 a key frame, bits
+1-3 the codec: 0 VP8, 1 H.264) and the frame. What the app writes on a
+reliable stream it opens to `viewer` (a channel byte, then a camera frame)
+is decoded and shown, one picture per channel, next to the person's own.
+Video goes between peers on reliable streams: key frames are too large for
+datagrams.
+
+`getUserMedia` needs a secure page: `localhost`, HTTPS (on a tailnet,
+`tailscale serve` gives a node a real certificate), or the iOS and Android
+apps (which ask the system once).
 
 ## Writing an app
 

@@ -62,6 +62,8 @@ export interface AppUpdate {
   readonly nodes: readonly AppUiNode[];
   /** With status `media`: frames for the speaker (base64; a channel byte, then Opus). */
   readonly media: readonly string[];
+  /** With status `media`: video for the screen (base64; a channel byte, a flags byte, then a frame). */
+  readonly video: readonly string[];
 }
 
 export const AppUpdate: MessageCodec<AppUpdate> = defineMessage("AppUpdate", [
@@ -72,19 +74,25 @@ export const AppUpdate: MessageCodec<AppUpdate> = defineMessage("AppUpdate", [
   field(5, "permissions", "repeated", "string"),
   field(6, "nodes", "repeated", AppUiNode),
   field(7, "media", "repeated", "string"),
+  field(8, "video", "repeated", "string"),
 ]);
 
-/** A frame of the viewer's microphone (one Opus frame, base64). */
+/**
+ * A frame of the viewer's microphone (one Opus frame, base64), or with
+ * `video` of their camera (a flags byte, then an encoded frame).
+ */
 export interface AppMediaRequest {
   readonly waveId: string;
   readonly gadgetId: string;
   readonly data: string;
+  readonly video?: boolean;
 }
 
 export const AppMediaRequest: MessageCodec<AppMediaRequest> = defineMessage("AppMediaRequest", [
   field(1, "waveId", "required", "string"),
   field(2, "gadgetId", "required", "string"),
   field(3, "data", "required", "string"),
+  field(4, "video", "optional", "bool"),
 ]);
 
 export interface AppEventRequest {

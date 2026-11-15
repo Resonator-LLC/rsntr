@@ -9,7 +9,7 @@ import type { StreamHandle, StreamHandlers } from "../../net";
 import type { AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppUpdate } from "../../wire";
 import type { AppGadget } from "../editor/api";
 import appUiCss from "./app-ui.css?url";
-import { Mic, micFailure, micUnavailable, Speaker } from "./media";
+import { Camera, cameraFailure, cameraUnavailable, Mic, micFailure, micUnavailable, Screen, Speaker } from "./media";
 import { AppPatcher } from "./patch";
 
 /** What an app view needs from the wave and the session. */
@@ -18,7 +18,7 @@ export interface WaveAppsUi {
   readonly waveId: string;
   open(request: AppOpenRequest, handlers: StreamHandlers<AppUpdate>): StreamHandle;
   event(request: AppEventRequest): Promise<AppEventResponse>;
-  /** Hands the app a frame of the microphone. */
+  /** Hands the app a frame of the microphone (or, with `video`, the camera). */
   media(request: AppMediaRequest): Promise<AppEventResponse>;
   /** Allows a gadget's app for the signed-in user (`m/gadgets`, key `allowed`). */
   allow(gadgetId: string, appId: string): void;
@@ -64,7 +64,8 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   kv: "keep data on this device",
   peers: "talk directly to the same app on other people's devices",
   streams: "open streams to other devices",
-  media: "use your microphone",
+  media: "hear your microphone while you turn it on, and play sound",
+  camera: "see your camera while you turn it on, and show video",
 };
 
 export function shortHash(appId: string): string {
@@ -90,6 +91,29 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
   const [mic, setMic] = useState<"off" | "starting" | "on">("off");
   const [micError, setMicError] = useState("");
   const [soundBlocked, setSoundBlocked] = useState(false);
+  const cameraRef = useRef<Camera | null>(null);
+  const screenRef = useRef<Screen | null>(null);
+  const tilesRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLVideoElement>(null);
+  const [camera, setCamera] = useState<"off" | "starting" | "on">("off");
+  const [cameraError, setCameraError] = useState("");
+
+  const screen = (): Screen | null => {
+    if (screenRef.current === null && tilesRef.current !== null) {
+      screenRef.current = new Screen(tilesRef.current, (shown) =>
+        boxRef.current?.setAttribute("data-video-shown", String(shown)),
+      );
+    }
+    return screenRef.current;
+  };
+  const stopCamera = (): void => {
+    cameraRef.current?.stop();
+    cameraRef.current = null;
+    if (previewRef.current !== null) {
+      previewRef.current.srcObject = null;
+    }
+    setCamera("off");
+  };
 
   const speaker = (): Speaker =>
     (speakerRef.current ??= new Speaker(
@@ -109,6 +133,10 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
       micRef.current = null;
       speakerRef.current?.stop();
       speakerRef.current = null;
+      cameraRef.current?.stop();
+      cameraRef.current = null;
+      screenRef.current?.stop();
+      screenRef.current = null;
     },
     [],
   );
@@ -164,7 +192,12 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
         {
           onMessage: (update) => {
             if (update.status === "media") {
-              speaker().play(update.media);
+              if (update.media.length > 0) {
+                speaker().play(update.media);
+              }
+              if (update.video.length > 0) {
+                screen()?.play(update.video);
+              }
               return;
             }
             const status = update.status as Status;
@@ -190,6 +223,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
           onFinished: (error) => {
             ended = true;
             stopMic();
+            stopCamera();
             if (error !== undefined) {
               setState((old) => ({ ...old, status: /apps are off/i.test(error) ? "off" : "failed", reason: error }));
             }
@@ -197,6 +231,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
           onDisconnected: () => {
             ended = true;
             stopMic();
+            stopCamera();
             setState((old) => ({ ...old, status: "stopped", reason: "Disconnected" }));
           },
         },
@@ -250,12 +285,59 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
       },
     );
   };
+  const toggleCamera = (): void => {
+    if (camera !== "off") {
+      stopCamera();
+      return;
+    }
+    const unavailable = cameraUnavailable();
+    if (unavailable !== null) {
+      setCameraError(unavailable);
+      return;
+    }
+    speaker().unlock();
+    setCamera("starting");
+    setCameraError("");
+    let sent = 0;
+    Camera.start((data) => {
+      void apps.media({ waveId: apps.waveId, gadgetId: gadget.id, data, video: true }).catch(() => {});
+      sent += 1;
+      boxRef.current?.setAttribute("data-video-sent", String(sent));
+    }).then(
+      (started) => {
+        cameraRef.current = started;
+        if (previewRef.current !== null) {
+          previewRef.current.srcObject = started.stream;
+          void previewRef.current.play().catch(() => {});
+        }
+        setCamera("on");
+      },
+      (error: unknown) => {
+        setCamera("off");
+        setCameraError(cameraFailure(error));
+      },
+    );
+  };
   const restart = (): void => {
     setState((old) => ({ ...old, status: "loading", reason: "" }));
     setAttempt((n) => n + 1);
   };
 
   const name = state.name !== "" ? state.name : "App";
+  const hasMedia = state.permissions.includes("media");
+  const hasCamera = state.permissions.includes("camera");
+  const mediaError = micError !== "" ? micError : cameraError;
+  const using = [mic === "on" ? "your microphone" : null, camera === "on" ? "your camera" : null].filter(
+    (part): part is string => part !== null,
+  );
+  const mediaNote =
+    using.length > 0
+      ? `${name} gets ${using.join(" and ")} until you turn ${using.length > 1 ? "them" : "it"} off.`
+      : hasMedia && hasCamera
+        ? `${name} gets nothing from you until you turn the microphone or camera on.`
+        : hasCamera
+          ? `${name} sees nothing until you turn the camera on.`
+          : `${name} hears nothing until you turn the microphone on.`;
   const statusText: Record<Status, string> = {
     loading: "Starting",
     "needs-grant": "Not allowed yet",
@@ -305,29 +387,44 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
           </button>
         </div>
       ) : null}
-      {state.status === "running" && state.permissions.includes("media") ? (
+      {state.status === "running" && (hasMedia || hasCamera) ? (
         <div class="app-media">
-          <button
-            type="button"
-            class={`app-mic-button${mic === "on" ? " app-mic-on" : ""}`}
-            aria-pressed={mic === "on"}
-            disabled={mic === "starting"}
-            onClick={toggleMic}
-          >
-            {mic === "on" ? "Turn microphone off" : mic === "starting" ? "Starting microphone" : "Turn microphone on"}
-          </button>
+          {hasMedia ? (
+            <button
+              type="button"
+              class={`app-mic-button${mic === "on" ? " app-mic-on" : ""}`}
+              aria-pressed={mic === "on"}
+              disabled={mic === "starting"}
+              onClick={toggleMic}
+            >
+              {mic === "on" ? "Turn microphone off" : mic === "starting" ? "Starting microphone" : "Turn microphone on"}
+            </button>
+          ) : null}
+          {hasCamera ? (
+            <button
+              type="button"
+              class={`app-camera-button${camera === "on" ? " app-mic-on" : ""}`}
+              aria-pressed={camera === "on"}
+              disabled={camera === "starting"}
+              onClick={toggleCamera}
+            >
+              {camera === "on" ? "Turn camera off" : camera === "starting" ? "Starting camera" : "Turn camera on"}
+            </button>
+          ) : null}
           {soundBlocked ? (
             <button type="button" class="app-sound-button" onClick={() => speakerRef.current?.unlock()}>
               Play sound
             </button>
           ) : null}
-          <span class={micError !== "" ? "app-media-note app-media-error" : "app-media-note"} role="status">
-            {micError !== ""
-              ? micError
-              : mic === "on"
-                ? `${name} hears your microphone until you turn it off.`
-                : `${name} hears nothing until you turn the microphone on.`}
+          <span class={mediaError !== "" ? "app-media-note app-media-error" : "app-media-note"} role="status">
+            {mediaError !== "" ? mediaError : mediaNote}
           </span>
+        </div>
+      ) : null}
+      {hasCamera ? (
+        <div class="app-video" hidden={state.status !== "running"}>
+          <video ref={previewRef} class="app-video-self" muted playsInline aria-label="You" hidden={camera !== "on"} />
+          <div ref={tilesRef} class="app-video-tiles" />
         </div>
       ) : null}
       <div ref={hostRef} class="app-surface" hidden={state.status !== "running"} />

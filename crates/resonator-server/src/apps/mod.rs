@@ -11,7 +11,7 @@
 mod peers;
 mod wavelet;
 
-pub use peers::{PeerChannel, RemotePeer, Route, StreamTx, WeakAppManager};
+pub use peers::{MAX_VIDEO_FRAME, PeerChannel, RemotePeer, Route, StreamTx, WeakAppManager};
 pub use resonator_apps::StreamMode;
 pub use wavelet::{app_wavelet, gadget_of, is_app_wavelet};
 
@@ -60,6 +60,9 @@ pub enum AppSignal {
     Stopped,
     /// A frame the app sent to the viewer (a channel byte, then Opus).
     Media(Vec<u8>),
+    /// A video frame the app sent to the viewer (a channel byte, a flags
+    /// byte, then the encoded frame).
+    Video(Vec<u8>),
 }
 
 /// Why an app does not run.
@@ -187,10 +190,11 @@ impl AppSession {
     }
 
     /// Whether the instance still runs.
-    /// Hands a frame of the viewer's microphone to the app (it needs the
-    /// `media` permission).
-    pub fn media(&self, frame: Vec<u8>) -> Result<(), String> {
-        self.manager.viewer_media(&self.key, &self.running, frame)
+    /// Hands a frame of the viewer's microphone (or, with `video`, camera)
+    /// to the app; it needs the `media` (or `camera`) permission.
+    pub fn media(&self, frame: Vec<u8>, video: bool) -> Result<(), String> {
+        self.manager
+            .viewer_media(&self.key, &self.running, frame, video)
     }
 
     pub fn is_running(&self) -> bool {

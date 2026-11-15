@@ -84,6 +84,10 @@ pub struct AppUpdate {
     /// channel byte, then an Opus frame).
     #[prost(string, repeated, tag = "7")]
     pub media: Vec<String>,
+    /// With status `media`: video frames the app sent the viewer (base64;
+    /// a channel byte, a flags byte, then the encoded frame).
+    #[prost(string, repeated, tag = "8")]
+    pub video: Vec<String>,
 }
 wave_message!(AppUpdate {
     required: [status],
@@ -103,6 +107,10 @@ pub struct AppMediaRequest {
     /// Required.
     #[prost(string, optional, tag = "3")]
     pub data: Option<String>,
+    /// A camera frame (a flags byte, then the encoded frame) rather than
+    /// a microphone frame; needs the `camera` permission.
+    #[prost(bool, optional, tag = "4")]
+    pub video: Option<bool>,
 }
 wave_message!(AppMediaRequest {
     required: [wave_id, gadget_id, data],

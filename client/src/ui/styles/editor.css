@@ -456,9 +456,31 @@ html.lightbox-shown body {
   cursor: pointer;
 }
 .app-media button:disabled { opacity: 0.6; cursor: default; }
-.app-media .app-mic-button.app-mic-on {
+.app-media .app-mic-on {
   background: var(--c-danger);
   border-color: var(--c-danger);
 }
 .app-media-note { flex: 1 1 12rem; min-width: 0; color: var(--c-text-3); overflow-wrap: anywhere; }
 .app-media-note.app-media-error { color: var(--c-danger); }
+
+/* Video of an app with camera: the person's own picture and one per channel. */
+.app-video {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+}
+.app-video:not(:has(video:not([hidden]), canvas)) { display: none; }
+.app-video-tiles { display: contents; }
+.app-video-self,
+.app-video-tile {
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-1);
+  background: #000;
+}
+.app-video-self { transform: scaleX(-1); }
+.app-video-self[hidden] { display: none; }
+.app-video[hidden] { display: none; }

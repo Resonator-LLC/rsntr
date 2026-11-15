@@ -599,12 +599,14 @@ json_message!(AppUpdate, "AppUpdate" {
     5 => permissions: many string,
     6 => nodes: many message,
     7 => media: many string,
+    8 => video: many string,
 });
 
 json_message!(AppMediaRequest, "AppMediaRequest" {
     1 => wave_id: one string,
     2 => gadget_id: one string,
     3 => data: one string,
+    4 => video: one boolean,
 });
 
 json_message!(AppEventRequest, "AppEventRequest" {

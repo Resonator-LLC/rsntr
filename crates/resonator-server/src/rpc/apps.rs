@@ -195,8 +195,8 @@ async fn stream(
         );
         outbox.send(seq, &RpcFinished::success());
     };
-    let media = |frames: Vec<Vec<u8>>| {
-        if frames.is_empty() {
+    let media = |frames: Vec<Vec<u8>>, video: Vec<Vec<u8>>| {
+        if frames.is_empty() && video.is_empty() {
             return;
         }
         let engine = base64::engine::general_purpose::STANDARD;
@@ -205,6 +205,7 @@ async fn stream(
             &AppUpdate {
                 status: Some("media".to_owned()),
                 media: frames.iter().map(|f| engine.encode(f)).collect(),
+                video: video.iter().map(|f| engine.encode(f)).collect(),
                 ..AppUpdate::default()
             },
         );
@@ -225,28 +226,43 @@ async fn stream(
             }
         }
         let mut frames = Vec::new();
+        let mut video: Vec<Vec<u8>> = Vec::new();
         match signals.recv().await {
             Ok(AppSignal::Invalidate(v)) => render = v == view,
             Ok(AppSignal::Media(frame)) => frames.push(frame),
+            Ok(AppSignal::Video(frame)) => video.push(frame),
             Err(RecvError::Lagged(_)) => render = true,
             Ok(AppSignal::Failed(reason)) => return end("failed", Some(reason)),
             Ok(AppSignal::Stopped) | Err(RecvError::Closed) => return end("stopped", None),
         }
-        // Coalesce invalidations that came meanwhile.
-        while let Ok(signal) = signals.try_recv() {
+        // Coalesce invalidations that came meanwhile (and media, up to a
+        // message of reasonable size).
+        let mut bytes = video.iter().map(Vec::len).sum::<usize>();
+        while bytes < MAX_MEDIA_BATCH
+            && let Ok(signal) = signals.try_recv()
+        {
             match signal {
                 AppSignal::Invalidate(v) => render |= v == view,
-                AppSignal::Media(frame) => frames.push(frame),
+                AppSignal::Media(frame) => {
+                    bytes += frame.len();
+                    frames.push(frame);
+                }
+                AppSignal::Video(frame) => {
+                    bytes += frame.len();
+                    video.push(frame);
+                }
                 AppSignal::Failed(reason) => return end("failed", Some(reason)),
                 AppSignal::Stopped => return end("stopped", None),
             }
         }
-        media(frames);
+        media(frames, video);
     }
 }
 
 /// Most bytes of one microphone frame (Opus frames are far smaller).
 const MAX_MEDIA_FRAME: usize = 4096;
+/// Most bytes of media frames in one update, before base64.
+const MAX_MEDIA_BATCH: usize = 512 * 1024;
 
 /// Hands a frame of the viewer's microphone to an app open on this
 /// connection.
@@ -274,7 +290,13 @@ pub(super) fn media(
     else {
         return answer(Some("invalid frame".to_owned()));
     };
-    if frame.is_empty() || frame.len() > MAX_MEDIA_FRAME {
+    let video = request.video.unwrap_or(false);
+    let limit = if video {
+        crate::apps::MAX_VIDEO_FRAME
+    } else {
+        MAX_MEDIA_FRAME
+    };
+    if frame.len() < 1 + usize::from(video) || frame.len() > limit {
         return answer(Some("invalid frame".to_owned()));
     }
     let session = open
@@ -287,7 +309,7 @@ pub(super) fn media(
                 .clone()
         });
     match session {
-        Some(session) => answer(session.media(frame).err()),
+        Some(session) => answer(session.media(frame, video).err()),
         None => answer(Some("the app is not open".to_owned())),
     }
 }

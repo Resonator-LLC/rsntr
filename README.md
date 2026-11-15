@@ -229,7 +229,7 @@ enabled = true
 
 In a wave, Edit, then Insert app, and pick a bundle zip; each participant
 allows it once, after seeing what it may do (post to the wave, keep data,
-talk to peers, open streams, use the microphone). Examples and a bundle
+talk to peers, open streams, use the microphone or camera). Examples and a bundle
 script are in [`examples/wave-apps`](examples/wave-apps); the design is in
 [`docs/wave-apps.md`](docs/wave-apps.md).
 

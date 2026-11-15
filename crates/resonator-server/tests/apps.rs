@@ -572,7 +572,7 @@ async fn the_viewer_is_a_peer_with_a_microphone_and_a_speaker() {
 
     // Microphone frames reach the app; with Echo on they come back on
     // channel 0.
-    alices.media(vec![1, 2, 3]).unwrap();
+    alices.media(vec![1, 2, 3], false).unwrap();
     let echo = alices
         .render(0)
         .await
@@ -581,7 +581,7 @@ async fn the_viewer_is_a_peer_with_a_microphone_and_a_speaker() {
         .position(|n| n.text.as_deref() == Some("Echo: off"))
         .unwrap() as u32;
     alices.event(0, press(echo)).await.unwrap();
-    alices.media(vec![4, 5, 6]).unwrap();
+    alices.media(vec![4, 5, 6], false).unwrap();
     let frame = tokio::time::timeout(TIMEOUT, async {
         loop {
             if let Ok(AppSignal::Media(frame)) = signals.recv().await {
@@ -606,6 +606,72 @@ async fn apps_without_the_media_permission_take_no_frames() {
     let alice = user("alice");
     allow(&server, &alice, &wave, &app).await;
     let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
-    assert!(alices.media(vec![1, 2, 3]).is_err());
+    assert!(alices.media(vec![1, 2, 3], false).is_err());
+    assert!(alices.media(vec![1, 2, 3], true).is_err());
+    server.shutdown().await;
+}
+
+const WALKIE_CAM: &[u8] = include_bytes!("../../resonator-apps/tests/fixtures/walkie_cam.wasm");
+
+#[tokio::test]
+async fn camera_frames_reach_the_app_and_video_comes_back_to_the_screen() {
+    let (server, wave, app, bundle) = setup_with(
+        300,
+        bundle_of(
+            "walkie-cam",
+            WALKIE_CAM,
+            r#"["peers","streams","media","camera"]"#,
+        ),
+    )
+    .await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let mut signals = alices.signals();
+    let echo = alices
+        .render(0)
+        .await
+        .unwrap()
+        .iter()
+        .position(|n| n.text.as_deref() == Some("Echo: off"))
+        .unwrap() as u32;
+    alices.event(0, press(echo)).await.unwrap();
+    // A key frame (flags 1) of the camera comes back on channel 0 as
+    // video, and a microphone frame as sound.
+    alices.media(vec![1, 7, 8, 9], true).unwrap();
+    alices.media(vec![4, 5], false).unwrap();
+    let (mut video, mut sound) = (None, None);
+    tokio::time::timeout(TIMEOUT, async {
+        while video.is_none() || sound.is_none() {
+            match signals.recv().await {
+                Ok(AppSignal::Video(frame)) => video = Some(frame),
+                Ok(AppSignal::Media(frame)) => sound = Some(frame),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("no video or sound came back");
+    assert_eq!(video.unwrap(), [0, 1, 7, 8, 9]);
+    assert_eq!(sound.unwrap(), [0, 4, 5]);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn apps_without_the_camera_permission_take_no_video() {
+    let (server, wave, app, bundle) = setup_with(
+        300,
+        bundle_of("walkie", WALKIE, r#"["peers","streams","media"]"#),
+    )
+    .await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    assert!(alices.media(vec![1, 2, 3], true).is_err());
+    assert!(alices.media(vec![1, 2, 3], false).is_ok());
     server.shutdown().await;
 }

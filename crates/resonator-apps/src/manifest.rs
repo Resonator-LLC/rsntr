@@ -22,8 +22,10 @@ pub enum Permission {
     Peers,
     /// Open streams to peers.
     Streams,
-    /// Microphone and camera frames from the viewer.
+    /// The viewer's microphone and speaker.
     Media,
+    /// The viewer's camera, and video shown to the viewer.
+    Camera,
 }
 
 impl Permission {
@@ -35,6 +37,7 @@ impl Permission {
             Permission::Peers => "peers",
             Permission::Streams => "streams",
             Permission::Media => "media",
+            Permission::Camera => "camera",
         }
     }
 }

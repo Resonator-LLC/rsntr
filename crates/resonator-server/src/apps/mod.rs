@@ -487,6 +487,9 @@ impl AppManager {
         });
         lock(&self.0.instances).insert(key.clone(), Arc::clone(&running));
         tracing::info!(app = %name, wave = %key.wave, gadget = %key.gadget, "started app");
+        // The viewer at once: the app may open a stream to it as soon as
+        // the first frame comes.
+        self.announce_viewer(key);
         // Messages that came while it started, and the participants of the
         // app wavelet as they should be.
         let manager = self.clone();
@@ -494,7 +497,6 @@ impl AppManager {
         tokio::spawn(async move {
             manager.deliver(&started).await;
             manager.mirror(&started).await;
-            manager.announce_viewer(&started);
             manager.discover(&started).await;
         });
         Ok(running)

@@ -11,7 +11,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 use image::codecs::jpeg::JpegEncoder;
-use image::{ImageFormat, ImageReader, Limits, RgbImage};
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, RgbImage};
 
 /// The content type of stored thumbnails
 /// (`AttachmentService.THUMBNAIL_MIME_TYPE`).
@@ -75,6 +75,26 @@ pub fn thumbnail_size(image_width: u32, image_height: u32) -> (u32, u32) {
     )
 }
 
+/// Decodes within the limits and turns the picture upright by its EXIF
+/// orientation (phone cameras store the sensor's pixels plus a tag).
+pub(crate) fn decode_upright<R: std::io::BufRead + std::io::Seek>(
+    mut reader: ImageReader<R>,
+    limits: DecodeLimits,
+) -> Option<DynamicImage> {
+    let mut decoder_limits = Limits::default();
+    decoder_limits.max_image_width = Some(limits.max_dimension);
+    decoder_limits.max_image_height = Some(limits.max_dimension);
+    decoder_limits.max_alloc = Some(limits.max_alloc);
+    reader.limits(decoder_limits);
+    let mut decoder = reader.into_decoder().ok()?;
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut image = DynamicImage::from_decoder(decoder).ok()?;
+    image.apply_orientation(orientation);
+    Some(image)
+}
+
 /// Makes the thumbnail of the image in a file; `None` if the file is not
 /// an image of a supported format, is damaged, or exceeds the limits.
 /// Decoding is CPU-bound: call it off the async runtime.
@@ -99,12 +119,9 @@ pub fn make_thumbnail(path: &Path, limits: DecodeLimits) -> Option<Thumbnail> {
     }
     let mut reader = ImageReader::open(path).ok()?;
     reader.set_format(format);
-    let mut decoder_limits = Limits::default();
-    decoder_limits.max_image_width = Some(limits.max_dimension);
-    decoder_limits.max_image_height = Some(limits.max_dimension);
-    decoder_limits.max_alloc = Some(limits.max_alloc);
-    reader.limits(decoder_limits);
-    let image = reader.decode().ok()?;
+    let image = decode_upright(reader, limits)?;
+    // A quarter turn swaps the sides.
+    let (image_width, image_height) = (image.width(), image.height());
     let (width, height) = thumbnail_size(image_width, image_height);
     let scaled = image.thumbnail_exact(width, height).into_rgba8();
     // On black, as the original draws it.
@@ -164,9 +181,52 @@ pub fn pattern_for(mime_type: &str) -> String {
     )
 }
 
+/// A JPEG of 80 by 40 pixels, red on the left and blue on the right,
+/// with an EXIF orientation tag (1 to 8), as a phone camera writes it.
+#[cfg(test)]
+pub(crate) fn test_photo(orientation: u8) -> Vec<u8> {
+    let picture = RgbImage::from_fn(80, 40, |x, _| {
+        if x < 40 {
+            image::Rgb([230, 20, 20])
+        } else {
+            image::Rgb([20, 20, 230])
+        }
+    });
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(Cursor::new(&mut jpeg), 95)
+        .encode_image(&picture)
+        .unwrap();
+    // APP1 "Exif": a big-endian TIFF header and one IFD entry, 0x0112
+    // (orientation), type SHORT, count 1.
+    let mut exif = b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec();
+    exif.extend_from_slice(&[0, orientation, 0, 0, 0, 0, 0, 0]);
+    let mut segment = vec![0xff, 0xe1];
+    segment.extend_from_slice(&u16::try_from(exif.len() + 2).unwrap().to_be_bytes());
+    segment.extend_from_slice(&exif);
+    jpeg.splice(2..2, segment);
+    jpeg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn photos_are_turned_upright() {
+        // Stored sideways, tagged "turn a quarter clockwise".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.jpg");
+        std::fs::write(&path, test_photo(6)).unwrap();
+        let thumbnail = make_thumbnail(&path, DecodeLimits::default()).unwrap();
+        assert_eq!((thumbnail.image_width, thumbnail.image_height), (40, 80));
+        assert_eq!((thumbnail.width, thumbnail.height), (40, 80));
+        let made = image::load_from_memory(&thumbnail.jpeg)
+            .unwrap()
+            .into_rgb8();
+        // The left (red) half is now on top.
+        assert!(made.get_pixel(20, 10)[0] > 200);
+        assert!(made.get_pixel(20, 70)[2] > 200);
+    }
 
     #[test]
     fn thumbnail_sizes_follow_the_original() {

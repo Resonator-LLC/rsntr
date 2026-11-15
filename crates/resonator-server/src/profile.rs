@@ -16,10 +16,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use image::{ImageFormat, ImageReader, Limits};
+use image::{ImageFormat, ImageReader};
 use resonator_model::id::ParticipantId;
 
-use crate::attachment::thumbnail::DecodeLimits;
+use crate::attachment::thumbnail::{DecodeLimits, decode_upright};
 use crate::clock::Clock;
 use crate::storage::{Database, ProfileRecord, ProfileStore, StorageError, StoredProfile};
 
@@ -122,12 +122,8 @@ pub fn make_avatar(bytes: &[u8], limits: DecodeLimits) -> Option<Vec<u8>> {
     }
     let mut reader = ImageReader::new(Cursor::new(bytes));
     reader.set_format(format);
-    let mut decoder_limits = Limits::default();
-    decoder_limits.max_image_width = Some(limits.max_dimension);
-    decoder_limits.max_image_height = Some(limits.max_dimension);
-    decoder_limits.max_alloc = Some(limits.max_alloc);
-    reader.limits(decoder_limits);
-    let image = reader.decode().ok()?;
+    let image = decode_upright(reader, limits)?;
+    let (width, height) = (image.width(), image.height());
     let side = width.min(height);
     let square = image.crop_imm((width - side) / 2, (height - side) / 2, side, side);
     let size = side.min(AVATAR_PX);
@@ -434,6 +430,25 @@ mod tests {
         assert_eq!(derived_name("john_smith@example.com"), "John Smith");
         assert_eq!(derived_name("john..smith.@example.com"), "John Smith");
         assert_eq!(derived_name("@example.com"), "@example.com");
+    }
+
+    #[test]
+    fn avatars_are_turned_upright() {
+        use crate::attachment::thumbnail::test_photo;
+        let pixels = |orientation| {
+            let png = make_avatar(&test_photo(orientation), DecodeLimits::default()).unwrap();
+            image::load_from_memory(&png).unwrap().into_rgb8()
+        };
+        // Not turned: red left, blue right.
+        let plain = pixels(1);
+        assert!(plain.get_pixel(5, 20)[0] > 200 && plain.get_pixel(35, 20)[2] > 200);
+        // Half a turn: blue left, red right.
+        let half = pixels(3);
+        assert_eq!(half.dimensions(), (40, 40));
+        assert!(half.get_pixel(5, 20)[2] > 200 && half.get_pixel(35, 20)[0] > 200);
+        // A quarter clockwise: red on top, blue below.
+        let quarter = pixels(6);
+        assert!(quarter.get_pixel(20, 5)[0] > 200 && quarter.get_pixel(20, 35)[2] > 200);
     }
 
     #[test]

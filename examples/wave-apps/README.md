@@ -9,6 +9,7 @@ and every participant's own node runs it for them. See
 | `counter` | Rust | wave, kv | A count everyone in the wave shares. |
 | `chat-js` | JavaScript | wave, kv | A chat in a box; the draft survives a restart. |
 | `walkie` | Rust | peers, streams, media | Push to talk with the others who have it open. |
+| `walkie-cam` | Rust | peers, streams, media, camera | Walkie with video. |
 | `template-js` | JavaScript | none | A start for your own. |
 
 ## Build a bundle
@@ -31,7 +32,7 @@ so they are about 12 MB.
 A zip with two files:
 
 - `manifest.json`: `name`, `version`, `permissions` (any of `wave`, `kv`,
-  `peers`, `streams`, `media`) and optionally `memory_mb` (64 by default,
+  `peers`, `streams`, `media`, `camera`) and optionally `memory_mb` (64 by default,
   up to 256).
 - `app.wasm`: a WebAssembly component of the world `wave-app` in
   [`crates/resonator-apps/wit/app.wit`](../../crates/resonator-apps/wit/app.wit).

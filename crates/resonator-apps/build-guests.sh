@@ -18,3 +18,7 @@ cp ../../examples/wave-apps/walkie/target/wasm32-wasip2/release/walkie.wasm test
 # The JS guest carries its engine (about 12 MiB); it is kept compressed.
 gzip -9 -n -c tests/guests/counter-js/counter_js.wasm > tests/fixtures/counter_js.wasm.gz
 ls -l tests/fixtures
+
+# The walkie-cam example, for the camera tests.
+(cd ../../examples/wave-apps/walkie-cam && cargo build --release --target wasm32-wasip2)
+cp ../../examples/wave-apps/walkie-cam/target/wasm32-wasip2/release/walkie_cam.wasm tests/fixtures/

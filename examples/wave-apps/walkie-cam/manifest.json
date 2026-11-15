@@ -1,0 +1,1 @@
+{ "name": "walkie-cam", "version": "1", "permissions": ["peers", "streams", "media", "camera"] }

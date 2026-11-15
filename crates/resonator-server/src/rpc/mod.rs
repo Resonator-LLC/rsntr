@@ -57,6 +57,9 @@ use crate::metrics::Metrics;
 use crate::waveserver::{SubmitError, SubmitResult};
 
 /// WebSocket close codes used by the server.
+#[cfg(feature = "apps")]
+mod apps;
+
 pub mod close_code {
     /// The server is shutting down.
     pub const GOING_AWAY: u16 = 1001;
@@ -131,6 +134,9 @@ pub struct SocketContext {
     pub settings: SocketSettings,
     /// Becomes true when the server shuts down.
     pub shutdown: watch::Receiver<bool>,
+    /// Wave apps, if they run here.
+    #[cfg(feature = "apps")]
+    pub apps: Option<crate::apps::AppManager>,
 }
 
 enum Outbound {
@@ -358,6 +364,9 @@ struct Connection {
     /// Open wave views by the sequence number of their open request
     /// (`Connection.activeRpcs`).
     views: HashMap<i32, SubscriptionHandle>,
+    /// Open app views by the sequence number of their open request.
+    #[cfg(feature = "apps")]
+    apps: HashMap<i32, apps::AppView>,
 }
 
 type Flow = ControlFlow<(u16, &'static str)>;
@@ -403,8 +412,20 @@ impl Connection {
             ProtocolAuthenticate::NAME => self.authenticate(&envelope).await,
             ProtocolOpenRequest::NAME => return self.open(&envelope).await,
             ProtocolSubmitRequest::NAME => self.submit(&envelope).await,
+            #[cfg(feature = "apps")]
+            resonator_model::proto::app::AppOpenRequest::NAME => self.open_app(&envelope),
+            #[cfg(feature = "apps")]
+            resonator_model::proto::app::AppEventRequest::NAME => self.app_event(&envelope).await,
             "CancelRpc" => {
                 // The stream ends in the standard manner.
+                #[cfg(feature = "apps")]
+                if let Some(view) = self.apps.remove(&seq) {
+                    let finished = view.is_closed();
+                    drop(view);
+                    if !finished {
+                        self.outbox.send(seq, &RpcFinished::success());
+                    }
+                }
                 if let Some(view) = self.views.remove(&seq) {
                     tracing::debug!(seq, "Cancelling open RPC");
                     let failed = view.is_closed();
@@ -420,6 +441,45 @@ impl Connection {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    #[cfg(feature = "apps")]
+    fn open_app(&mut self, envelope: &Envelope) {
+        let seq = envelope.sequence_number;
+        let Some(request) = self.body::<resonator_model::proto::app::AppOpenRequest>(envelope)
+        else {
+            return;
+        };
+        let Some(identity) = &self.identity else {
+            self.outbox.fail(seq, error_text::NOT_LOGGED_IN);
+            return;
+        };
+        if !identity.can_write() {
+            self.outbox.fail(seq, error_text::NO_WRITE_SCOPE);
+            return;
+        }
+        apps::open(
+            self.context.apps.as_ref(),
+            &mut self.apps,
+            &self.outbox,
+            seq,
+            &identity.participant,
+            request,
+        );
+    }
+
+    #[cfg(feature = "apps")]
+    async fn app_event(&mut self, envelope: &Envelope) {
+        let seq = envelope.sequence_number;
+        let Some(request) = self.body::<resonator_model::proto::app::AppEventRequest>(envelope)
+        else {
+            return;
+        };
+        if self.identity.is_none() {
+            self.outbox.fail(seq, error_text::NOT_LOGGED_IN);
+            return;
+        }
+        apps::event(&self.apps, &self.outbox, seq, request).await;
     }
 
     async fn authenticate(&mut self, envelope: &Envelope) {
@@ -666,6 +726,8 @@ pub async fn serve_socket(
         outbox: Arc::clone(&outbox),
         identity,
         views: HashMap::new(),
+        #[cfg(feature = "apps")]
+        apps: HashMap::new(),
     };
     let mut ping = tokio::time::interval_at(
         Instant::now() + settings.ping_interval,

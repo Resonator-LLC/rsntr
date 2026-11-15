@@ -19,6 +19,7 @@
 //! fields are dropped when decoding, so bytes that are hashed or signed must
 //! be kept as received (see [`ByteStringMessage`]).
 
+pub mod app;
 pub mod attachment;
 pub mod convert;
 pub mod delta_store;

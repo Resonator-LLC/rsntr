@@ -40,6 +40,9 @@ use std::fmt::Write as _;
 use serde_json::Value;
 use thiserror::Error;
 
+use super::app::{
+    AppEventRequest, AppEventResponse, AppOpenRequest, AppPair, AppUiNode, AppUpdate,
+};
 use super::attachment::{AttachmentMetadata, AttachmentsResponse, ImageMetadata};
 use super::federation::protocol_document_operation::Component;
 use super::federation::protocol_document_operation::component::{
@@ -564,6 +567,50 @@ json_message!(Digest, "Digest" {
     6 => blip_count: one int32,
     7 => participants: many string,
     8 => author: one string,
+});
+
+// Wave apps (not in the original protocol).
+
+json_message!(AppOpenRequest, "AppOpenRequest" {
+    1 => wave_id: one string,
+    2 => gadget_id: one string,
+    3 => view: one int32,
+});
+
+json_message!(AppPair, "AppPair" {
+    1 => name: one string,
+    2 => value: one string,
+});
+
+json_message!(AppUiNode, "AppUiNode" {
+    1 => parent: one int32,
+    2 => tag: one string,
+    3 => text: one string,
+    4 => attrs: many message,
+    5 => on: many string,
+});
+
+json_message!(AppUpdate, "AppUpdate" {
+    1 => status: one string,
+    2 => reason: one string,
+    3 => app_id: one string,
+    4 => name: one string,
+    5 => permissions: many string,
+    6 => nodes: many message,
+});
+
+json_message!(AppEventRequest, "AppEventRequest" {
+    1 => wave_id: one string,
+    2 => gadget_id: one string,
+    3 => view: one int32,
+    4 => node: one int32,
+    5 => name: one string,
+    6 => value: one string,
+    7 => fields: many message,
+});
+
+json_message!(AppEventResponse, "AppEventResponse" {
+    1 => error_message: one string,
 });
 
 // attachment.proto

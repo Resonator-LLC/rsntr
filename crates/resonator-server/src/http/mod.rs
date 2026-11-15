@@ -178,14 +178,6 @@ impl AppState {
         let device = config
             .device_address()
             .map(|participant| DeviceAccess::new(participant, kept.as_deref()));
-        let (shutdown, shutdown_signal) = watch::channel(false);
-        let socket = Arc::new(SocketContext {
-            frontend: frontend.clone(),
-            auth: auth.clone(),
-            metrics: Arc::clone(&metrics),
-            settings: SocketSettings::from_config(&config),
-            shutdown: shutdown_signal,
-        });
         #[cfg(feature = "apps")]
         let apps = config
             .apps
@@ -202,6 +194,16 @@ impl AppState {
                 .ok()
             })
             .flatten();
+        let (shutdown, shutdown_signal) = watch::channel(false);
+        let socket = Arc::new(SocketContext {
+            frontend: frontend.clone(),
+            auth: auth.clone(),
+            metrics: Arc::clone(&metrics),
+            settings: SocketSettings::from_config(&config),
+            shutdown: shutdown_signal,
+            #[cfg(feature = "apps")]
+            apps: apps.clone(),
+        });
         AppState(Arc::new(AppInner {
             // Validated with the config; an invalid entry trusts nobody.
             trusted_proxies: config.trusted_proxy_nets().unwrap_or_default(),

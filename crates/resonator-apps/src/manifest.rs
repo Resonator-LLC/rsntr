@@ -26,6 +26,19 @@ pub enum Permission {
     Media,
 }
 
+impl Permission {
+    /// The name in `manifest.json`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Permission::Wave => "wave",
+            Permission::Kv => "kv",
+            Permission::Peers => "peers",
+            Permission::Streams => "streams",
+            Permission::Media => "media",
+        }
+    }
+}
+
 /// The parsed `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -255,3 +255,76 @@ async fn apps_are_off_unless_enabled() {
     assert!(server.app().state().apps.is_none());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_socket_streams_the_view_and_takes_events() {
+    use resonator_model::proto::app::{
+        AppEventRequest, AppEventResponse, AppOpenRequest, AppUpdate,
+    };
+    use resonator_model::proto::rpc::CancelRpc;
+
+    let (server, wave, app, bundle) = setup(300).await;
+    let cookie = server.user("alice").await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let mut client = net::WaveClient::with_cookie(&server, &cookie).await;
+    let wave_id = wave.serialise().unwrap();
+    let open = AppOpenRequest {
+        wave_id: Some(wave_id.clone()),
+        gadget_id: Some(GADGET.to_owned()),
+        view: None,
+    };
+
+    // Not allowed yet: the prompt's facts, then the end.
+    let seq = client.send(&open).await;
+    assert_eq!(
+        client
+            .next_for(seq)
+            .await
+            .decode::<AppUpdate>()
+            .status
+            .unwrap(),
+        "loading"
+    );
+    let prompt: AppUpdate = client.next_for(seq).await.decode();
+    assert_eq!(prompt.status.as_deref(), Some("needs-grant"));
+    assert_eq!(prompt.app_id.as_deref(), Some(app.as_str()));
+    assert_eq!(prompt.name.as_deref(), Some("counter"));
+    assert_eq!(prompt.permissions, ["wave", "kv"]);
+    assert_eq!(client.next_for(seq).await.failure(), None);
+
+    allow(&server, &user("alice"), &wave, &app).await;
+    let seq = client.send(&open).await;
+    assert_eq!(
+        client
+            .next_for(seq)
+            .await
+            .decode::<AppUpdate>()
+            .status
+            .unwrap(),
+        "loading"
+    );
+    let first: AppUpdate = client.next_for(seq).await.decode();
+    assert_eq!(first.status.as_deref(), Some("running"));
+    assert_eq!(first.nodes[1].text.as_deref(), Some("0"));
+    assert_eq!(first.nodes[2].on, ["click"]);
+
+    let event = client
+        .send(&AppEventRequest {
+            wave_id: Some(wave_id.clone()),
+            gadget_id: Some(GADGET.to_owned()),
+            view: None,
+            node: Some(2),
+            name: Some("click".to_owned()),
+            value: None,
+            fields: vec![],
+        })
+        .await;
+    let answer: AppEventResponse = client.next_for(event).await.decode();
+    assert_eq!(answer.error_message, None);
+    let second: AppUpdate = client.next_for(seq).await.decode();
+    assert_eq!(second.nodes[1].text.as_deref(), Some("1"));
+
+    client.send_as(seq, &CancelRpc {}).await;
+    assert_eq!(client.next_for(seq).await.failure(), None);
+    server.shutdown().await;
+}

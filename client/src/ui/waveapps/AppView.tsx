@@ -9,7 +9,7 @@ import type { StreamHandle, StreamHandlers } from "../../net";
 import type { AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppUpdate } from "../../wire";
 import type { AppGadget } from "../editor/api";
 import appUiCss from "./app-ui.css?url";
-import { Mic, mediaSupported, Speaker } from "./media";
+import { Mic, micFailure, micUnavailable, Speaker } from "./media";
 import { AppPatcher } from "./patch";
 
 /** What an app view needs from the wave and the session. */
@@ -89,6 +89,13 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
   const micRef = useRef<Mic | null>(null);
   const [mic, setMic] = useState<"off" | "starting" | "on">("off");
   const [micError, setMicError] = useState("");
+  const [soundBlocked, setSoundBlocked] = useState(false);
+
+  const speaker = (): Speaker =>
+    (speakerRef.current ??= new Speaker(
+      (played) => boxRef.current?.setAttribute("data-media-played", String(played)),
+      setSoundBlocked,
+    ));
 
   const stopMic = (): void => {
     micRef.current?.stop();
@@ -157,10 +164,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
         {
           onMessage: (update) => {
             if (update.status === "media") {
-              speakerRef.current ??= new Speaker((played) =>
-                boxRef.current?.setAttribute("data-media-played", String(played)),
-              );
-              speakerRef.current.play(update.media);
+              speaker().play(update.media);
               return;
             }
             const status = update.status as Status;
@@ -221,6 +225,13 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
       stopMic();
       return;
     }
+    const unavailable = micUnavailable();
+    if (unavailable !== null) {
+      setMicError(unavailable);
+      return;
+    }
+    // The click also lets what the app sends back be heard.
+    speaker().unlock();
     setMic("starting");
     setMicError("");
     let sent = 0;
@@ -235,7 +246,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
       },
       (error: unknown) => {
         setMic("off");
-        setMicError(error instanceof Error ? error.message : String(error));
+        setMicError(micFailure(error));
       },
     );
   };
@@ -264,24 +275,6 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
         <span class="app-status" role="status">
           {statusText[state.status]}
         </span>
-        {state.status === "running" && state.permissions.includes("media") ? (
-          <button
-            type="button"
-            class={`app-mic-button${mic === "on" ? " app-mic-on" : ""}`}
-            aria-pressed={mic === "on"}
-            disabled={!mediaSupported() || mic === "starting"}
-            title={
-              !mediaSupported()
-                ? "This browser cannot record sound here (it needs a secure page and WebCodecs)"
-                : micError !== ""
-                  ? micError
-                  : `Lets ${name} hear your microphone while on`
-            }
-            onClick={toggleMic}
-          >
-            {mic === "on" ? "Mic on" : "Mic off"}
-          </button>
-        ) : null}
         {apps.showLog !== null ? (
           <button type="button" class="app-log-button" onClick={() => apps.showLog?.(gadget.id, name)}>
             Log
@@ -310,6 +303,31 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
           <button type="button" class="app-restart" onClick={restart}>
             Start again
           </button>
+        </div>
+      ) : null}
+      {state.status === "running" && state.permissions.includes("media") ? (
+        <div class="app-media">
+          <button
+            type="button"
+            class={`app-mic-button${mic === "on" ? " app-mic-on" : ""}`}
+            aria-pressed={mic === "on"}
+            disabled={mic === "starting"}
+            onClick={toggleMic}
+          >
+            {mic === "on" ? "Turn microphone off" : mic === "starting" ? "Starting microphone" : "Turn microphone on"}
+          </button>
+          {soundBlocked ? (
+            <button type="button" class="app-sound-button" onClick={() => speakerRef.current?.unlock()}>
+              Play sound
+            </button>
+          ) : null}
+          <span class={micError !== "" ? "app-media-note app-media-error" : "app-media-note"} role="status">
+            {micError !== ""
+              ? micError
+              : mic === "on"
+                ? `${name} hears your microphone until you turn it off.`
+                : `${name} hears nothing until you turn the microphone on.`}
+          </span>
         </div>
       ) : null}
       <div ref={hostRef} class="app-surface" hidden={state.status !== "running"} />

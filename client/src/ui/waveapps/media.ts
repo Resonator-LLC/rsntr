@@ -11,15 +11,36 @@ const BLOCK = 1024;
 /** How far ahead of now playback starts, to ride out jitter. */
 const LEAD_SECONDS = 0.08;
 
-/** Whether this browser can capture and encode, and decode and play. */
-export function mediaSupported(): boolean {
-  return (
-    typeof AudioEncoder !== "undefined" &&
-    typeof AudioDecoder !== "undefined" &&
-    typeof AudioContext !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    navigator.mediaDevices?.getUserMedia !== undefined
-  );
+/** Why the microphone cannot be used here, or null if it can be tried. */
+export function micUnavailable(): string | null {
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    return "The browser allows the microphone only on a secure page: open this page over HTTPS or as localhost.";
+  }
+  if (typeof navigator === "undefined" || navigator.mediaDevices?.getUserMedia === undefined) {
+    return "This browser cannot use a microphone here.";
+  }
+  if (typeof AudioEncoder === "undefined" || typeof AudioDecoder === "undefined" || typeof AudioContext === "undefined") {
+    return "This browser cannot encode sound (it has no WebCodecs audio).";
+  }
+  return null;
+}
+
+/** A sentence for a failure to start the microphone. */
+export function micFailure(error: unknown): string {
+  const name = error instanceof DOMException || error instanceof Error ? error.name : "";
+  switch (name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "The microphone is blocked for this page. Allow it in the browser (the icon in the address bar, or the site settings) and try again.";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "No microphone was found.";
+    case "NotReadableError":
+    case "AbortError":
+      return "The microphone is in use by another program, or the system does not allow the browser to use it.";
+    default:
+      return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function base64(bytes: Uint8Array): string {
@@ -48,11 +69,24 @@ export class Mic {
     private readonly nodes: readonly AudioNode[],
   ) {}
 
+  /** Starts the microphone; call it from a click, so the browser asks and lets sound run. */
   static async start(send: (frame: string) => void): Promise<Mic> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-    });
+    const config: AudioEncoderConfig = { codec: "opus", sampleRate: SAMPLE_RATE, numberOfChannels: 1, bitrate: 24_000 };
+    if (!(await AudioEncoder.isConfigSupported(config)).supported) {
+      throw new Error("This browser cannot encode Opus.");
+    }
+    // Made before the first await of the prompt, while the click counts.
     const context = new AudioContext({ sampleRate: SAMPLE_RATE });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      await context.resume();
+    } catch (error) {
+      void context.close();
+      throw error;
+    }
     const encoder = new AudioEncoder({
       output: (chunk) => {
         const bytes = new Uint8Array(chunk.byteLength);
@@ -61,7 +95,7 @@ export class Mic {
       },
       error: () => {},
     });
-    encoder.configure({ codec: "opus", sampleRate: SAMPLE_RATE, numberOfChannels: 1, bitrate: 24_000 });
+    encoder.configure(config);
     const source = context.createMediaStreamSource(stream);
     // ScriptProcessor works everywhere WebCodecs does, with no module to load.
     const processor = context.createScriptProcessor(BLOCK, 1, 1);
@@ -113,8 +147,23 @@ export class Speaker {
   /** Frames played. */
   played = 0;
 
-  /** `onPlayed` is told the number of frames played so far. */
-  constructor(private readonly onPlayed: (played: number) => void = () => {}) {}
+  /**
+   * `onPlayed` is told the number of frames played so far; `onBlocked`
+   * whether the browser holds the sound back until the person clicks.
+   */
+  constructor(
+    private readonly onPlayed: (played: number) => void = () => {},
+    private readonly onBlocked: (blocked: boolean) => void = () => {},
+  ) {}
+
+  /** Lets sound play; call it from a click. */
+  unlock(): void {
+    if (typeof AudioContext === "undefined") {
+      return;
+    }
+    this.context ??= new AudioContext({ sampleRate: SAMPLE_RATE });
+    void this.context.resume().then(() => this.onBlocked(false));
+  }
 
   /** Plays frames from an `AppUpdate`'s `media`. */
   play(frames: readonly string[]): void {
@@ -139,11 +188,19 @@ export class Speaker {
     if (known !== undefined) {
       return known;
     }
-    this.context ??= new AudioContext({ sampleRate: SAMPLE_RATE });
+    if (this.context === null) {
+      this.context = new AudioContext({ sampleRate: SAMPLE_RATE });
+    }
     const context = this.context;
     const state = { decoder: null as unknown as AudioDecoder, next: 0, timestamp: 0 };
     state.decoder = new AudioDecoder({
       output: (data) => {
+        if (context.state !== "running") {
+          // Held back until a click; old sound is not worth keeping.
+          data.close();
+          this.onBlocked(true);
+          return;
+        }
         const samples = new Float32Array(data.numberOfFrames);
         data.copyTo(samples, { planeIndex: 0, format: "f32-planar" });
         const buffer = context.createBuffer(1, samples.length, data.sampleRate);

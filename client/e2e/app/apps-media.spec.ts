@@ -74,15 +74,15 @@ test("the Mic button feeds the app, and what it sends back is played", async ({ 
     (root.querySelector("button") as HTMLButtonElement).click();
   });
   const mic = box.locator(".app-mic-button");
-  await expect(mic).toHaveText("Mic off");
+  await expect(mic).toHaveText("Turn microphone on");
   await mic.click();
-  await expect(mic).toHaveText("Mic on", { timeout: 15_000 });
+  await expect(mic).toHaveText("Turn microphone off", { timeout: 15_000 });
   await expect.poll(async () => Number(await box.getAttribute("data-media-sent")), { timeout: 15_000 }).toBeGreaterThan(5);
   await expect
     .poll(async () => Number(await box.getAttribute("data-media-played")), { timeout: 15_000 })
     .toBeGreaterThan(5);
   await mic.click();
-  await expect(mic).toHaveText("Mic off");
+  await expect(mic).toHaveText("Turn microphone on");
   expect(problems).toEqual([]);
   await context.close();
 });

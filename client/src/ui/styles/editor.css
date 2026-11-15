@@ -436,8 +436,29 @@ html.lightbox-shown body {
   overflow-wrap: anywhere;
 }
 
-.app-mic-button.app-mic-on {
+/* The microphone and sound of an app with media: ours, not the app's. */
+.app-media {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  font-size: var(--fs-sm);
+}
+.app-media button {
+  font: inherit;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--c-accent-border);
+  border-radius: var(--radius-1);
+  background: var(--c-accent);
+  color: var(--c-text-on-accent);
+  cursor: pointer;
+}
+.app-media button:disabled { opacity: 0.6; cursor: default; }
+.app-media .app-mic-button.app-mic-on {
   background: var(--c-danger);
   border-color: var(--c-danger);
-  color: var(--c-on-accent, #fff);
 }
+.app-media-note { flex: 1 1 12rem; min-width: 0; color: var(--c-text-3); overflow-wrap: anywhere; }
+.app-media-note.app-media-error { color: var(--c-danger); }

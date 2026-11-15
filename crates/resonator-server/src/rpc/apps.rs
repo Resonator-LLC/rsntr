@@ -10,13 +10,15 @@ use base64::Engine;
 use resonator_apps::{UiEvent, UiNode};
 use resonator_model::id::{IdSerialiser, ModernIdSerialiser, ParticipantId, WaveId};
 use resonator_model::proto::app::{
-    AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppPair, AppUiNode,
-    AppUpdate,
+    AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppPair, AppRtcRequest,
+    AppRtcResponse, AppRtcSlot, AppUiNode, AppUpdate,
 };
 use resonator_model::proto::rpc::RpcFinished;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::mpsc;
 
 use super::Outbox;
+use crate::apps::rtc::{RtcEvent, RtcHub, RtcLink};
 use crate::apps::{AppManager, AppSession, AppSignal, OpenError};
 
 /// Most app views open at a time on one connection.
@@ -28,6 +30,8 @@ pub(super) struct AppView {
     wave: WaveId,
     gadget: String,
     session: Arc<Mutex<Option<Arc<AppSession>>>>,
+    /// A WebRTC connection for the view's media, to its stream task.
+    links: mpsc::Sender<RtcLink>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -112,6 +116,7 @@ pub(super) fn open(
     let gadget = request.gadget_id.unwrap_or_default();
     let view = u32::try_from(request.view.unwrap_or(0)).unwrap_or(0);
     let session = Arc::new(Mutex::new(None));
+    let (links, link_receiver) = mpsc::channel(2);
     let task = tokio::spawn(stream(
         apps.clone(),
         Arc::clone(outbox),
@@ -121,6 +126,7 @@ pub(super) fn open(
         gadget.clone(),
         view,
         Arc::clone(&session),
+        link_receiver,
     ));
     open.insert(
         seq,
@@ -128,6 +134,7 @@ pub(super) fn open(
             wave,
             gadget,
             session,
+            links,
             task,
         },
     );
@@ -143,6 +150,7 @@ async fn stream(
     gadget: String,
     view: u32,
     slot: Arc<Mutex<Option<Arc<AppSession>>>>,
+    mut links: mpsc::Receiver<RtcLink>,
 ) {
     outbox.send(seq, &status("loading"));
     let session = match apps.open(&account, &wave, &gadget).await {
@@ -210,6 +218,25 @@ async fn stream(
             },
         );
     };
+    // The view's WebRTC connection, and whether media flows on it.
+    let mut link: Option<RtcLink> = None;
+    let mut connected = false;
+    let slots = |slots: Vec<(String, u8)>| {
+        outbox.send(
+            seq,
+            &AppUpdate {
+                status: Some("slots".to_owned()),
+                slots: slots
+                    .into_iter()
+                    .map(|(mid, channel)| AppRtcSlot {
+                        mid: Some(mid),
+                        channel: Some(i32::from(channel)),
+                    })
+                    .collect(),
+                ..AppUpdate::default()
+            },
+        );
+    };
     let mut render = true;
     loop {
         if std::mem::take(&mut render) {
@@ -227,7 +254,28 @@ async fn stream(
         }
         let mut frames = Vec::new();
         let mut video: Vec<Vec<u8>> = Vec::new();
-        match signals.recv().await {
+        let signal = tokio::select! {
+            signal = signals.recv() => signal,
+            new = links.recv() => {
+                if let Some(new) = new {
+                    link = Some(new);
+                    connected = false;
+                }
+                continue;
+            }
+            event = next_event(&mut link) => {
+                match event {
+                    Some(RtcEvent::Connected) => connected = true,
+                    Some(RtcEvent::Slots(list)) => slots(list),
+                    None => {
+                        link = None;
+                        connected = false;
+                    }
+                }
+                continue;
+            }
+        };
+        match signal {
             Ok(AppSignal::Invalidate(v)) => render = v == view,
             Ok(AppSignal::Media(frame)) => frames.push(frame),
             Ok(AppSignal::Video(frame)) => video.push(frame),
@@ -255,7 +303,85 @@ async fn stream(
                 AppSignal::Stopped => return end("stopped", None),
             }
         }
-        media(frames, video);
+        match &link {
+            Some(link) if connected => {
+                for frame in frames {
+                    link.send(frame, false);
+                }
+                for frame in video {
+                    link.send(frame, true);
+                }
+            }
+            _ => media(frames, video),
+        }
+    }
+}
+
+/// The next event of the view's WebRTC connection, if it has one.
+async fn next_event(link: &mut Option<RtcLink>) -> Option<RtcEvent> {
+    match link {
+        Some(link) => link.event().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Answers the viewer's WebRTC offer for an app open on this connection
+/// and hands the connection to the view's stream.
+pub(super) async fn rtc(
+    hub: Option<&RtcHub>,
+    open: &HashMap<i32, AppView>,
+    outbox: &Outbox,
+    seq: i32,
+    request: AppRtcRequest,
+) {
+    let answer = |answer: Option<String>, error: Option<String>| {
+        outbox.send(
+            seq,
+            &AppRtcResponse {
+                answer,
+                error_message: error,
+            },
+        );
+    };
+    let Some(hub) = hub else {
+        return answer(None, Some("WebRTC is off on this server".to_owned()));
+    };
+    let Ok(wave) = ModernIdSerialiser.deserialise_wave_id(request.wave_id.as_deref().unwrap_or(""))
+    else {
+        return answer(None, Some("invalid wave id".to_owned()));
+    };
+    let gadget = request.gadget_id.unwrap_or_default();
+    let found = open
+        .values()
+        .filter(|view| view.wave == wave && view.gadget == gadget && !view.is_closed())
+        .find_map(|view| {
+            let session = view
+                .session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()?;
+            Some((session, view.links.clone()))
+        });
+    let Some((session, links)) = found else {
+        return answer(None, Some("the app is not open".to_owned()));
+    };
+    let permissions = &session.manifest().permissions;
+    if !permissions.contains(&resonator_apps::Permission::Media)
+        && !permissions.contains(&resonator_apps::Permission::Camera)
+    {
+        return answer(None, Some("the app has no media".to_owned()));
+    }
+    match hub
+        .accept(request.offer.as_deref().unwrap_or(""), session)
+        .await
+    {
+        Ok((sdp, link)) => {
+            if links.send(link).await.is_err() {
+                return answer(None, Some("the app is not open".to_owned()));
+            }
+            answer(Some(sdp), None);
+        }
+        Err(error) => answer(None, Some(error)),
     }
 }
 

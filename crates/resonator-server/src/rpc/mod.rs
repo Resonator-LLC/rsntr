@@ -137,6 +137,9 @@ pub struct SocketContext {
     /// Wave apps, if they run here.
     #[cfg(feature = "apps")]
     pub apps: Option<crate::apps::AppManager>,
+    /// App media over WebRTC, if `[webrtc]` is on.
+    #[cfg(feature = "apps")]
+    pub rtc: Option<crate::apps::rtc::RtcHub>,
 }
 
 enum Outbound {
@@ -418,6 +421,8 @@ impl Connection {
             resonator_model::proto::app::AppEventRequest::NAME => self.app_event(&envelope).await,
             #[cfg(feature = "apps")]
             resonator_model::proto::app::AppMediaRequest::NAME => self.app_media(&envelope),
+            #[cfg(feature = "apps")]
+            resonator_model::proto::app::AppRtcRequest::NAME => self.app_rtc(&envelope).await,
             "CancelRpc" => {
                 // The stream ends in the standard manner.
                 #[cfg(feature = "apps")]
@@ -482,6 +487,27 @@ impl Connection {
             return;
         }
         apps::event(&self.apps, &self.outbox, seq, request).await;
+    }
+
+    #[cfg(feature = "apps")]
+    async fn app_rtc(&mut self, envelope: &Envelope) {
+        let seq = envelope.sequence_number;
+        let Some(request) = self.body::<resonator_model::proto::app::AppRtcRequest>(envelope)
+        else {
+            return;
+        };
+        if self.identity.is_none() {
+            self.outbox.fail(seq, error_text::NOT_LOGGED_IN);
+            return;
+        }
+        apps::rtc(
+            self.context.rtc.as_ref(),
+            &self.apps,
+            &self.outbox,
+            seq,
+            request,
+        )
+        .await;
     }
 
     #[cfg(feature = "apps")]

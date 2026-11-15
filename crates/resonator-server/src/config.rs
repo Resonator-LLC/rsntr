@@ -28,6 +28,7 @@ mod federation;
 mod integrations;
 mod person;
 mod push;
+mod webrtc;
 
 pub use apps::AppsConfig;
 pub use device::{DeviceConfig, Mode};
@@ -36,6 +37,7 @@ pub use federation::{
 };
 pub use person::PersonConfig;
 pub use push::PushConfig;
+pub use webrtc::WebRtcConfig;
 
 pub use integrations::{
     AgentTools, AiAgentConfig, AiConfig, AiProviderConfig, ExtraParams, REDACTED, Secret,
@@ -245,6 +247,9 @@ pub struct Config {
     /// Wave apps (`[apps]`); off by default, on in device mode's defaults.
     #[serde(skip_serializing_if = "AppsConfig::is_default")]
     pub apps: AppsConfig,
+    /// App media over WebRTC (`[webrtc]`); off by default.
+    #[serde(skip_serializing_if = "WebRtcConfig::is_default")]
+    pub webrtc: WebRtcConfig,
     /// Device mode: the sign-in token to keep when the node restarts in
     /// the same process (after pairing or recovery); never in a file.
     #[serde(skip)]
@@ -407,6 +412,7 @@ impl Default for Config {
             device: DeviceConfig::default(),
             push: PushConfig::default(),
             apps: AppsConfig::default(),
+            webrtc: WebRtcConfig::default(),
             device_token: None,
         }
     }
@@ -651,6 +657,15 @@ pub struct Overrides {
     /// Whether wave apps run here ([apps] enabled).
     #[arg(long, env = "RESONATOR_APPS_ENABLED", value_name = "BOOL")]
     pub apps_enabled: Option<bool>,
+    /// Whether app media may go over WebRTC ([webrtc] enabled).
+    #[arg(long, env = "RESONATOR_WEBRTC_ENABLED", value_name = "BOOL")]
+    pub webrtc_enabled: Option<bool>,
+    /// The UDP address for WebRTC ([webrtc] listen).
+    #[arg(long, env = "RESONATOR_WEBRTC_LISTEN", value_name = "ADDR")]
+    pub webrtc_listen: Option<std::net::SocketAddr>,
+    /// The address browsers send WebRTC to ([webrtc] advertise).
+    #[arg(long, env = "RESONATOR_WEBRTC_ADVERTISE", value_name = "ADDR")]
+    pub webrtc_advertise: Option<std::net::SocketAddr>,
     /// Whether this server federates with others ([federation] enabled).
     #[arg(long, env = "RESONATOR_FEDERATION_ENABLED", value_name = "BOOL")]
     pub federation_enabled: Option<bool>,
@@ -791,6 +806,15 @@ impl Config {
         let federation = &mut self.federation;
         if let Some(enabled) = overrides.apps_enabled {
             self.apps.enabled = enabled;
+        }
+        if let Some(enabled) = overrides.webrtc_enabled {
+            self.webrtc.enabled = enabled;
+        }
+        if let Some(listen) = overrides.webrtc_listen {
+            self.webrtc.listen = listen;
+        }
+        if let Some(advertise) = overrides.webrtc_advertise {
+            self.webrtc.advertise = Some(advertise);
         }
         if let Some(enabled) = overrides.federation_enabled {
             federation.enabled = enabled;
@@ -956,6 +980,9 @@ impl Config {
             return invalid(message);
         }
         if let Err(message) = self.apps.validate() {
+            return invalid(message);
+        }
+        if let Err(message) = self.webrtc.validate() {
             return invalid(message);
         }
         if self.person.enabled && !self.federation.enabled {

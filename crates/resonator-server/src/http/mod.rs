@@ -194,6 +194,14 @@ impl AppState {
                 .ok()
             })
             .flatten();
+        #[cfg(feature = "apps")]
+        let rtc = (apps.is_some() && config.webrtc.enabled)
+            .then(|| {
+                crate::apps::rtc::RtcHub::start(&config.webrtc)
+                    .inspect_err(|error| tracing::error!(%error, "app media stays on the socket"))
+                    .ok()
+            })
+            .flatten();
         let (shutdown, shutdown_signal) = watch::channel(false);
         let socket = Arc::new(SocketContext {
             frontend: frontend.clone(),
@@ -203,6 +211,8 @@ impl AppState {
             shutdown: shutdown_signal,
             #[cfg(feature = "apps")]
             apps: apps.clone(),
+            #[cfg(feature = "apps")]
+            rtc,
         });
         AppState(Arc::new(AppInner {
             // Validated with the config; an invalid entry trusts nobody.

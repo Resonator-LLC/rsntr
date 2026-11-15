@@ -88,11 +88,60 @@ pub struct AppUpdate {
     /// a channel byte, a flags byte, then the encoded frame).
     #[prost(string, repeated, tag = "8")]
     pub video: Vec<String>,
+    /// With status `media`, over WebRTC: which app channel each receiving
+    /// track of the viewer's peer connection carries now.
+    #[prost(message, repeated, tag = "9")]
+    pub slots: Vec<AppRtcSlot>,
 }
 wave_message!(AppUpdate {
     required: [status],
     repeated: [nodes],
 });
+
+/// A receiving track of the viewer's WebRTC connection to an app, and the
+/// app channel it carries.
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct AppRtcSlot {
+    /// Required: the track's media id in the SDP.
+    #[prost(string, optional, tag = "1")]
+    pub mid: Option<String>,
+    /// Required: the channel byte the app writes for it.
+    #[prost(int32, optional, tag = "2")]
+    pub channel: Option<i32>,
+}
+wave_message!(AppRtcSlot {
+    required: [mid, channel],
+});
+
+/// The viewer's WebRTC offer for an app open on this connection; answered
+/// by an [`AppRtcResponse`]. From then on the app's media goes over that
+/// connection instead of [`AppMediaRequest`] and `AppUpdate.media`.
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct AppRtcRequest {
+    /// Required.
+    #[prost(string, optional, tag = "1")]
+    pub wave_id: Option<String>,
+    /// Required.
+    #[prost(string, optional, tag = "2")]
+    pub gadget_id: Option<String>,
+    /// Required: the SDP offer.
+    #[prost(string, optional, tag = "3")]
+    pub offer: Option<String>,
+}
+wave_message!(AppRtcRequest {
+    required: [wave_id, gadget_id, offer],
+});
+
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct AppRtcResponse {
+    /// The SDP answer, unless refused.
+    #[prost(string, optional, tag = "1")]
+    pub answer: Option<String>,
+    /// Why not: WebRTC off here, the app not open or without media.
+    #[prost(string, optional, tag = "2")]
+    pub error_message: Option<String>,
+}
+wave_message!(AppRtcResponse {});
 
 /// A frame of the viewer's microphone for an open app (one Opus frame,
 /// base64). Answered by an [`AppEventResponse`].

@@ -20,11 +20,13 @@ path = "src/main.rs"
 [features]
 default = ["apps"]
 # Wave apps (wasmtime); still off at run time unless `[apps] enabled`.
-apps = ["dep:resonator-apps"]
+apps = ["dep:resonator-apps", "dep:str0m"]
 
 [dependencies]
 resonator-model = { path = "../resonator-model" }
 resonator-apps = { path = "../resonator-apps", optional = true }
+# WebRTC for app media; pure-Rust crypto, so it cross-builds for phones.
+str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"], optional = true }
 argon2 = "0.5"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 base64 = "0.22"

@@ -675,3 +675,307 @@ async fn apps_without_the_camera_permission_take_no_video() {
     assert!(alices.media(vec![1, 2, 3], false).is_ok());
     server.shutdown().await;
 }
+
+/// A browser's side of a WebRTC connection to an app, for the tests: it
+/// sends a microphone and a camera and receives on 8 + 8 slots, as the
+/// web client does.
+struct Browser {
+    rtc: str0m::Rtc,
+    socket: tokio::net::UdpSocket,
+    mic: str0m::media::Mid,
+    camera: str0m::media::Mid,
+    pending: Option<str0m::change::SdpPendingOffer>,
+    timeout: std::time::Instant,
+    connected: bool,
+    /// Frames that came: (mid, is a key frame, data).
+    received: Vec<(String, bool, Vec<u8>)>,
+}
+
+impl Browser {
+    async fn new() -> (Browser, String) {
+        use str0m::media::{Direction, MediaKind};
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let now = std::time::Instant::now();
+        let mut rtc = str0m::Rtc::builder()
+            .clear_codecs()
+            .enable_opus(true, false)
+            .enable_vp8(true)
+            .enable_h264(true)
+            .build(now);
+        rtc.add_local_candidate(
+            str0m::Candidate::host(socket.local_addr().unwrap(), "udp").unwrap(),
+        );
+        let mut change = rtc.sdp_api();
+        let mic = change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+        let camera = change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        for kind in [MediaKind::Audio, MediaKind::Video] {
+            for _ in 0..8 {
+                change.add_media(kind, Direction::RecvOnly, None, None, None);
+            }
+        }
+        let (offer, pending) = change.apply().unwrap();
+        let mut browser = Browser {
+            rtc,
+            socket,
+            mic,
+            camera,
+            pending: Some(pending),
+            timeout: now,
+            connected: false,
+            received: Vec::new(),
+        };
+        browser.drain();
+        (browser, offer.to_sdp_string())
+    }
+
+    fn answer(&mut self, sdp: &str) {
+        let answer = str0m::change::SdpAnswer::from_sdp_string(sdp).unwrap();
+        let pending = self.pending.take().unwrap();
+        self.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+        self.drain();
+    }
+
+    fn drain(&mut self) {
+        use str0m::{Event, IceConnectionState, Output};
+        loop {
+            match self.rtc.poll_output().unwrap() {
+                Output::Timeout(at) => {
+                    self.timeout = at;
+                    return;
+                }
+                Output::Transmit(t) => {
+                    let _ = self.socket.try_send_to(&t.contents, t.destination);
+                }
+                Output::Event(Event::IceConnectionStateChange(
+                    IceConnectionState::Connected | IceConnectionState::Completed,
+                )) => self.connected = true,
+                Output::Event(Event::MediaData(data)) => {
+                    let key = data.is_keyframe();
+                    self.received
+                        .push((data.mid.to_string(), key, data.data.to_vec()));
+                }
+                Output::Event(_) => {}
+            }
+        }
+    }
+
+    /// Takes one packet or timeout, waiting at most `most`.
+    async fn step(&mut self, most: Duration) {
+        use str0m::Input;
+        use str0m::net::{Protocol, Receive};
+        let mut buf = vec![0u8; 2000];
+        let wait = self
+            .timeout
+            .saturating_duration_since(std::time::Instant::now())
+            .min(most);
+        let input = match tokio::time::timeout(wait, self.socket.recv_from(&mut buf)).await {
+            Ok(Ok((n, source))) => {
+                buf.truncate(n);
+                Input::Receive(
+                    std::time::Instant::now(),
+                    Receive {
+                        proto: Protocol::Udp,
+                        source,
+                        destination: self.socket.local_addr().unwrap(),
+                        contents: buf.as_slice().try_into().unwrap(),
+                    },
+                )
+            }
+            _ => Input::Timeout(std::time::Instant::now()),
+        };
+        self.rtc.handle_input(input).unwrap();
+        self.drain();
+    }
+
+    /// Writes the n-th frame of the microphone (or the camera).
+    fn write(&mut self, video: bool, n: u64, frame: &[u8]) {
+        use str0m::format::Codec;
+        use str0m::media::{Frequency, MediaTime};
+        let (mid, codec, time) = if video {
+            (
+                self.camera,
+                Codec::Vp8,
+                MediaTime::new(n * 6000, Frequency::NINETY_KHZ),
+            )
+        } else {
+            (
+                self.mic,
+                Codec::Opus,
+                MediaTime::new(n * 960, Frequency::FORTY_EIGHT_KHZ),
+            )
+        };
+        let writer = self.rtc.writer(mid).unwrap();
+        let pt = writer
+            .payload_params()
+            .find(|p| p.spec().codec == codec)
+            .unwrap()
+            .pt();
+        writer
+            .write(pt, std::time::Instant::now(), time, frame.to_vec())
+            .unwrap();
+        self.drain();
+    }
+}
+
+/// A free UDP port on loopback (for the node's WebRTC socket).
+fn free_udp_port() -> u16 {
+    std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+#[tokio::test]
+async fn webrtc_carries_the_camera_and_microphone_to_the_app_and_back() {
+    use resonator_model::proto::app::{
+        AppEventRequest, AppEventResponse, AppOpenRequest, AppRtcRequest, AppRtcResponse, AppUpdate,
+    };
+
+    let port = free_udp_port();
+    let server = TestServer::start_with(|config| {
+        config.apps.enabled = true;
+        config.webrtc.enabled = true;
+        config.webrtc.listen = format!("127.0.0.1:{port}").parse().unwrap();
+        config.webrtc.advertise = Some(format!("127.0.0.1:{port}").parse().unwrap());
+    })
+    .await;
+    let alice = user("alice");
+    let wave = create_wave(server.app().server(), &alice, "w+rtc", &[], "Rtc").await;
+    let attachment = format!("{DOMAIN}/walkiecam1");
+    let (bytes, app) = bundle_of(
+        "walkie-cam",
+        WALKIE_CAM,
+        r#"["peers","streams","media","camera"]"#,
+    );
+    server
+        .app()
+        .state()
+        .attachments
+        .store(
+            &AttachmentId::deserialise(&attachment).unwrap(),
+            &root_name(&wave),
+            "walkie-cam.zip",
+            Some(&alice),
+            &bytes,
+        )
+        .await
+        .unwrap();
+    insert_gadget(&server, &wave, &app, &attachment).await;
+    allow(&server, &alice, &wave, &app).await;
+
+    let cookie = server.user("alice").await;
+    let mut client = net::WaveClient::with_cookie(&server, &cookie).await;
+    let wave_id = wave.serialise().unwrap();
+    let seq = client
+        .send(&AppOpenRequest {
+            wave_id: Some(wave_id.clone()),
+            gadget_id: Some(GADGET.to_owned()),
+            view: None,
+        })
+        .await;
+    let running = loop {
+        let update: AppUpdate = client.next_for(seq).await.decode();
+        if update.status.as_deref() == Some("running") {
+            break update;
+        }
+    };
+    let echo = running
+        .nodes
+        .iter()
+        .position(|n| n.text.as_deref() == Some("Echo: off"))
+        .unwrap();
+    let event = client
+        .send(&AppEventRequest {
+            wave_id: Some(wave_id.clone()),
+            gadget_id: Some(GADGET.to_owned()),
+            view: None,
+            node: Some(echo as i32),
+            name: Some("click".to_owned()),
+            value: None,
+            fields: vec![],
+        })
+        .await;
+    let answer: AppEventResponse = client.next_for(event).await.decode();
+    assert_eq!(answer.error_message, None);
+
+    // A bad offer is refused; a good one answered.
+    let bad = client
+        .send(&AppRtcRequest {
+            wave_id: Some(wave_id.clone()),
+            gadget_id: Some(GADGET.to_owned()),
+            offer: Some("v=0".to_owned()),
+        })
+        .await;
+    let refused: AppRtcResponse = client.next_for(bad).await.decode();
+    assert!(refused.answer.is_none() && refused.error_message.is_some());
+
+    let (mut browser, offer) = Browser::new().await;
+    let request = client
+        .send(&AppRtcRequest {
+            wave_id: Some(wave_id.clone()),
+            gadget_id: Some(GADGET.to_owned()),
+            offer: Some(offer),
+        })
+        .await;
+    let response: AppRtcResponse = client.next_for(request).await.decode();
+    assert_eq!(response.error_message, None);
+    browser.answer(response.answer.as_deref().unwrap());
+
+    // A VP8 key frame (P bit clear), then inter frames, and Opus frames:
+    // Echo sends them back on channel 0, over the connection.
+    let key = [0x10u8, 0x02, 0x00, 0x9d, 0x01, 0x2a, 0x40, 0x01, 0xf0, 0x00];
+    let inter = [0x31u8, 0x02, 0x00, 0x07, 0x08];
+    let mut n = 0u64;
+    let started = std::time::Instant::now();
+    let mut last_write = started;
+    loop {
+        assert!(
+            started.elapsed() < TIMEOUT,
+            "no echo came back: connected {}, received {:?}",
+            browser.connected,
+            browser.received.len()
+        );
+        browser.step(Duration::from_millis(20)).await;
+        if browser.connected && last_write.elapsed() >= Duration::from_millis(20) {
+            last_write = std::time::Instant::now();
+            browser.write(true, n, if n.is_multiple_of(10) { &key } else { &inter });
+            browser.write(false, n, &[0xf8, 0xff, 0xfe, n as u8]);
+            n += 1;
+        }
+        let video = browser.received.iter().any(|(_, k, d)| *k && d[..] == key);
+        let sound = browser
+            .received
+            .iter()
+            .any(|(_, _, d)| d.starts_with(&[0xf8, 0xff, 0xfe]));
+        if video && sound {
+            break;
+        }
+    }
+    let (video_mid, _, _) = browser
+        .received
+        .iter()
+        .find(|(_, k, d)| *k && d[..] == key)
+        .cloned()
+        .unwrap();
+
+    // The socket says which slot carries channel 0.
+    let slots = loop {
+        let update: AppUpdate = client.next_for(seq).await.decode();
+        assert_ne!(
+            update.status.as_deref(),
+            Some("media"),
+            "media came on the socket"
+        );
+        if update.status.as_deref() == Some("slots")
+            && update
+                .slots
+                .iter()
+                .any(|s| s.mid.as_deref() == Some(video_mid.as_str()))
+        {
+            break update.slots;
+        }
+    };
+    assert!(slots.iter().all(|s| s.channel == Some(0)), "{slots:?}");
+    server.shutdown().await;
+}

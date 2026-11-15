@@ -41,8 +41,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::app::{
-    AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppPair, AppUiNode,
-    AppUpdate,
+    AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppPair, AppRtcRequest,
+    AppRtcResponse, AppRtcSlot, AppUiNode, AppUpdate,
 };
 use super::attachment::{AttachmentMetadata, AttachmentsResponse, ImageMetadata};
 use super::federation::protocol_document_operation::Component;
@@ -600,6 +600,23 @@ json_message!(AppUpdate, "AppUpdate" {
     6 => nodes: many message,
     7 => media: many string,
     8 => video: many string,
+    9 => slots: many message,
+});
+
+json_message!(AppRtcSlot, "AppRtcSlot" {
+    1 => mid: one string,
+    2 => channel: one int32,
+});
+
+json_message!(AppRtcRequest, "AppRtcRequest" {
+    1 => wave_id: one string,
+    2 => gadget_id: one string,
+    3 => offer: one string,
+});
+
+json_message!(AppRtcResponse, "AppRtcResponse" {
+    1 => answer: one string,
+    2 => error_message: one string,
 });
 
 json_message!(AppMediaRequest, "AppMediaRequest" {

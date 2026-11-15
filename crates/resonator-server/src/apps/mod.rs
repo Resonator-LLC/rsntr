@@ -9,6 +9,7 @@
 //! the app wavelet.
 
 mod peers;
+pub mod rtc;
 mod wavelet;
 
 pub use peers::{MAX_VIDEO_FRAME, PeerChannel, RemotePeer, Route, StreamTx, WeakAppManager};

@@ -331,3 +331,34 @@ test("390x844: swipe a wave left in the inbox to archive it, Undo brings it back
   await expect(row).toBeVisible();
   expect(problems).toEqual([]);
 });
+
+test("390x844: wave rows are one height, with the picture in the middle", async ({ browser }) => {
+  const { page } = await phone(browser, "390x844");
+  await page.goto(servers.baseUrl);
+  const dave = await createUser(servers, "dave");
+  await signIn(page, dave);
+  const write = async (text: string) => {
+    await page.locator("[data-action=new-wave]").tap();
+    await page.keyboard.type(text);
+    await expect(page.locator(".blip-editing .doc")).toContainText(text.split("\n")[0] ?? text);
+    await page.locator(".edit-done").tap();
+    await page.locator(".wave-back").tap();
+  };
+  await write("Title only");
+  await write("Long one\nThis text runs to more than two lines on a phone, so the preview is cut after the second line.");
+  await expect(page.locator(".digest")).toHaveCount(2, { timeout: 15_000 });
+  const rows = await page.locator(".digest-link").evaluateAll((links) =>
+    links.map((link) => {
+      const row = link.getBoundingClientRect();
+      const picture = link.querySelector(".digest-avatars")!.getBoundingClientRect();
+      return {
+        height: Math.round(row.height),
+        offCentre: Math.abs(picture.top + picture.height / 2 - (row.top + row.height / 2)),
+      };
+    }),
+  );
+  expect(rows[0]!.height).toBe(rows[1]!.height);
+  for (const row of rows) {
+    expect(row.offCentre).toBeLessThan(2);
+  }
+});

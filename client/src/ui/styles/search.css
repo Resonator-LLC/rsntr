@@ -163,6 +163,7 @@
 }
 
 .digest-avatars {
+  align-self: center;
   display: grid;
   grid-template-columns: repeat(2, var(--avatar-sm));
   gap: var(--sp-0);
@@ -196,6 +197,8 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
+  /* Two lines even when shorter or empty: every row is the same height. */
+  min-height: 2lh;
   overflow: hidden;
   color: var(--c-text-2);
   font-size: var(--fs-sm);

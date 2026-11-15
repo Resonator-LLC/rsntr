@@ -15,3 +15,9 @@ listen = "0.0.0.0:@FEDPORT@"
 
 [push]
 relay = "https://psh.rsntr.net"
+
+# Wave apps run here for every account of the domain: a cap that fits the
+# droplet (each instance up to its manifest's memory_mb, 64 by default).
+[apps]
+enabled = true
+max_instances = 16

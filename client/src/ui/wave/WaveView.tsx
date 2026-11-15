@@ -18,7 +18,7 @@ import { InvalidIdError, ModernIdSerialiser, WaveRef, type WaveletId } from "../
 import type { StreamHandle, StreamHandlers } from "../../net";
 import type { AttachmentService } from "../../net/http";
 import type { AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppUpdate } from "../../wire";
-import type { WaveAppsUi } from "../waveapps/AppView";
+import { noteAllowed, type WaveAppsUi } from "../waveapps/AppView";
 import type { Route } from "../contracts";
 import type { ProfileStore } from "../profiles/profileStore";
 import { AttachmentIdGenerator, WaveAttachments } from "./attachments";
@@ -90,6 +90,7 @@ function waveAppsUi(
     event: (request) => socket.event(request),
     media: (request) => socket.media(request),
     allow: (gadgetId, appId) => {
+      noteAllowed(gadgetId);
       wave.writeSupplement((s) => s.setGadgetState(gadgetId, APP_GRANT_KEY, appId));
     },
     attachmentUrl: (id) => attachments?.attachmentUrl(id) ?? null,

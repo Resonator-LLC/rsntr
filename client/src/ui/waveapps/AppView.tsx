@@ -47,6 +47,16 @@ const CONTAINED = [
 
 /** How long after Allow a missing grant is taken for one still on its way. */
 const GRANT_GRACE_MS = 10_000;
+/**
+ * When this page allowed an app, by gadget: a box opened just after its
+ * app was inserted (and allowed) may reach the node before the grant does.
+ */
+const allowedGadgets = new Map<string, number>();
+
+/** Notes that this page allowed the app of `gadgetId` (see `GRANT_GRACE_MS`). */
+export function noteAllowed(gadgetId: string): void {
+  allowedGadgets.set(gadgetId, Date.now());
+}
 const REOPEN_MS = 400;
 
 type Status = "loading" | "needs-grant" | "running" | "failed" | "stopped" | "off";
@@ -201,7 +211,8 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
               return;
             }
             const status = update.status as Status;
-            if (status === "needs-grant" && Date.now() - allowedAt.current < GRANT_GRACE_MS) {
+            const allowed = Math.max(allowedAt.current, allowedGadgets.get(gadget.id) ?? 0);
+            if (status === "needs-grant" && Date.now() - allowed < GRANT_GRACE_MS) {
               // The grant is on its way to the server.
               reopen();
               return;

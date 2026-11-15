@@ -17,8 +17,14 @@ name = "resonator_server"
 name = "resonator-server"
 path = "src/main.rs"
 
+[features]
+default = ["apps"]
+# Wave apps (wasmtime); still off at run time unless `[apps] enabled`.
+apps = ["dep:resonator-apps"]
+
 [dependencies]
 resonator-model = { path = "../resonator-model" }
+resonator-apps = { path = "../resonator-apps", optional = true }
 argon2 = "0.5"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 base64 = "0.22"
@@ -39,6 +45,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+resonator-apps = { path = "../resonator-apps" }
+zip = { version = "2", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
 tempfile = "3"
 tokio-tungstenite = "0.29"

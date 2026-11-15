@@ -127,6 +127,10 @@ pub static BLIP_SCHEMA_CONSTRAINTS: LazyLock<XmlSchemaConstraints> = LazyLock::n
             "extension",
             "ifr",
             "snippet",
+            // Wave apps: `app` is the bundle's `sha256:<hex>`, `bundle` its
+            // attachment id.
+            "app",
+            "bundle",
         ],
     );
     for gadget_el in ["category", "state", "pref"] {

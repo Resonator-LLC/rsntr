@@ -67,6 +67,9 @@ pub struct AppInner {
     pub profiles: crate::profile::Profiles,
     pub metrics: Arc<Metrics>,
     pub socket: Arc<SocketContext>,
+    /// Wave apps; `None` unless `[apps] enabled`.
+    #[cfg(feature = "apps")]
+    pub apps: Option<crate::apps::AppManager>,
     trusted_proxies: Vec<IpNet>,
     shutdown: watch::Sender<bool>,
     /// Set by federation: answers `/federation/probe`.
@@ -183,6 +186,22 @@ impl AppState {
             settings: SocketSettings::from_config(&config),
             shutdown: shutdown_signal,
         });
+        #[cfg(feature = "apps")]
+        let apps = config
+            .apps
+            .enabled
+            .then(|| {
+                crate::apps::AppManager::new(
+                    config.apps.clone(),
+                    Some(config.data_directory().join("apps").join("cache")),
+                    server.clone(),
+                    attachments.clone(),
+                    server.database().app_kv_store(),
+                )
+                .inspect_err(|error| tracing::error!(%error, "wave apps will not run"))
+                .ok()
+            })
+            .flatten();
         AppState(Arc::new(AppInner {
             // Validated with the config; an invalid entry trusts nobody.
             trusted_proxies: config.trusted_proxy_nets().unwrap_or_default(),
@@ -196,6 +215,8 @@ impl AppState {
             profiles,
             metrics,
             socket,
+            #[cfg(feature = "apps")]
+            apps,
             shutdown,
             remote_probe: std::sync::OnceLock::new(),
             probe_limiter: std::sync::Mutex::new(crate::auth::rate_limit::WindowLimiter::new(
@@ -207,6 +228,15 @@ impl AppState {
             restart: Arc::new(tokio::sync::Notify::new()),
             restart_asked: std::sync::atomic::AtomicBool::new(false),
         }))
+    }
+
+    /// Stops the running wave apps (the node goes to the background);
+    /// they start again when opened. Does nothing without apps.
+    pub fn stop_apps(&self) {
+        #[cfg(feature = "apps")]
+        if let Some(apps) = &self.apps {
+            apps.stop_all();
+        }
     }
 
     /// Asks whoever runs the node to restart it (same configuration,

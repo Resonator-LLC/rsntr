@@ -101,7 +101,8 @@ const DEVICE_ATTACHMENT_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024;
 /// The configuration of a device node keeping its files in `data_dir`:
 /// `mode = "device"`, HTTP on `127.0.0.1:0`, the database
 /// `resonator.db` there, federation and person mode on, and the device an
-/// admin device (it holds the person key, made on the first start).
+/// admin device (it holds the person key, made on the first start), and
+/// wave apps on.
 /// `overrides` is TOML laid over these defaults, key by key (a `[person]`
 /// table replaces only the keys it names); it is checked like a config
 /// file.
@@ -138,6 +139,9 @@ pub fn device_config(data_dir: &Path, overrides: &str) -> Result<Config, NodeErr
     set(&mut person, "enabled", true.into());
     set(&mut person, "admin", true.into());
     set(&mut defaults, "person", person.into());
+    let mut apps = toml::Table::new();
+    set(&mut apps, "enabled", true.into());
+    set(&mut defaults, "apps", apps.into());
     let overrides: toml::Table = toml::from_str(overrides)
         .map_err(|error| NodeError::Invalid(format!("device config overrides: {error}")))?;
     merge(&mut defaults, overrides);
@@ -447,6 +451,7 @@ impl Node {
                 }
             }
         }
+        self.app.state().stop_apps();
         if let Ok(sent) = tokio::time::timeout_at(deadline, self.server().drain_pending()).await {
             report.pending_sent = sent;
         }

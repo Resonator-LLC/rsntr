@@ -488,6 +488,21 @@ CREATE TABLE profiles (
 ) WITHOUT ROWID;
 "#,
     },
+    Migration {
+        name: "app kv",
+        sql: r#"
+-- The key/value store of wave apps (`kv` in resonator-apps): one per
+-- account, wave and gadget, local to this node and never federated.
+CREATE TABLE app_kv (
+    account TEXT NOT NULL,
+    wave    TEXT NOT NULL,
+    gadget  TEXT NOT NULL,
+    key     TEXT NOT NULL,
+    value   BLOB NOT NULL,
+    PRIMARY KEY (account, wave, gadget, key)
+) WITHOUT ROWID;
+"#,
+    },
 ];
 
 const INITIAL: Migration = Migration {

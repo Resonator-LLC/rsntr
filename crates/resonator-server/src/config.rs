@@ -22,12 +22,14 @@ use thiserror::Error;
 
 use crate::storage::{DatabaseOptions, Synchronous};
 
+mod apps;
 mod device;
 mod federation;
 mod integrations;
 mod person;
 mod push;
 
+pub use apps::AppsConfig;
 pub use device::{DeviceConfig, Mode};
 pub use federation::{
     DEFAULT_PAIRING_RENDEZVOUS, FederationConfig, FederationMode, FederationPeer, RelaySetting,
@@ -240,6 +242,9 @@ pub struct Config {
     /// while `push.relay` is empty.
     #[serde(skip_serializing_if = "PushConfig::is_default")]
     pub push: PushConfig,
+    /// Wave apps (`[apps]`); off by default, on in device mode's defaults.
+    #[serde(skip_serializing_if = "AppsConfig::is_default")]
+    pub apps: AppsConfig,
     /// Device mode: the sign-in token to keep when the node restarts in
     /// the same process (after pairing or recovery); never in a file.
     #[serde(skip)]
@@ -401,6 +406,7 @@ impl Default for Config {
             person: PersonConfig::default(),
             device: DeviceConfig::default(),
             push: PushConfig::default(),
+            apps: AppsConfig::default(),
             device_token: None,
         }
     }
@@ -642,6 +648,9 @@ pub struct Overrides {
     /// Whether the configured agents run ([ai] enabled).
     #[arg(long, env = "RESONATOR_AI_ENABLED", value_name = "BOOL")]
     pub ai_enabled: Option<bool>,
+    /// Whether wave apps run here ([apps] enabled).
+    #[arg(long, env = "RESONATOR_APPS_ENABLED", value_name = "BOOL")]
+    pub apps_enabled: Option<bool>,
     /// Whether this server federates with others ([federation] enabled).
     #[arg(long, env = "RESONATOR_FEDERATION_ENABLED", value_name = "BOOL")]
     pub federation_enabled: Option<bool>,
@@ -780,6 +789,9 @@ impl Config {
             self.ai.enabled = enabled;
         }
         let federation = &mut self.federation;
+        if let Some(enabled) = overrides.apps_enabled {
+            self.apps.enabled = enabled;
+        }
         if let Some(enabled) = overrides.federation_enabled {
             federation.enabled = enabled;
         }
@@ -941,6 +953,9 @@ impl Config {
             return invalid(message);
         }
         if let Err(message) = self.push.validate() {
+            return invalid(message);
+        }
+        if let Err(message) = self.apps.validate() {
             return invalid(message);
         }
         if self.person.enabled && !self.federation.enabled {

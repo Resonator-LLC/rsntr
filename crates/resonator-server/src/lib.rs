@@ -25,6 +25,8 @@
 
 pub mod account;
 pub mod app;
+#[cfg(feature = "apps")]
+pub mod apps;
 pub mod attachment;
 pub mod auth;
 pub mod clock;

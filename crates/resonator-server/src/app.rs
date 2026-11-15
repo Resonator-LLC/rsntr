@@ -333,6 +333,10 @@ impl App {
         for task in &self.maintenance {
             task.abort();
         }
+        #[cfg(feature = "apps")]
+        if let Some(apps) = &self.state().apps {
+            apps.shutdown();
+        }
         self.http.shutdown().await;
         shutdown(self.server).await;
     }

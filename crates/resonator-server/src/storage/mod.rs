@@ -8,6 +8,7 @@
 //! runtime.
 
 mod account_store;
+mod app_kv_store;
 mod auth_store;
 mod contact_store;
 mod delta_store;
@@ -29,6 +30,7 @@ use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 pub use account_store::AccountStore;
+pub use app_kv_store::{AppKvScope, AppKvStore};
 pub use auth_store::{AccessTokenRecord, AuthStore, SessionRecord};
 pub use contact_store::{Contact, ContactStore};
 pub use delta_store::{AppliedDelta, DeltaStore, DeltasAccess, StoredSnapshot, WaveletDeltaRecord};
@@ -339,6 +341,11 @@ impl Database {
     /// Names and avatars: of this domain's accounts, and fetched copies.
     pub fn profile_store(&self) -> ProfileStore {
         ProfileStore::new(self.clone())
+    }
+
+    /// The kv stores of wave apps.
+    pub fn app_kv_store(&self) -> AppKvStore {
+        AppKvStore::new(self.clone())
     }
 
     /// Number of writes queued or running; at most

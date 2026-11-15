@@ -4021,6 +4021,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "reqwest 0.12.28",
+ "resonator-apps",
  "resonator-model",
  "rusqlite",
  "serde",
@@ -4035,6 +4036,7 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]

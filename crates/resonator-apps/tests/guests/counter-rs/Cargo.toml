@@ -1,0 +1,20 @@
+[package]
+name = "counter-rs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Built on its own for wasm32-wasip2 by build-guests.sh, not part of the
+# resonator workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.57"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

@@ -1,0 +1,12 @@
+{
+  "name": "counter-js",
+  "private": true,
+  "type": "module",
+  "description": "The counter test guest in JavaScript, built with componentize-js by build-guests.sh",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@bytecodealliance/componentize-js": "0.23.0"
+  }
+}

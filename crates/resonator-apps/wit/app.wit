@@ -1,0 +1,96 @@
+// The world a wave app runs in. Every node that holds the wave runs the
+// same component; the host gives it the wave, a local kv store, the peers
+// running the same app, and a way to ask for a redraw. Writes never block:
+// the host queues them and carries them out after the call returns.
+
+package resonator:app@0.1.0;
+
+interface types {
+  /// A device running the same app for the same gadget.
+  record peer {
+    id: string,
+    participant: string,
+    device: string,
+    /// The viewer in front of this node (media frames come from it).
+    local: bool,
+  }
+
+  /// One message in the app wavelet, in order.
+  record wave-message {
+    seq: u64,
+    author: string,
+    kind: string,
+    body: string,
+  }
+
+  enum stream-mode { reliable, datagram }
+
+  /// One node of the UI. WIT has no recursive types, so the tree is a flat
+  /// list in document order and `parent` is an index into it.
+  record ui-node {
+    parent: option<u32>,
+    tag: string,
+    text: option<string>,
+    attrs: list<tuple<string, string>>,
+    /// Event names the app wants (click, input, change, submit).
+    on: list<string>,
+  }
+
+  record ui-event {
+    node: u32,
+    name: string,
+    value: option<string>,
+    /// Form fields on submit.
+    fields: list<tuple<string, string>>,
+  }
+}
+
+interface wave {
+  use types.{wave-message};
+  messages: func(since: u64) -> list<wave-message>;
+  post: func(kind: string, body: string) -> result<_, string>;
+}
+
+interface kv {
+  get: func(key: string) -> option<list<u8>>;
+  set: func(key: string, value: list<u8>) -> result<_, string>;
+  delete: func(key: string) -> result<_, string>;
+}
+
+interface peers {
+  use types.{peer, stream-mode};
+  %list: func() -> list<peer>;
+  send: func(to: string, data: list<u8>) -> result<_, string>;
+  open: func(to: string, mode: stream-mode) -> result<u64, string>;
+  write: func(%stream: u64, data: list<u8>) -> result<_, string>;
+  close: func(%stream: u64);
+}
+
+interface ui {
+  invalidate: func(view: u32);
+}
+
+interface log {
+  enum level { debug, info, warn, %error }
+  log: func(level: level, message: string);
+}
+
+world wave-app {
+  import wave;
+  import kv;
+  import peers;
+  import ui;
+  import log;
+
+  use types.{peer, wave-message, stream-mode, ui-node, ui-event};
+
+  export init: func(app-id: string, self-peer: peer);
+  export on-messages: func(messages: list<wave-message>);
+  export on-peers-changed: func(peers: list<peer>);
+  export on-peer-data: func(%from: string, data: list<u8>);
+  export on-stream: func(%stream: u64, %from: string, mode: stream-mode);
+  export on-stream-data: func(%stream: u64, data: list<u8>);
+  export on-stream-closed: func(%stream: u64);
+  export render: func(view: u32) -> list<ui-node>;
+  export on-ui: func(view: u32, event: ui-event);
+}

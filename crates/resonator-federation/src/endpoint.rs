@@ -63,6 +63,16 @@ pub const ALPN: &[u8] = b"resonator/fed/1";
 /// stream carries one `pair` request and its answer.
 pub const PAIR_ALPN: &[u8] = b"resonator/pair/1";
 
+/// The ALPN of wave apps ([`crate::app_channel`]): instances of the same
+/// app for the same gadget, on different devices, talking to each other.
+pub const APP_ALPN: &[u8] = b"resonator/app/1";
+
+/// Serves [`APP_ALPN`] connections.
+#[async_trait]
+pub trait AppService: Send + Sync {
+    async fn serve(&self, connection: Connection);
+}
+
 /// Most requests one pairing connection may make.
 const MAX_PAIR_REQUESTS: usize = 256;
 
@@ -556,6 +566,7 @@ struct Inner {
     /// This device's certificate (person mode).
     device_cert: Option<SignedDeviceCert>,
     pair: std::sync::OnceLock<Arc<dyn PairService>>,
+    app: std::sync::OnceLock<Arc<dyn AppService>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -625,7 +636,7 @@ impl FederationEndpoint {
         let static_addrs = MemoryLookup::new();
         let mut builder = Endpoint::builder(presets::Minimal)
             .secret_key(key)
-            .alpns(vec![ALPN.to_vec(), PAIR_ALPN.to_vec()])
+            .alpns(vec![ALPN.to_vec(), PAIR_ALPN.to_vec(), APP_ALPN.to_vec()])
             .relay_mode(relay_mode)
             .address_lookup(static_addrs.clone());
         if options.discovery {
@@ -657,6 +668,7 @@ impl FederationEndpoint {
             inbound: Mutex::new(HashMap::new()),
             device_cert,
             pair: std::sync::OnceLock::new(),
+            app: std::sync::OnceLock::new(),
             cancel: CancellationToken::new(),
             tasks: TaskTracker::new(),
         });
@@ -690,6 +702,28 @@ impl FederationEndpoint {
     /// installed already.
     pub fn set_pair_service(&self, service: Arc<dyn PairService>) -> bool {
         self.inner.pair.set(service).is_ok()
+    }
+
+    /// Installs what serves wave app connections. Returns false if one was
+    /// installed already.
+    pub fn set_app_service(&self, service: Arc<dyn AppService>) -> bool {
+        self.inner.app.set(service).is_ok()
+    }
+
+    /// Opens a wave app connection to `key`.
+    pub async fn connect_app(&self, key: PublicKey) -> Result<Connection, RequestError> {
+        let connect = self
+            .inner
+            .endpoint
+            .connect(EndpointAddr::new(key), APP_ALPN);
+        match tokio::time::timeout(self.inner.options.request_timeout, connect).await {
+            Ok(Ok(connection)) => Ok(connection),
+            Ok(Err(error)) => Err(RequestError::Connect {
+                peer: short(&key),
+                message: error.to_string(),
+            }),
+            Err(_) => Err(RequestError::Timeout { peer: short(&key) }),
+        }
     }
 
     /// The underlying iroh endpoint.
@@ -1096,6 +1130,19 @@ async fn accept_loop(inner: Arc<Inner>) {
 async fn serve_connection(inner: Arc<Inner>, connection: Connection) {
     if connection.alpn() == PAIR_ALPN {
         serve_pairing(&inner, connection).await;
+        return;
+    }
+    if connection.alpn() == APP_ALPN {
+        match inner.app.get() {
+            Some(service) if !inner.authority.is_revoked(&connection.remote_id()) => {
+                let service = Arc::clone(service);
+                tokio::select! {
+                    () = inner.cancel.cancelled() => {}
+                    () = service.serve(connection) => {}
+                }
+            }
+            _ => connection.close(VarInt::from_u32(CLOSE_REFUSED), b"no apps"),
+        }
         return;
     }
     let key = connection.remote_id();

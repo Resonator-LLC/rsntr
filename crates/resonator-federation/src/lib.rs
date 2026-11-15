@@ -45,6 +45,7 @@
 //! Attachments (`fetch-attachment`) are not here yet; see `HANDOFF.md`.
 
 pub mod admin;
+pub mod app_channel;
 mod attachments;
 pub mod codec;
 pub mod cohost;

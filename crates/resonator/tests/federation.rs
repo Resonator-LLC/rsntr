@@ -1306,15 +1306,19 @@ const GADGET: &str = "g1";
 
 /// A bundle of the Rust counter and its app id.
 fn counter_bundle() -> (Vec<u8>, String) {
+    app_bundle("counter", COUNTER, r#"["wave","kv"]"#)
+}
+
+fn app_bundle(name: &str, wasm: &[u8], permissions: &str) -> (Vec<u8>, String) {
     use std::io::Write;
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip.start_file("manifest.json", options).unwrap();
-    zip.write_all(br#"{"name":"counter","version":"1","permissions":["wave","kv"]}"#)
-        .unwrap();
+    let manifest = format!(r#"{{"name":"{name}","version":"1","permissions":{permissions}}}"#);
+    zip.write_all(manifest.as_bytes()).unwrap();
     zip.start_file("app.wasm", options).unwrap();
-    zip.write_all(COUNTER).unwrap();
+    zip.write_all(wasm).unwrap();
     let bytes = zip.finish().unwrap().into_inner();
     let id = resonator_apps::Bundle::from_zip(&bytes).unwrap().id();
     (bytes, id)
@@ -1509,6 +1513,118 @@ async fn a_wave_app_runs_on_both_servers_and_its_messages_travel() {
     wait_for_count(&alices, "4").await;
 
     drop((alices, bobs));
+    a.stop().await;
+    b.stop().await;
+}
+
+const PEERS: &[u8] = include_bytes!("../../resonator-apps/tests/fixtures/peers_rs.wasm");
+
+async fn wait_for_view(
+    session: &resonator_server::apps::AppSession,
+    what: &str,
+    done: impl Fn(&str, &str) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let nodes = session.render(0).await.unwrap();
+        let text = |i: usize| nodes[i].text.clone().unwrap_or_default();
+        let (peers, seen) = (text(1), text(2));
+        if done(&peers, &seen) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what}: peers {peers}, seen {seen}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn press(node: u32) -> resonator_apps::UiEvent {
+    resonator_apps::UiEvent {
+        node,
+        name: "click".into(),
+        value: None,
+        fields: vec![],
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wave_apps_on_two_servers_talk_over_the_app_channel() {
+    let site_a = Site::new(Some(A));
+    let site_b = Site::new(None);
+    let mut config_a = site_a.config(&[&site_b]);
+    let mut config_b = site_b.config(&[&site_a]);
+    config_a.apps.enabled = true;
+    config_b.apps.enabled = true;
+    let a = Node::start(config_a).await;
+    let b = Node::start(config_b).await;
+    let alice_cookie = a.cookie("alice").await;
+    let alice_token = a.token_for(&alice_cookie).await;
+    let bob_token = b.token("bob").await;
+    let (alice, bob) = (
+        ParticipantId::new_unchecked(&a.address("alice")),
+        ParticipantId::new_unchecked(&b.address("bob")),
+    );
+    let (wave, wavelet, _) = a.create_wave(&alice_token, &[&a.address("alice")]).await;
+    a.run(
+        &alice_token,
+        json!([add_participant(&wave, &wavelet, &b.address("bob"))]),
+    )
+    .await;
+    converged((&a, &alice_token), (&b, &bob_token), &wave, &wavelet).await;
+    let root = name(&wave, &wavelet);
+    let (bytes, app) = app_bundle("peers", PEERS, r#"["peers","streams"]"#);
+    let bundle = format!("{A}/peers");
+    assert_eq!(a.upload(&alice_cookie, &bundle, &wave, &bytes).await, 201);
+    insert_counter(&a, &alice, &root, &app, &bundle).await;
+    allow_app(&a, &alice, &root, &app).await;
+    allow_app(&b, &bob, &root, &app).await;
+    converged((&a, &alice_token), (&b, &bob_token), &wave, &wavelet).await;
+
+    let apps_a = a.app.as_ref().unwrap().state().apps.clone().unwrap();
+    let apps_b = b.app.as_ref().unwrap().state().apps.clone().unwrap();
+    let alices = apps_a.open(&alice, &root.wave_id, GADGET).await.unwrap();
+    let bobs = {
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            match apps_b.open(&bob, &root.wave_id, GADGET).await {
+                Ok(session) => break session,
+                Err(error) => {
+                    assert!(tokio::time::Instant::now() < deadline, "Bob's app: {error}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    };
+    // Bob's instance started second and said hello to A.
+    wait_for_view(&bobs, "Bob sees Alice", |peers, _| peers == "1").await;
+    wait_for_view(&alices, "Alice sees Bob", |peers, _| peers == "1").await;
+
+    alices.event(0, press(3)).await.unwrap();
+    wait_for_view(&bobs, "Bob got the ping", |_, seen| seen == "ping").await;
+    wait_for_view(&alices, "Alice got the pong", |_, seen| seen == "pong").await;
+
+    bobs.event(0, press(4)).await.unwrap();
+    wait_for_view(&alices, "Alice got Bob's streams", |_, seen| {
+        ["open:r", "r:hi", "open:d", "d:hi"]
+            .iter()
+            .all(|w| seen.contains(w))
+    })
+    .await;
+    wait_for_view(&bobs, "Bob got the answers", |_, seen| {
+        ["r:back", "d:back", "closed"]
+            .iter()
+            .all(|w| seen.contains(w))
+    })
+    .await;
+
+    // Bob's instance stopping tells Alice's.
+    drop(bobs);
+    apps_b.stop_all();
+    wait_for_view(&alices, "Bob left", |peers, _| peers == "0").await;
+
+    drop(alices);
     a.stop().await;
     b.stop().await;
 }

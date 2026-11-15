@@ -32,14 +32,18 @@ fn user(name: &str) -> ParticipantId {
 
 /// A bundle of the Rust counter.
 fn bundle(name: &str) -> (Vec<u8>, String) {
+    bundle_of(name, COUNTER, r#"["wave","kv"]"#)
+}
+
+fn bundle_of(name: &str, wasm: &[u8], permissions: &str) -> (Vec<u8>, String) {
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip.start_file("manifest.json", options).unwrap();
-    let manifest = format!(r#"{{"name":"{name}","version":"1","permissions":["wave","kv"]}}"#);
+    let manifest = format!(r#"{{"name":"{name}","version":"1","permissions":{permissions}}}"#);
     zip.write_all(manifest.as_bytes()).unwrap();
     zip.start_file("app.wasm", options).unwrap();
-    zip.write_all(COUNTER).unwrap();
+    zip.write_all(wasm).unwrap();
     let bytes = zip.finish().unwrap().into_inner();
     let id = resonator_apps::Bundle::from_zip(&bytes).unwrap().id();
     (bytes, id)
@@ -62,6 +66,13 @@ fn gadget(app: &str, bundle: &str) -> DocInitialization {
 /// A server with Alice's wave, which Bob is on, holding the counter's
 /// bundle; with `[apps]` on.
 async fn setup(idle_secs: u64) -> (TestServer, WaveId, String, String) {
+    setup_with(idle_secs, bundle("counter")).await
+}
+
+async fn setup_with(
+    idle_secs: u64,
+    (bytes, app): (Vec<u8>, String),
+) -> (TestServer, WaveId, String, String) {
     let server = TestServer::start_with(|config| {
         config.apps.enabled = true;
         config.apps.idle_secs = idle_secs;
@@ -76,7 +87,6 @@ async fn setup(idle_secs: u64) -> (TestServer, WaveId, String, String) {
         "Apps",
     )
     .await;
-    let (bytes, app) = bundle("counter");
     let attachment = format!("{DOMAIN}/counter1");
     server
         .app()
@@ -403,5 +413,135 @@ async fn the_socket_streams_the_view_and_takes_events() {
 
     client.send_as(seq, &CancelRpc {}).await;
     assert_eq!(client.next_for(seq).await.failure(), None);
+    server.shutdown().await;
+}
+
+const PEERS: &[u8] = include_bytes!("../../resonator-apps/tests/fixtures/peers_rs.wasm");
+
+/// The peers guest's view: (number of peers, what reached it).
+async fn peers_view(session: &resonator_server::apps::AppSession) -> (String, String) {
+    let nodes = session.render(0).await.unwrap();
+    let text = |i: usize| nodes[i].text.clone().unwrap_or_default();
+    (text(1), text(2))
+}
+
+fn press(node: u32) -> UiEvent {
+    UiEvent {
+        node,
+        name: "click".into(),
+        value: None,
+        fields: vec![],
+    }
+}
+
+async fn wait_for_view(
+    session: &resonator_server::apps::AppSession,
+    what: &str,
+    done: impl Fn(&(String, String)) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let view = peers_view(session).await;
+        if done(&view) {
+            return;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{what}: {view:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn instances_on_one_node_are_peers_and_stream_to_each_other() {
+    let (server, wave, app, bundle) =
+        setup_with(300, bundle_of("peers", PEERS, r#"["peers","streams"]"#)).await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let (alice, bob) = (user("alice"), user("bob"));
+    allow(&server, &alice, &wave, &app).await;
+    allow(&server, &bob, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let bobs = apps.open(&bob, &wave, GADGET).await.unwrap();
+    wait_for_view(&alices, "Alice sees Bob", |(n, _)| n == "1").await;
+    wait_for_view(&bobs, "Bob sees Alice", |(n, _)| n == "1").await;
+
+    alices.event(0, press(3)).await.unwrap();
+    wait_for_view(&bobs, "Bob got the ping", |(_, seen)| seen == "ping").await;
+    wait_for_view(&alices, "Alice got the pong", |(_, seen)| seen == "pong").await;
+
+    alices.event(0, press(4)).await.unwrap();
+    wait_for_view(&bobs, "Bob got both streams", |(_, seen)| {
+        ["open:r", "r:hi", "open:d", "d:hi"]
+            .iter()
+            .all(|w| seen.contains(w))
+    })
+    .await;
+    wait_for_view(&alices, "Alice got the answers", |(_, seen)| {
+        ["r:back", "d:back", "closed"]
+            .iter()
+            .all(|w| seen.contains(w))
+    })
+    .await;
+
+    // A stopped instance is no peer.
+    drop(bobs);
+    apps.stop_all();
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    assert_eq!(peers_view(&alices).await.0, "0");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn only_participants_of_the_wave_say_hello() {
+    let (server, wave, app, bundle) =
+        setup_with(300, bundle_of("peers", PEERS, r#"["peers","streams"]"#)).await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let remote = |name: &str| resonator_server::apps::RemotePeer {
+        device: "devicekey".to_owned(),
+        participant: participant(&format!("{name}@elsewhere.example")),
+    };
+    assert!(
+        apps.hello(remote("mallory"), &wave, GADGET, &app)
+            .await
+            .is_err()
+    );
+    // Data from a peer that never said hello goes nowhere.
+    assert!(
+        apps.peer_data(
+            &remote("mallory"),
+            &wave,
+            GADGET,
+            &app,
+            &alice,
+            b"x".to_vec()
+        )
+        .is_err()
+    );
+
+    // A participant on another device, with the same app, is a peer.
+    let dana = remote("dana");
+    edit_root(server.app().server(), &alice, &wave, |conversation| {
+        conversation.add_participant(&dana.participant).unwrap();
+    })
+    .await;
+    assert!(
+        apps.hello(dana.clone(), &wave, GADGET, "sha256:other")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        apps.hello(dana.clone(), &wave, GADGET, &app).await.unwrap(),
+        std::slice::from_ref(&alice)
+    );
+    wait_for_view(&alices, "Alice sees Dana", |(n, _)| n == "1").await;
+    apps.peer_data(&dana, &wave, GADGET, &app, &alice, b"hi".to_vec())
+        .unwrap();
+    wait_for_view(&alices, "Alice got Dana's data", |(_, seen)| seen == "hi").await;
+    apps.device_gone("devicekey");
+    wait_for_view(&alices, "Dana's device is gone", |(n, _)| n == "0").await;
     server.shutdown().await;
 }

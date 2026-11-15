@@ -695,6 +695,16 @@ impl FederationSetup {
         if let Some(inviter) = &inviter {
             endpoint.set_pair_service(Arc::clone(inviter) as Arc<dyn crate::endpoint::PairService>);
         }
+        // Wave apps: their instances on other devices.
+        if let Some(apps) = self.app.as_ref().and_then(|app| app.apps.clone()) {
+            let channel = crate::app_channel::AppChannel::new(
+                endpoint.clone(),
+                ctx.trust.clone(),
+                apps.downgrade(),
+            );
+            endpoint.set_app_service(Arc::new(channel.clone()));
+            apps.set_channel(Arc::new(channel));
+        }
         let ops = Arc::new(crate::control::PersonOps {
             ctx: Arc::clone(&ctx),
             config: config.clone(),

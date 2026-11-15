@@ -8,8 +8,11 @@
 //! the node goes to the background. Messages it missed meanwhile stay in
 //! the app wavelet.
 
+mod peers;
 mod wavelet;
 
+pub use peers::{PeerChannel, RemotePeer, Route, StreamTx, WeakAppManager};
+pub use resonator_apps::StreamMode;
 pub use wavelet::{app_wavelet, gadget_of, is_app_wavelet};
 
 use std::collections::HashMap;
@@ -102,6 +105,10 @@ struct Running {
     delivered: AtomicU64,
     /// When the last viewer left; `None` while someone views it.
     idle_since: Mutex<Option<Instant>>,
+    /// Its peers and open streams.
+    peers: Mutex<peers::PeerState>,
+    /// The id of the next stream a peer opens to it (2^63 and up).
+    next_incoming: AtomicU64,
     /// The task applying the instance's effects.
     effects: tokio::task::JoinHandle<()>,
 }
@@ -124,6 +131,8 @@ struct Inner {
     /// Starts one at a time, so two viewers do not start two instances.
     starting: tokio::sync::Mutex<()>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Reaches the same apps on other devices.
+    channel: Mutex<Option<Arc<dyn PeerChannel>>>,
 }
 
 /// Runs the wave apps of this node; cheap to clone.
@@ -251,6 +260,7 @@ impl AppManager {
             components: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
             tasks: Mutex::new(Vec::new()),
+            channel: Mutex::new(None),
         }));
         let watcher = tokio::spawn(manager.clone().watch());
         let reaper = tokio::spawn(manager.clone().reap());
@@ -450,6 +460,7 @@ impl AppManager {
             manager: self.clone(),
             key: key.clone(),
             scope,
+            app: gadget.app.clone(),
             name: name.clone(),
             signals: signals.clone(),
         };
@@ -462,6 +473,8 @@ impl AppManager {
             viewers: AtomicUsize::new(0),
             delivered: AtomicU64::new(delivered),
             idle_since: Mutex::new(Some(Instant::now())),
+            peers: Mutex::new(peers::PeerState::default()),
+            next_incoming: AtomicU64::new(1 << 63),
             effects: effects_task,
         });
         lock(&self.0.instances).insert(key.clone(), Arc::clone(&running));
@@ -473,6 +486,7 @@ impl AppManager {
         tokio::spawn(async move {
             manager.deliver(&started).await;
             manager.mirror(&started).await;
+            manager.discover(&started).await;
         });
         Ok(running)
     }
@@ -600,8 +614,10 @@ impl AppManager {
 
     /// Stops the instance of `key`, telling its viewers why.
     fn stop(&self, key: &AppKey, signal: AppSignal) {
-        if let Some(running) = lock(&self.0.instances).remove(key) {
+        let removed = lock(&self.0.instances).remove(key);
+        if let Some(running) = removed {
             tracing::info!(wave = %key.wave, gadget = %key.gadget, "stopped app");
+            self.retire(key, &running);
             let _ = running.signals.send(signal);
         }
     }
@@ -657,7 +673,10 @@ impl AppManager {
                 } else if root_changed {
                     // Off the watcher: the submit may wait for another node.
                     let manager = self.clone();
-                    tokio::spawn(async move { manager.mirror(&key).await });
+                    tokio::spawn(async move {
+                        manager.mirror(&key).await;
+                        manager.discover(&key).await;
+                    });
                 }
             }
         }
@@ -690,6 +709,7 @@ struct Applier {
     manager: AppManager,
     key: AppKey,
     scope: AppKvScope,
+    app: String,
     name: String,
     signals: broadcast::Sender<AppSignal>,
 }
@@ -702,12 +722,19 @@ impl Applier {
             if let Some(failure) = report.failure {
                 tracing::warn!(app = %self.name, %failure, "app failed");
                 let _ = self.signals.send(AppSignal::Failed(failure.to_string()));
-                let mut instances = lock(&self.manager.0.instances);
-                if instances
-                    .get(&self.key)
-                    .is_some_and(|running| running.signals.same_channel(&self.signals))
-                {
-                    instances.remove(&self.key);
+                let removed = {
+                    let mut instances = lock(&self.manager.0.instances);
+                    if instances
+                        .get(&self.key)
+                        .is_some_and(|running| running.signals.same_channel(&self.signals))
+                    {
+                        instances.remove(&self.key)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(running) = removed {
+                    self.manager.retire(&self.key, &running);
                 }
                 return;
             }
@@ -736,12 +763,12 @@ impl Applier {
                         tracing::info!(app = %self.name, %error, "could not post the app's message");
                     }
                 }
-                // The peer channel comes later; until then peer traffic
-                // goes nowhere.
-                Effect::Send { .. }
+                effect @ (Effect::Send { .. }
                 | Effect::Open { .. }
                 | Effect::Write { .. }
-                | Effect::Close { .. } => {}
+                | Effect::Close { .. }) => {
+                    self.manager.peer_effect(&self.key, &self.app, effect).await;
+                }
             }
         }
         if let Err(error) = self.manager.0.kv.apply(&self.scope, kv).await {

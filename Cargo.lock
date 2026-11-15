@@ -4016,6 +4016,7 @@ name = "resonator-server"
 version = "0.4.1"
 dependencies = [
  "argon2",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "clap",

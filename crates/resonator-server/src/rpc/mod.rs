@@ -416,6 +416,8 @@ impl Connection {
             resonator_model::proto::app::AppOpenRequest::NAME => self.open_app(&envelope),
             #[cfg(feature = "apps")]
             resonator_model::proto::app::AppEventRequest::NAME => self.app_event(&envelope).await,
+            #[cfg(feature = "apps")]
+            resonator_model::proto::app::AppMediaRequest::NAME => self.app_media(&envelope),
             "CancelRpc" => {
                 // The stream ends in the standard manner.
                 #[cfg(feature = "apps")]
@@ -480,6 +482,20 @@ impl Connection {
             return;
         }
         apps::event(&self.apps, &self.outbox, seq, request).await;
+    }
+
+    #[cfg(feature = "apps")]
+    fn app_media(&mut self, envelope: &Envelope) {
+        let seq = envelope.sequence_number;
+        let Some(request) = self.body::<resonator_model::proto::app::AppMediaRequest>(envelope)
+        else {
+            return;
+        };
+        if self.identity.is_none() {
+            self.outbox.fail(seq, error_text::NOT_LOGGED_IN);
+            return;
+        }
+        apps::media(&self.apps, &self.outbox, seq, request);
     }
 
     async fn authenticate(&mut self, envelope: &Envelope) {

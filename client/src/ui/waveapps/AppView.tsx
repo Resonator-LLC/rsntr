@@ -6,9 +6,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import type { StreamHandle, StreamHandlers } from "../../net";
-import type { AppEventRequest, AppEventResponse, AppOpenRequest, AppUpdate } from "../../wire";
+import type { AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppUpdate } from "../../wire";
 import type { AppGadget } from "../editor/api";
 import appUiCss from "./app-ui.css?url";
+import { Mic, mediaSupported, Speaker } from "./media";
 import { AppPatcher } from "./patch";
 
 /** What an app view needs from the wave and the session. */
@@ -17,6 +18,8 @@ export interface WaveAppsUi {
   readonly waveId: string;
   open(request: AppOpenRequest, handlers: StreamHandlers<AppUpdate>): StreamHandle;
   event(request: AppEventRequest): Promise<AppEventResponse>;
+  /** Hands the app a frame of the microphone. */
+  media(request: AppMediaRequest): Promise<AppEventResponse>;
   /** Allows a gadget's app for the signed-in user (`m/gadgets`, key `allowed`). */
   allow(gadgetId: string, appId: string): void;
   /** The URL of an attachment of the wave. */
@@ -81,6 +84,27 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
     permissions: [],
   });
   const nameRef = useRef("");
+  const boxRef = useRef<HTMLDivElement>(null);
+  const speakerRef = useRef<Speaker | null>(null);
+  const micRef = useRef<Mic | null>(null);
+  const [mic, setMic] = useState<"off" | "starting" | "on">("off");
+  const [micError, setMicError] = useState("");
+
+  const stopMic = (): void => {
+    micRef.current?.stop();
+    micRef.current = null;
+    setMic("off");
+  };
+  // The microphone and the speaker end with the view.
+  useEffect(
+    () => () => {
+      micRef.current?.stop();
+      micRef.current = null;
+      speakerRef.current?.stop();
+      speakerRef.current = null;
+    },
+    [],
+  );
 
   // The shadow root, once.
   useEffect(() => {
@@ -132,6 +156,13 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
         { waveId: apps.waveId, gadgetId: gadget.id },
         {
           onMessage: (update) => {
+            if (update.status === "media") {
+              speakerRef.current ??= new Speaker((played) =>
+                boxRef.current?.setAttribute("data-media-played", String(played)),
+              );
+              speakerRef.current.play(update.media);
+              return;
+            }
             const status = update.status as Status;
             if (status === "needs-grant" && Date.now() - allowedAt.current < GRANT_GRACE_MS) {
               // The grant is on its way to the server.
@@ -154,12 +185,14 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
           },
           onFinished: (error) => {
             ended = true;
+            stopMic();
             if (error !== undefined) {
               setState((old) => ({ ...old, status: /apps are off/i.test(error) ? "off" : "failed", reason: error }));
             }
           },
           onDisconnected: () => {
             ended = true;
+            stopMic();
             setState((old) => ({ ...old, status: "stopped", reason: "Disconnected" }));
           },
         },
@@ -183,6 +216,29 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
     setState((old) => ({ ...old, status: "loading" }));
     setAttempt((n) => n + 1);
   };
+  const toggleMic = (): void => {
+    if (mic !== "off") {
+      stopMic();
+      return;
+    }
+    setMic("starting");
+    setMicError("");
+    let sent = 0;
+    Mic.start((data) => {
+      void apps.media({ waveId: apps.waveId, gadgetId: gadget.id, data }).catch(() => {});
+      sent += 1;
+      boxRef.current?.setAttribute("data-media-sent", String(sent));
+    }).then(
+      (started) => {
+        micRef.current = started;
+        setMic("on");
+      },
+      (error: unknown) => {
+        setMic("off");
+        setMicError(error instanceof Error ? error.message : String(error));
+      },
+    );
+  };
   const restart = (): void => {
     setState((old) => ({ ...old, status: "loading", reason: "" }));
     setAttempt((n) => n + 1);
@@ -199,7 +255,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
   };
 
   return (
-    <div class={`app-box app-${state.status}`} data-gadget={gadget.id}>
+    <div ref={boxRef} class={`app-box app-${state.status}`} data-gadget={gadget.id}>
       <div class="app-header">
         <span class="app-name">{name}</span>
         <span class="app-hash" title={state.appId}>
@@ -208,6 +264,24 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
         <span class="app-status" role="status">
           {statusText[state.status]}
         </span>
+        {state.status === "running" && state.permissions.includes("media") ? (
+          <button
+            type="button"
+            class={`app-mic-button${mic === "on" ? " app-mic-on" : ""}`}
+            aria-pressed={mic === "on"}
+            disabled={!mediaSupported() || mic === "starting"}
+            title={
+              !mediaSupported()
+                ? "This browser cannot record sound here (it needs a secure page and WebCodecs)"
+                : micError !== ""
+                  ? micError
+                  : `Lets ${name} hear your microphone while on`
+            }
+            onClick={toggleMic}
+          >
+            {mic === "on" ? "Mic on" : "Mic off"}
+          </button>
+        ) : null}
         {apps.showLog !== null ? (
           <button type="button" class="app-log-button" onClick={() => apps.showLog?.(gadget.id, name)}>
             Log

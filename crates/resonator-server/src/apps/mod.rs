@@ -58,6 +58,8 @@ pub enum AppSignal {
     Failed(String),
     /// The instance was stopped (gadget, grant or participant gone).
     Stopped,
+    /// A frame the app sent to the viewer (a channel byte, then Opus).
+    Media(Vec<u8>),
 }
 
 /// Why an app does not run.
@@ -185,6 +187,12 @@ impl AppSession {
     }
 
     /// Whether the instance still runs.
+    /// Hands a frame of the viewer's microphone to the app (it needs the
+    /// `media` permission).
+    pub fn media(&self, frame: Vec<u8>) -> Result<(), String> {
+        self.manager.viewer_media(&self.key, &self.running, frame)
+    }
+
     pub fn is_running(&self) -> bool {
         !self.running.handle.is_stopped() && self.manager.is_current(&self.key, &self.running)
     }
@@ -455,7 +463,7 @@ impl AppManager {
                 .map_err(|e| OpenError::Failed(e.to_string()))?
                 .map_err(failed)?;
         let (handle, reports) = resonator_apps::spawn(&name, instance).map_err(failed)?;
-        let (signals, _) = broadcast::channel(64);
+        let (signals, _) = broadcast::channel(256);
         let applier = Applier {
             manager: self.clone(),
             key: key.clone(),
@@ -486,6 +494,7 @@ impl AppManager {
         tokio::spawn(async move {
             manager.deliver(&started).await;
             manager.mirror(&started).await;
+            manager.announce_viewer(&started);
             manager.discover(&started).await;
         });
         Ok(running)

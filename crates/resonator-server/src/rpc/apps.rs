@@ -6,10 +6,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use base64::Engine;
 use resonator_apps::{UiEvent, UiNode};
 use resonator_model::id::{IdSerialiser, ModernIdSerialiser, ParticipantId, WaveId};
 use resonator_model::proto::app::{
-    AppEventRequest, AppEventResponse, AppOpenRequest, AppPair, AppUiNode, AppUpdate,
+    AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppPair, AppUiNode,
+    AppUpdate,
 };
 use resonator_model::proto::rpc::RpcFinished;
 use tokio::sync::broadcast::error::RecvError;
@@ -193,6 +195,20 @@ async fn stream(
         );
         outbox.send(seq, &RpcFinished::success());
     };
+    let media = |frames: Vec<Vec<u8>>| {
+        if frames.is_empty() {
+            return;
+        }
+        let engine = base64::engine::general_purpose::STANDARD;
+        outbox.send(
+            seq,
+            &AppUpdate {
+                status: Some("media".to_owned()),
+                media: frames.iter().map(|f| engine.encode(f)).collect(),
+                ..AppUpdate::default()
+            },
+        );
+    };
     let mut render = true;
     loop {
         if std::mem::take(&mut render) {
@@ -208,8 +224,10 @@ async fn stream(
                 Err(error) => return end("failed", Some(error.to_string())),
             }
         }
+        let mut frames = Vec::new();
         match signals.recv().await {
             Ok(AppSignal::Invalidate(v)) => render = v == view,
+            Ok(AppSignal::Media(frame)) => frames.push(frame),
             Err(RecvError::Lagged(_)) => render = true,
             Ok(AppSignal::Failed(reason)) => return end("failed", Some(reason)),
             Ok(AppSignal::Stopped) | Err(RecvError::Closed) => return end("stopped", None),
@@ -218,10 +236,59 @@ async fn stream(
         while let Ok(signal) = signals.try_recv() {
             match signal {
                 AppSignal::Invalidate(v) => render |= v == view,
+                AppSignal::Media(frame) => frames.push(frame),
                 AppSignal::Failed(reason) => return end("failed", Some(reason)),
                 AppSignal::Stopped => return end("stopped", None),
             }
         }
+        media(frames);
+    }
+}
+
+/// Most bytes of one microphone frame (Opus frames are far smaller).
+const MAX_MEDIA_FRAME: usize = 4096;
+
+/// Hands a frame of the viewer's microphone to an app open on this
+/// connection.
+pub(super) fn media(
+    open: &HashMap<i32, AppView>,
+    outbox: &Outbox,
+    seq: i32,
+    request: AppMediaRequest,
+) {
+    let answer = |error: Option<String>| {
+        outbox.send(
+            seq,
+            &AppEventResponse {
+                error_message: error,
+            },
+        );
+    };
+    let Ok(wave) = ModernIdSerialiser.deserialise_wave_id(request.wave_id.as_deref().unwrap_or(""))
+    else {
+        return answer(Some("invalid wave id".to_owned()));
+    };
+    let gadget = request.gadget_id.unwrap_or_default();
+    let Ok(frame) =
+        base64::engine::general_purpose::STANDARD.decode(request.data.as_deref().unwrap_or(""))
+    else {
+        return answer(Some("invalid frame".to_owned()));
+    };
+    if frame.is_empty() || frame.len() > MAX_MEDIA_FRAME {
+        return answer(Some("invalid frame".to_owned()));
+    }
+    let session = open
+        .values()
+        .filter(|view| view.wave == wave && view.gadget == gadget)
+        .find_map(|view| {
+            view.session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        });
+    match session {
+        Some(session) => answer(session.media(frame).err()),
+        None => answer(Some("the app is not open".to_owned())),
     }
 }
 

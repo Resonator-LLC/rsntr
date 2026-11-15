@@ -3,15 +3,18 @@
 
 package am.resonator.client.android
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -34,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var retry: Button
     private var loadedUrl: String? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    /** A page's request for the microphone, waiting for the system's answer. */
+    private var micRequest: PermissionRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -165,6 +170,20 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, results: IntArray) {
+        if (requestCode == RECORD_AUDIO) {
+            val request = micRequest ?: return
+            micRequest = null
+            if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+            } else {
+                request.deny()
+            }
+            return
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, results)
+    }
+
     /** The system font size, for the page's "As the system" text size. */
     private fun applyTextScale(view: WebView) {
         val scale = resources.configuration.fontScale.coerceIn(0.5f, 3f)
@@ -205,6 +224,23 @@ class MainActivity : Activity() {
     }
 
     private inner class Chrome : WebChromeClient() {
+        // The node's pages may use the microphone (a wave app's Mic
+        // button), once Android allows it; nothing else may.
+        override fun onPermissionRequest(request: PermissionRequest) {
+            val audio = PermissionRequest.RESOURCE_AUDIO_CAPTURE
+            if (!request.resources.contains(audio) || !host.isNodeUrl(request.origin.toString())) {
+                request.deny()
+                return
+            }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                request.grant(arrayOf(audio))
+                return
+            }
+            micRequest?.deny()
+            micRequest = request
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), RECORD_AUDIO)
+        }
+
         override fun onShowFileChooser(
             view: WebView,
             callback: ValueCallback<Array<Uri>>,
@@ -226,5 +262,6 @@ class MainActivity : Activity() {
     companion object {
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val PICK_FILES = 1
+        private const val RECORD_AUDIO = 2
     }
 }

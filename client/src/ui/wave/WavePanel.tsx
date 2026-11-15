@@ -146,6 +146,7 @@ export function WavePanel(props: WavePanelProps) {
         apps={{
           open: (request, handlers) => client.openApp(request, handlers),
           event: (request) => client.appEvent(request),
+          media: (request) => client.appMedia(request),
         }}
         idSeed={session?.idSeed ?? null}
         onClose={props.onClose}

@@ -31,6 +31,7 @@ import { Emitter, type Observable } from "../util/events";
 import {
   AppEventRequest,
   AppEventResponse,
+  AppMediaRequest,
   AppOpenRequest,
   AppUpdate,
   type ProfileResponse,
@@ -503,6 +504,11 @@ export class WaveClient {
   /** Hands a UI event to an app this client has open. */
   appEvent(request: AppEventRequest): Promise<AppEventResponse> {
     return this.connected().channel.call(AppEventRequest, request, AppEventResponse);
+  }
+
+  /** Hands an open app a frame of the microphone. */
+  appMedia(request: AppMediaRequest): Promise<AppEventResponse> {
+    return this.connected().channel.call(AppMediaRequest, request, AppEventResponse);
   }
 }
 

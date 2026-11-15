@@ -80,10 +80,32 @@ pub struct AppUpdate {
     /// The view, when running.
     #[prost(message, repeated, tag = "6")]
     pub nodes: Vec<AppUiNode>,
+    /// With status `media`: frames the app sent the viewer (base64; a
+    /// channel byte, then an Opus frame).
+    #[prost(string, repeated, tag = "7")]
+    pub media: Vec<String>,
 }
 wave_message!(AppUpdate {
     required: [status],
     repeated: [nodes],
+});
+
+/// A frame of the viewer's microphone for an open app (one Opus frame,
+/// base64). Answered by an [`AppEventResponse`].
+#[derive(Clone, PartialEq, Eq, prost::Message)]
+pub struct AppMediaRequest {
+    /// Required.
+    #[prost(string, optional, tag = "1")]
+    pub wave_id: Option<String>,
+    /// Required.
+    #[prost(string, optional, tag = "2")]
+    pub gadget_id: Option<String>,
+    /// Required.
+    #[prost(string, optional, tag = "3")]
+    pub data: Option<String>,
+}
+wave_message!(AppMediaRequest {
+    required: [wave_id, gadget_id, data],
 });
 
 /// A UI event for an open app.

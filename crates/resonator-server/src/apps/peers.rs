@@ -6,6 +6,12 @@
 //!
 //! A peer's id is `<participant>` for an instance on this node and
 //! `<participant>/<device key>` for one on another device.
+//!
+//! An app with the `media` permission also has the peer `viewer` (marked
+//! `local`): the person in front of this node. Their microphone comes as
+//! a datagram stream from it (one Opus frame per datagram), and what the
+//! app writes on a stream it opens to it goes to the viewer's speaker
+//! (a channel byte, then an Opus frame).
 
 use async_trait::async_trait;
 use resonator_apps::StreamMode;
@@ -117,6 +123,35 @@ impl PeerTarget {
 pub(super) struct PeerState {
     pub(super) peers: HashMap<String, PeerTarget>,
     pub(super) streams: HashMap<u64, Arc<dyn StreamTx>>,
+    /// The `viewer` peer, for an app with the `media` permission.
+    viewer: Option<Peer>,
+    /// The stream of the viewer's microphone.
+    mic: Option<u64>,
+}
+
+/// The id of the peer in front of this node.
+pub const VIEWER: &str = "viewer";
+
+/// What the app writes to the viewer: frames for its speaker.
+struct ViewerTx {
+    signals: tokio::sync::broadcast::Sender<super::AppSignal>,
+}
+
+impl StreamTx for ViewerTx {
+    fn write(&self, data: Vec<u8>) -> Result<(), String> {
+        if data.len() < 2 || data.len() > 4096 {
+            return Err("a speaker frame is a channel byte and up to 4095 bytes".to_owned());
+        }
+        // Nobody listening is no error.
+        let _ = self.signals.send(super::AppSignal::Media(data));
+        Ok(())
+    }
+
+    fn close(&self) {}
+}
+
+fn grants(running: &Running, permission: resonator_apps::Permission) -> bool {
+    running.manifest.permissions.contains(&permission)
 }
 
 /// A stream between two instances on this node: what one writes is the
@@ -210,6 +245,7 @@ impl AppManager {
             }
             let mut peers: Vec<Peer> = state.peers.values().map(PeerTarget::peer).collect();
             peers.sort_by(|a, b| a.id.cmp(&b.id));
+            peers.extend(state.viewer.clone());
             peers
         };
         if running.handle.try_send(Event::PeersChanged(peers)).is_err() {
@@ -273,6 +309,72 @@ impl AppManager {
                 }
             }
         }
+    }
+
+    /// Gives an app with the `media` permission its `viewer` peer.
+    pub(super) fn announce_viewer(&self, key: &AppKey) {
+        let Some(running) = lock(&self.0.instances).get(key).cloned() else {
+            return;
+        };
+        if !grants(&running, resonator_apps::Permission::Media) {
+            return;
+        }
+        let viewer = Peer {
+            id: VIEWER.to_owned(),
+            participant: key.account.address().to_owned(),
+            device: String::new(),
+            local: true,
+        };
+        lock(&running.peers).viewer = Some(viewer);
+        self.update_peers(&running, |_| true);
+    }
+
+    /// A frame of the viewer's microphone, for the instance of `key`.
+    pub(super) fn viewer_media(
+        &self,
+        key: &AppKey,
+        running: &Arc<Running>,
+        frame: Vec<u8>,
+    ) -> Result<(), String> {
+        if !self.is_current(key, running) {
+            return Err("the app stopped".to_owned());
+        }
+        if !grants(running, resonator_apps::Permission::Media) {
+            return Err("the app takes no media".to_owned());
+        }
+        let opened = {
+            let mut state = lock(&running.peers);
+            match state.mic {
+                Some(stream) => (stream, false),
+                None => {
+                    let stream = running.next_incoming.fetch_add(1, Ordering::AcqRel);
+                    // What the app writes back goes to the speaker.
+                    let silent: Arc<dyn StreamTx> = Arc::new(ViewerTx {
+                        signals: running.signals.clone(),
+                    });
+                    state.streams.insert(stream, silent);
+                    state.mic = Some(stream);
+                    (stream, true)
+                }
+            }
+        };
+        let (stream, fresh) = opened;
+        if fresh {
+            running
+                .handle
+                .try_send(Event::Stream {
+                    stream,
+                    from: VIEWER.to_owned(),
+                    mode: StreamMode::Datagram,
+                })
+                .map_err(|e| e.to_string())?;
+        }
+        // A full mailbox drops the frame, as a datagram would be.
+        let _ = running.handle.try_send(Event::StreamData {
+            stream,
+            data: frame,
+        });
+        Ok(())
     }
 
     /// Takes a stopped instance out of its peers' lists and ends its
@@ -482,7 +584,20 @@ impl AppManager {
             return;
         };
         let target = |to: &str| lock(&running.peers).peers.get(to).cloned();
+        let has_viewer = lock(&running.peers).viewer.is_some();
         match effect {
+            Effect::Open { to, stream, .. } if to == VIEWER && has_viewer => {
+                let tx: Arc<dyn StreamTx> = Arc::new(ViewerTx {
+                    signals: running.signals.clone(),
+                });
+                lock(&running.peers).streams.insert(stream, tx);
+            }
+            Effect::Send { to, data } if to == VIEWER && has_viewer => {
+                let _ = ViewerTx {
+                    signals: running.signals.clone(),
+                }
+                .write(data);
+            }
             Effect::Send { to, data } => match target(&to) {
                 Some(PeerTarget::Local(account)) => {
                     let twin = AppKey {

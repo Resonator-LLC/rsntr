@@ -41,7 +41,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::app::{
-    AppEventRequest, AppEventResponse, AppOpenRequest, AppPair, AppUiNode, AppUpdate,
+    AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppPair, AppUiNode,
+    AppUpdate,
 };
 use super::attachment::{AttachmentMetadata, AttachmentsResponse, ImageMetadata};
 use super::federation::protocol_document_operation::Component;
@@ -597,6 +598,13 @@ json_message!(AppUpdate, "AppUpdate" {
     4 => name: one string,
     5 => permissions: many string,
     6 => nodes: many message,
+    7 => media: many string,
+});
+
+json_message!(AppMediaRequest, "AppMediaRequest" {
+    1 => wave_id: one string,
+    2 => gadget_id: one string,
+    3 => data: one string,
 });
 
 json_message!(AppEventRequest, "AppEventRequest" {

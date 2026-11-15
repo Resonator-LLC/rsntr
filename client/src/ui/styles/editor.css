@@ -435,3 +435,9 @@ html.lightbox-shown body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.app-mic-button.app-mic-on {
+  background: var(--c-danger);
+  border-color: var(--c-danger);
+  color: var(--c-on-accent, #fff);
+}

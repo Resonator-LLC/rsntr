@@ -37,6 +37,8 @@
   <string>Resonator talks directly to your other devices on this network.</string>
   <key>NSCameraUsageDescription</key>
   <string>Resonator uses the camera to take pictures you attach to messages.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Wave apps you allow can hear your microphone while you turn it on.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Resonator attaches the photos you choose to messages.</string>
   <!-- Silent pushes wake the node so that it can sync. -->

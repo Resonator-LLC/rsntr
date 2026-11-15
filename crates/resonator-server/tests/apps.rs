@@ -545,3 +545,67 @@ async fn only_participants_of_the_wave_say_hello() {
     wait_for_view(&alices, "Dana's device is gone", |(n, _)| n == "0").await;
     server.shutdown().await;
 }
+
+const WALKIE: &[u8] = include_bytes!("../../resonator-apps/tests/fixtures/walkie.wasm");
+
+#[tokio::test]
+async fn the_viewer_is_a_peer_with_a_microphone_and_a_speaker() {
+    let (server, wave, app, bundle) = setup_with(
+        300,
+        bundle_of("walkie", WALKIE, r#"["peers","streams","media"]"#),
+    )
+    .await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let mut signals = alices.signals();
+    let texts =
+        |nodes: Vec<UiNode>| -> Vec<String> { nodes.into_iter().filter_map(|n| n.text).collect() };
+    // The viewer is no other person.
+    let view = texts(alices.render(0).await.unwrap());
+    assert!(
+        view.contains(&"Nobody else has it open".to_owned()),
+        "{view:?}"
+    );
+
+    // Microphone frames reach the app; with Echo on they come back on
+    // channel 0.
+    alices.media(vec![1, 2, 3]).unwrap();
+    let echo = alices
+        .render(0)
+        .await
+        .unwrap()
+        .iter()
+        .position(|n| n.text.as_deref() == Some("Echo: off"))
+        .unwrap() as u32;
+    alices.event(0, press(echo)).await.unwrap();
+    alices.media(vec![4, 5, 6]).unwrap();
+    let frame = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            if let Ok(AppSignal::Media(frame)) = signals.recv().await {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("no frame for the speaker");
+    assert_eq!(frame, [0, 4, 5, 6]);
+    // The walkie redraws now and then, not for every frame.
+    let view = texts(alices.render(0).await.unwrap());
+    assert!(view.contains(&"sent 2".to_owned()), "{view:?}");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn apps_without_the_media_permission_take_no_frames() {
+    let (server, wave, app, bundle) = setup(300).await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    assert!(alices.media(vec![1, 2, 3]).is_err());
+    server.shutdown().await;
+}

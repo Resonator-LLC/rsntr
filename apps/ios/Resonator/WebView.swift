@@ -243,6 +243,20 @@ struct WebView: UIViewRepresentable {
             present(alert, in: view) {}
         }
 
+        // MARK: Microphone
+
+        /// The node's pages may use the microphone (a wave app's Mic
+        /// button); iOS asks the person once. Nothing else may.
+        func webView(
+            _ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+            initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+            decisionHandler: @escaping (WKPermissionDecision) -> Void
+        ) {
+            let page = URL(string: "\(origin.protocol)://\(origin.host):\(origin.port)/")
+            let ours = page.map { host.isNodeURL($0) } ?? false
+            decisionHandler(ours && type == .microphone ? .grant : .deny)
+        }
+
         // MARK: Page dialogs
 
         func webView(

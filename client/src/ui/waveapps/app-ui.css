@@ -1,0 +1,124 @@
+/* The class vocabulary of wave apps, linked inside each app's shadow root.
+   The page's tokens (--c-*, --sp-*, --fs-*) inherit into it. Apps cannot
+   set styles of their own: they pick classes from here. */
+
+:host {
+  display: block;
+  color: var(--c-text);
+  font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+p,
+h1,
+h2,
+h3,
+h4,
+ul,
+ol {
+  margin: 0 0 var(--sp-2);
+}
+
+h1 { font-size: var(--fs-xl); }
+h2 { font-size: var(--fs-lg); }
+h3,
+h4 { font-size: var(--fs-md); }
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  min-height: 2rem;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-1);
+  background: var(--c-surface);
+}
+
+button {
+  cursor: pointer;
+  background: var(--c-accent);
+  border-color: var(--c-accent-border);
+  color: var(--c-text-on-accent);
+}
+
+button:hover { background: var(--c-accent-hover); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+input[type="checkbox"],
+input[type="radio"] { min-height: 0; }
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+fieldset {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-1);
+  padding: var(--sp-2);
+}
+
+table { border-collapse: collapse; }
+td,
+th {
+  border: 1px solid var(--c-border);
+  padding: var(--sp-1) var(--sp-2);
+  text-align: start;
+}
+
+img,
+canvas { max-width: 100%; }
+
+pre,
+code { font-family: ui-monospace, monospace; font-size: var(--fs-sm); }
+
+/* Password fields: text fields shown masked, so no password manager offers
+   the user's own password to an app. */
+.app-secret { -webkit-text-security: disc; }
+
+/* Layout. */
+.app-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.app-col { display: flex; flex-direction: column; gap: var(--sp-2); }
+.app-grow { flex: 1 1 auto; min-width: 0; }
+.app-center { text-align: center; }
+.app-right { text-align: end; }
+.app-gap-0 { gap: 0; }
+.app-pad { padding: var(--sp-2); }
+.app-card {
+  padding: var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-2);
+  background: var(--c-surface);
+}
+.app-scroll { max-height: 20rem; overflow: auto; }
+
+/* Text. */
+.app-muted { color: var(--c-text-3); }
+.app-small { font-size: var(--fs-sm); }
+.app-large { font-size: var(--fs-lg); }
+.app-bold { font-weight: 600; }
+.app-mono { font-family: ui-monospace, monospace; }
+.app-ok { color: var(--c-ok); }
+.app-warning { color: var(--c-warning); }
+.app-error { color: var(--c-danger); }
+
+/* Buttons. */
+.app-quiet {
+  background: transparent;
+  color: var(--c-text);
+  border-color: var(--c-border-strong);
+}
+.app-quiet:hover { background: var(--c-accent-soft); }
+.app-danger { background: var(--c-danger); border-color: var(--c-danger); color: var(--c-text-on-danger); }
+.app-pressed { box-shadow: inset 0 0 0 2px var(--c-text-on-accent); }
+
+.app-hidden { display: none; }

@@ -5,6 +5,7 @@
 // `WebSocketChannel` of Apache Wave, licensed under the Apache License,
 // Version 2.0.
 
+import { AppEventRequest, AppEventResponse, AppOpenRequest, AppPair, AppUiNode, AppUpdate } from "./app";
 import { AttachmentMetadata, AttachmentsResponse, ImageMetadata } from "./attachment";
 import {
   AnnotationBoundary,
@@ -74,6 +75,13 @@ export const ALL_CODECS: readonly MessageCodec<unknown>[] = [
   SearchRequest,
   SearchResponse,
   Digest,
+  // wave apps
+  AppOpenRequest,
+  AppPair,
+  AppUiNode,
+  AppUpdate,
+  AppEventRequest,
+  AppEventResponse,
   // attachment.proto
   AttachmentsResponse,
   AttachmentMetadata,

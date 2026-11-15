@@ -102,6 +102,54 @@ describe("parseHtml", () => {
   });
 });
 
+describe("Renderer apps", () => {
+  // <body> 0, <line/> 1-2, "ab" 3-4, <gadget/> 5-6, "c" 7.
+  const APP_XML = '<body><line/>ab<gadget app="sha256:00" bundle="b1" id="g1"/>c</body>';
+
+  test("gives an app gadget one container, kept across edits, and detaches it when it goes", () => {
+    const doc = createFakeDocument(APP_XML);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const events: string[] = [];
+    const renderer = new Renderer(root, {
+      apps: {
+        attach: (gadget, el) => {
+          events.push(`attach ${gadget.id} ${gadget.app} ${gadget.bundle}`);
+          el.textContent = "drawn";
+        },
+        detach: (id) => events.push(`detach ${id}`),
+      },
+      waveLinkHref: (v) => `#${v}`,
+    });
+    renderer.render(parseDocument(doc.document()));
+    const el = root.querySelector(".doc-app") as HTMLElement;
+    expect(el.getAttribute("contenteditable")).toBe("false");
+    expect(events).toEqual(["attach g1 sha256:00 b1"]);
+
+    doc.edit((d) => d.insertText(3, "x"));
+    renderer.render(parseDocument(doc.document()));
+    expect(root.querySelector(".doc-app")).toBe(el);
+    expect(el.textContent).toBe("drawn");
+    expect(root.textContent).toBe("xabdrawnc");
+    expect(events).toEqual(["attach g1 sha256:00 b1"]);
+
+    doc.edit((d) => d.deleteRange(6, 8));
+    renderer.render(parseDocument(doc.document()));
+    expect(root.querySelector(".doc-app")).toBeNull();
+    expect(events).toEqual(["attach g1 sha256:00 b1", "detach g1"]);
+    root.remove();
+  });
+
+  test("shows an app gadget as a chip without an app host", () => {
+    const doc = createFakeDocument(APP_XML);
+    const root = document.createElement("div");
+    const renderer = new Renderer(root, { waveLinkHref: (v) => `#${v}` });
+    renderer.render(parseDocument(doc.document()));
+    expect(root.querySelector(".doc-app")).toBeNull();
+    expect(root.querySelector(".doc-chip")).not.toBeNull();
+  });
+});
+
 describe("EditorView", () => {
   test("follows remote operations and switches editing on and off", () => {
     const doc = createFakeDocument("<body><line/>hello</body>");

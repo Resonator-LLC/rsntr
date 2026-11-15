@@ -1223,6 +1223,16 @@ export class EditorCore {
           this.caret(at + caption.length + 4);
           return;
         }
+        case "insertApp": {
+          const at = this.sel!.focus;
+          const xml = XmlFragment.empty().wrap(
+            "gadget",
+            Attributes.fromRecord({ app: command.app, bundle: command.bundle, id: command.gadgetId }),
+          );
+          this.edit((d) => d.insertXml(at, xml));
+          this.caret(at + 2);
+          return;
+        }
         default:
           break;
       }

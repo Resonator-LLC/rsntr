@@ -13,6 +13,8 @@ import type { Alignment, BlipView, EditorCommand, EditorState, TextStyle } from 
 export interface EditToolbarProps {
   view: BlipView;
   onInsertAttachment?: () => void;
+  /** Inserts a wave app (a bundle chosen by the user). */
+  onInsertApp?: () => void;
   onInsertInlineReply?: () => void;
   onDone?: () => void;
 }
@@ -146,6 +148,14 @@ const ICONS: Record<string, () => JSX.Element> = {
       <path d="M16.5 7.5l-7 7a2 2 0 0 0 2.8 2.8l7.5-7.5a4 4 0 0 0-5.7-5.7L6.6 11.6a6 6 0 0 0 8.5 8.5L20 15.2" />
     </Icon>
   ),
+  app: () => (
+    <Icon>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="7" rx="1.5" />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" />
+      <path d="M16.5 13.5v6M13.5 16.5h6" />
+    </Icon>
+  ),
   done: () => (
     <Icon>
       <path d="M5 12.5l4.5 4.5L19 7.5" />
@@ -202,7 +212,7 @@ const ALIGNMENTS: readonly (readonly [Alignment, string])[] = [
 
 type Popover = "link" | "color" | "highlight" | null;
 
-export function EditToolbar({ view, onInsertAttachment, onInsertInlineReply, onDone }: EditToolbarProps) {
+export function EditToolbar({ view, onInsertAttachment, onInsertApp, onInsertInlineReply, onDone }: EditToolbarProps) {
   const [state, setState] = useState<EditorState>(() => view.state());
   const [popover, setPopover] = useState<Popover>(null);
   const [linkValue, setLinkValue] = useState("");
@@ -336,6 +346,7 @@ export function EditToolbar({ view, onInsertAttachment, onInsertInlineReply, onD
         {onInsertAttachment === undefined ? null : (
           <>
             {button("attach", "Insert attachment", onInsertAttachment, { cls: "edit-wide" })}
+            {onInsertApp === undefined ? null : button("app", "Insert app", onInsertApp)}
             <span class="edit-sep" aria-hidden="true" />
           </>
         )}

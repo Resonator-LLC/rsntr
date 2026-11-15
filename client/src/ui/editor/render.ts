@@ -6,7 +6,7 @@
 //   root.doc
 //     div.doc-line            one per line, in order; nothing else
 //       span.doc-run | a.doc-run.doc-link      one text node each
-//       span.doc-anchor / span.doc-image / span.doc-chip   atoms,
+//       span.doc-anchor / span.doc-app / span.doc-image / span.doc-chip   atoms,
 //                                              contenteditable=false
 //       br.doc-filler         if the line is empty or ends with an atom
 //
@@ -15,13 +15,14 @@
 // and the known atoms, so it also works on a line the browser has edited
 // (IME composition), where runs may have been split or text nodes added.
 
-import type { AnchorHost, AttachmentInfo, AttachmentSource } from "./api";
+import type { AnchorHost, AppHost, AttachmentInfo, AttachmentSource } from "./api";
 import { type AtomItem, type DocModel, type Item, type Line, MENTION_USER, lineIndexAt } from "./model";
 import { openLightbox } from "./lightbox";
 import { applyRunStyle, hrefOf, linkOf } from "./styles";
 
 export interface RenderEnv {
   readonly anchors?: AnchorHost | undefined;
+  readonly apps?: AppHost | undefined;
   readonly attachments?: AttachmentSource | undefined;
   readonly waveLinkHref: (value: string) => string;
 }
@@ -66,6 +67,8 @@ function atomKey(item: AtomItem): string {
       return `r\u0001${item.id}`;
     case "image":
       return `i\u0001${item.attachment}\u0001${item.full ? 1 : 0}\u0001${item.caption}`;
+    case "app":
+      return `a\u0001${item.id}\u0001${item.app}\u0001${item.bundle}`;
     case "chip":
       return `c\u0001${item.tag}\u0001${item.label}`;
   }
@@ -92,6 +95,8 @@ export class Renderer {
   private current: DocModel = { bodyStart: null, bodyEnd: 0, lines: [], size: 0 };
   /** Anchor containers by thread id; the same node for the anchor's life. */
   private readonly anchorEls = new Map<string, HTMLElement>();
+  /** App containers by atom key (gadget id, app and bundle). */
+  private readonly appEls = new Map<string, { readonly id: string; readonly el: HTMLElement }>();
   private destroyed = false;
 
   constructor(root: HTMLElement, env: RenderEnv) {
@@ -172,6 +177,10 @@ export class Renderer {
       this.env.anchors?.detach(id, el);
     }
     this.anchorEls.clear();
+    for (const { id, el } of this.appEls.values()) {
+      this.env.apps?.detach(id, el);
+    }
+    this.appEls.clear();
     this.views = [];
     this.root.replaceChildren();
   }
@@ -228,6 +237,7 @@ export class Renderer {
   }
 
   private sweepAnchors(): void {
+    this.sweepApps();
     if (this.anchorEls.size === 0) {
       return;
     }
@@ -243,6 +253,27 @@ export class Renderer {
       if (!live.has(id)) {
         this.anchorEls.delete(id);
         this.env.anchors?.detach(id, el);
+        el.remove();
+      }
+    }
+  }
+
+  private sweepApps(): void {
+    if (this.appEls.size === 0) {
+      return;
+    }
+    const live = new Set<string>();
+    for (const view of this.views) {
+      for (const item of view.line.items) {
+        if (item.kind === "app") {
+          live.add(atomKey(item));
+        }
+      }
+    }
+    for (const [key, { id, el }] of this.appEls) {
+      if (!live.has(key)) {
+        this.appEls.delete(key);
+        this.env.apps?.detach(id, el);
         el.remove();
       }
     }
@@ -296,7 +327,7 @@ export class Renderer {
     const old = force ? [] : view.segs;
     const oldAtoms = new Map<string, Seg[]>();
     for (const seg of view.segs) {
-      if (seg.item.kind !== "text" && seg.item.kind !== "reply") {
+      if (seg.item.kind !== "text" && seg.item.kind !== "reply" && seg.item.kind !== "app") {
         const list = oldAtoms.get(seg.key);
         if (list === undefined) {
           oldAtoms.set(seg.key, [seg]);
@@ -307,6 +338,7 @@ export class Renderer {
     }
     const segs: Seg[] = [];
     const seenReplies = new Set<string>();
+    const seenApps = new Set<string>();
     line.items.forEach((item, i) => {
       if (item.kind === "text") {
         const prev = old[i];
@@ -328,6 +360,12 @@ export class Renderer {
         const duplicate = seenReplies.has(item.id) || item.id === "";
         seenReplies.add(item.id);
         segs.push({ item, node: duplicate ? this.createChip("reply", "") : this.anchorFor(item.id, item.size), text: null, key });
+        return;
+      }
+      if (item.kind === "app") {
+        const duplicate = this.env.apps === undefined || seenApps.has(key);
+        seenApps.add(key);
+        segs.push({ item, node: duplicate ? this.createChip("gadget", "app") : this.appFor(item, key), text: null, key });
         return;
       }
       const reused = oldAtoms.get(key)?.shift();
@@ -365,6 +403,13 @@ export class Renderer {
         pendingAttach.delete(seg.node);
         if (!this.destroyed) {
           this.env.anchors?.attach(seg.item.id, seg.node);
+        }
+      }
+      if (seg.item.kind === "app" && pendingAttach.has(seg.node)) {
+        pendingAttach.delete(seg.node);
+        if (!this.destroyed) {
+          const { id, app, bundle } = seg.item;
+          this.env.apps?.attach({ id, app, bundle }, seg.node);
         }
       }
     }
@@ -415,6 +460,21 @@ export class Renderer {
     }
     atomSizes.set(el, size);
     return el;
+  }
+
+  private appFor(item: Item & { kind: "app" }, key: string): HTMLElement {
+    let entry = this.appEls.get(key);
+    if (entry === undefined) {
+      const el = this.doc.createElement("span");
+      el.className = "doc-app";
+      el.setAttribute("contenteditable", "false");
+      el.setAttribute("data-gadget", item.id);
+      entry = { id: item.id, el };
+      this.appEls.set(key, entry);
+      pendingAttach.add(el);
+    }
+    atomSizes.set(entry.el, item.size);
+    return entry.el;
   }
 
   private createChip(tag: string, label: string): HTMLElement {
@@ -666,7 +726,9 @@ function offsetInLine(lineEl: Node, node: Node, offset: number): { offset: numbe
           if (!atStart) {
             total += atomSizes.get(child) ?? 0;
           }
-          inAnchor = child !== node && (child as HTMLElement).classList.contains("doc-anchor");
+          inAnchor =
+            child !== node &&
+            ((child as HTMLElement).classList.contains("doc-anchor") || (child as HTMLElement).classList.contains("doc-app"));
           return true;
         }
         total += atomSizes.get(child) ?? 0;

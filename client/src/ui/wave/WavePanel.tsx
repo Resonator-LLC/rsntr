@@ -143,6 +143,10 @@ export function WavePanel(props: WavePanelProps) {
         }
         {...(session?.federation === true ? { probe: (address: string) => client.api.probe(address) } : {})}
         attachmentService={client.api.attachments}
+        apps={{
+          open: (request, handlers) => client.openApp(request, handlers),
+          event: (request) => client.appEvent(request),
+        }}
         idSeed={session?.idSeed ?? null}
         onClose={props.onClose}
         onWaveChanged={props.onWaveChanged}

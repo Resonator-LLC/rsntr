@@ -57,6 +57,26 @@ export interface AnchorHost {
   detach(threadId: string, container: HTMLElement): void;
 }
 
+/** A gadget with a wave app, as the editor found it. */
+export interface AppGadget {
+  /** The gadget id. */
+  readonly id: string;
+  /** `sha256:<hex>`. */
+  readonly app: string;
+  /** The bundle's attachment id. */
+  readonly bundle: string;
+}
+
+/**
+ * Draws wave apps: `attach` gets an element of the view, in the document,
+ * for the embedder to draw the app in; `detach` when the gadget went away
+ * or the view ends.
+ */
+export interface AppHost {
+  attach(gadget: AppGadget, container: HTMLElement): void;
+  detach(gadgetId: string, container: HTMLElement): void;
+}
+
 /** What is known about an attachment. Sizes in pixels and bytes. */
 export interface AttachmentInfo {
   readonly fileName: string;
@@ -84,6 +104,8 @@ export interface BlipViewOptions {
   readonly host: HTMLElement;
   readonly doc: EditorDocument;
   readonly anchors?: AnchorHost;
+  /** Draws the wave apps of gadgets; without it they show as chips. */
+  readonly apps?: AppHost;
   readonly attachments?: AttachmentSource;
   /**
    * The `href` for a `link/wave` annotation value (a wave id or waveref).
@@ -134,6 +156,8 @@ export type EditorCommand =
   | { readonly type: "insertText"; readonly text: string }
   /** Inserts `<image attachment=id><caption>…</caption></image>` at the caret. */
   | { readonly type: "insertAttachment"; readonly attachmentId: string; readonly caption: string }
+  /** A gadget with a wave app (an atom of size 2). */
+  | { readonly type: "insertApp"; readonly gadgetId: string; readonly app: string; readonly bundle: string }
   /**
    * Replaces `start..end` (the typed `@query`, see `EditorState.mention`)
    * with `text` annotated `mention/user` = `address`, followed by a space.

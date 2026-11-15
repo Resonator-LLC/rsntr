@@ -5,6 +5,7 @@
 // name is exported twice: as the message type and as the value holding its
 // `MessageCodec`.
 
+export * from "./app";
 export * from "./attachment";
 export * from "./convert";
 export * from "./federation";

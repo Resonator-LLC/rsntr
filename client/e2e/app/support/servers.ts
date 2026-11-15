@@ -145,10 +145,11 @@ export class TestServers {
    * Starts the servers. `hooks` turns on the server's end-to-end test
    * hooks (`POST /e2e/...`, on `backendUrl`). `device` runs the server in
    * device mode (`--mode device`: one account, `me@example.com`, signed
-   * in by {@link deviceUrl}, contacts instead of the directory).
+   * in by {@link deviceUrl}, contacts instead of the directory). `apps`
+   * turns wave apps on.
    */
   static async start(
-    options: { hooks?: boolean; device?: boolean; person?: boolean } = {},
+    options: { hooks?: boolean; device?: boolean; person?: boolean; apps?: boolean } = {},
   ): Promise<TestServers> {
     const person = options.device === true && options.person === true;
     const binary = person ? NODE_BINARY : BINARY;
@@ -172,6 +173,9 @@ export class TestServers {
     }
     if (options.hooks === true) {
       env.RESONATOR_E2E_HOOKS = "1";
+    }
+    if (options.apps === true) {
+      env.RESONATOR_APPS_ENABLED = "true";
     }
     // Person mode (with `device`): the device is the first, admin device
     // of a new person, which federation needs; nothing reaches other

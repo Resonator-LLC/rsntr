@@ -128,6 +128,9 @@ function blipSchema(): XmlSchemaConstraints {
           "extension",
           "ifr",
           "snippet",
+          // Wave apps: the bundle's `sha256:<hex>` and its attachment id.
+          "app",
+          "bundle",
       ],
   );
   for (const gadgetEl of ["category", "state", "pref"]) {

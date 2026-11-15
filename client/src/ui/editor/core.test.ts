@@ -403,6 +403,16 @@ describe("commands", () => {
     expect(f.body()).toBe('<line/>a<image attachment="att1"><caption>cat.png</caption></image>b');
     expect(f.core.selection()?.focus).toBe(15);
   });
+
+  it("inserts an app gadget at the caret, parsed as an app item", () => {
+    const f = coreFixture("<line/>ab");
+    f.select(4);
+    f.core.exec({ type: "insertApp", gadgetId: "g1", app: "sha256:00", bundle: "example.com/b1" });
+    expect(f.body()).toBe('<line/>a<gadget app="sha256:00" bundle="example.com/b1" id="g1"/>b');
+    expect(f.core.selection()?.focus).toBe(6);
+    const item = f.core.model().lines[0]!.items.find((i) => i.kind === "app");
+    expect(item).toEqual({ kind: "app", offset: 1, size: 2, id: "g1", app: "sha256:00", bundle: "example.com/b1" });
+  });
 });
 
 describe("URL detection", () => {

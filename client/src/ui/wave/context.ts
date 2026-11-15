@@ -6,6 +6,7 @@ import { createContext } from "preact";
 
 import type { DirectoryEntry, ProbeResult } from "../../net/http";
 import type { ProfileStore } from "../profiles/profileStore";
+import type { WaveAppsUi } from "../waveapps/AppView";
 import type { WaveAttachments } from "./attachments";
 import type { LazyActivator } from "./lazyViews";
 import type { ConversationStore } from "./store";
@@ -16,7 +17,8 @@ export type DialogState =
   | { readonly kind: "link"; readonly blipId: string }
   | { readonly kind: "addParticipant" }
   | { readonly kind: "removeSelf"; readonly address: string }
-  | { readonly kind: "attachment"; readonly file: File };
+  | { readonly kind: "attachment"; readonly file: File }
+  | { readonly kind: "app"; readonly file: File };
 
 export interface AnchoredState {
   readonly anchor: HTMLElement;
@@ -31,6 +33,8 @@ export interface WaveUi {
   readonly lazy: LazyActivator;
   /** Null if the session has no attachment service (tests). */
   readonly attachments: WaveAttachments | null;
+  /** Null if the session cannot run wave apps (tests); gadgets with apps then show as chips. */
+  readonly apps: WaveAppsUi | null;
   readonly newAttachmentId: () => string;
   /** The address of the signed-in user, if known. */
   readonly viewer: string | null;

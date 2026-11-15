@@ -15,7 +15,10 @@ import type { ComponentChildren } from "preact";
 
 import type { OpenWave } from "../../client";
 import { InvalidIdError, ModernIdSerialiser, WaveRef, type WaveletId } from "../../model/id";
+import type { StreamHandle, StreamHandlers } from "../../net";
 import type { AttachmentService } from "../../net/http";
+import type { AppEventRequest, AppEventResponse, AppOpenRequest, AppUpdate } from "../../wire";
+import type { WaveAppsUi } from "../waveapps/AppView";
 import type { Route } from "../contracts";
 import type { ProfileStore } from "../profiles/profileStore";
 import { AttachmentIdGenerator, WaveAttachments } from "./attachments";
@@ -51,6 +54,11 @@ export interface WaveViewProps {
    */
   readonly probe?: (address: string) => Promise<ProbeResult>;
   readonly attachmentService: AttachmentService | null;
+  /** Opens wave apps over the session's socket; without it apps show as chips. */
+  readonly apps?: {
+    open(request: AppOpenRequest, handlers: StreamHandlers<AppUpdate>): StreamHandle;
+    event(request: AppEventRequest): Promise<AppEventResponse>;
+  } | null;
   /** The seed of the session's id generator, for attachment ids. */
   readonly idSeed: string | null;
   readonly onClose: () => void;
@@ -63,6 +71,27 @@ export interface WaveViewProps {
   readonly eagerViews?: boolean;
   /** Shown under the toolbar (such as "continue as new wave"). */
   readonly notice?: ComponentChildren;
+}
+
+/** The key of `m/gadgets` that allows a gadget's app: the app id allowed. */
+export const APP_GRANT_KEY = "allowed";
+
+function waveAppsUi(
+  socket: NonNullable<WaveViewProps["apps"]>,
+  waveId: string,
+  wave: OpenWave,
+  attachments: WaveAttachments | null,
+): WaveAppsUi {
+  return {
+    waveId,
+    open: (request, handlers) => socket.open(request, handlers),
+    event: (request) => socket.event(request),
+    allow: (gadgetId, appId) => {
+      wave.writeSupplement((s) => s.setGadgetState(gadgetId, APP_GRANT_KEY, appId));
+    },
+    attachmentUrl: (id) => attachments?.attachmentUrl(id) ?? null,
+    showLog: null,
+  };
 }
 
 function parseWaveletId(serialised: string | null): WaveletId | null {
@@ -179,6 +208,14 @@ export function WaveView(props: WaveViewProps) {
     const waveIdString = serialiser.serialiseWaveId(wave.waveId);
     const waveletIdString = serialiser.serialiseWaveletId(store.waveletId);
     const mentionKeys: WaveUi["mentionKeys"] = { current: null };
+    const attachments =
+      props.attachmentService !== null
+        ? new WaveAttachments(
+            props.attachmentService,
+            wave.waveId,
+            props.probe !== undefined && props.localDomain !== null ? { localDomain: props.localDomain } : null,
+          )
+        : null;
     const idGenerator =
       props.idSeed !== null && props.localDomain !== null
         ? new AttachmentIdGenerator(props.localDomain, props.idSeed, true)
@@ -189,13 +226,10 @@ export function WaveView(props: WaveViewProps) {
       profiles: props.profiles,
       createView: props.createView ?? defaultBlipViewFactory,
       lazy: new LazyActivator({ root: null, eager: props.eagerViews === true }),
-      attachments:
-        props.attachmentService !== null
-          ? new WaveAttachments(
-              props.attachmentService,
-              wave.waveId,
-              props.probe !== undefined && props.localDomain !== null ? { localDomain: props.localDomain } : null,
-            )
+      attachments,
+      apps:
+        props.apps !== undefined && props.apps !== null
+          ? waveAppsUi(props.apps, waveIdString, wave, attachments)
           : null,
       newAttachmentId: () => idGenerator.next(),
       viewer: props.viewer,

@@ -78,6 +78,22 @@ export interface ImageItem {
   readonly full: boolean;
 }
 
+/**
+ * A gadget with a wave app (`<gadget app="sha256:..." bundle="..." id="...">`):
+ * the embedder draws the app in its element.
+ */
+export interface AppItem {
+  readonly kind: "app";
+  readonly offset: number;
+  readonly size: number;
+  /** The gadget id. */
+  readonly id: string;
+  /** The app id, `sha256:<hex>`. */
+  readonly app: string;
+  /** The bundle's attachment id. */
+  readonly bundle: string;
+}
+
 /** An element the editor does not understand (gadget, form element, ...). */
 export interface ChipItem {
   readonly kind: "chip";
@@ -87,7 +103,7 @@ export interface ChipItem {
   readonly label: string;
 }
 
-export type AtomItem = ReplyItem | ImageItem | ChipItem;
+export type AtomItem = ReplyItem | ImageItem | AppItem | ChipItem;
 export type Item = TextItem | AtomItem;
 
 export type LineType = "" | "h1" | "h2" | "h3" | "h4" | "li";
@@ -339,6 +355,15 @@ export function parseDocument(doc: BootstrapDocument): DocModel {
                 caption: atom.text,
                 full: atom.attrs.get("style") === "full",
               });
+            } else if (atom.tag === "gadget" && atom.attrs.has("app") && (atom.attrs.get("id") ?? "") !== "") {
+              line.items.push({
+                kind: "app",
+                offset,
+                size,
+                id: atom.attrs.get("id") ?? "",
+                app: atom.attrs.get("app") ?? "",
+                bundle: atom.attrs.get("bundle") ?? "",
+              });
             } else {
               line.items.push({
                 kind: "chip",
@@ -398,6 +423,9 @@ function signature(line: Line): string {
         break;
       case "image":
         sig += `\u0003i${item.attachment}\u0004${item.full ? 1 : 0}\u0004${item.caption}`;
+        break;
+      case "app":
+        sig += `\u0003a${item.id}\u0004${item.app}\u0004${item.bundle}`;
         break;
       case "chip":
         sig += `\u0003c${item.tag}\u0004${item.label}`;

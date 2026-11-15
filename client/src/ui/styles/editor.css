@@ -85,6 +85,60 @@
   white-space: nowrap;
 }
 
+/* Wave app: the embedder draws the app box inside. */
+.doc-app {
+  display: block;
+  margin: var(--sp-1) 0;
+  white-space: normal;
+  cursor: default;
+  user-select: none;
+}
+.app-box {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-2);
+  background: var(--c-surface);
+  overflow: hidden;
+  user-select: text;
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--c-surface-2);
+  border-bottom: 1px solid var(--c-border);
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.app-name { font-weight: 600; color: var(--c-text); }
+.app-hash { font-family: ui-monospace, monospace; }
+.app-status { margin-inline-start: auto; }
+.app-header button,
+.app-grant button,
+.app-ended button {
+  font: inherit;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-1);
+  background: var(--c-surface);
+  color: var(--c-text);
+  cursor: pointer;
+}
+.app-grant,
+.app-ended,
+.app-surface { padding: var(--sp-2) var(--sp-3); }
+.app-grant p,
+.app-grant ul { margin: 0 0 var(--sp-2); }
+.app-grant .app-allow {
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--c-accent);
+  border-color: var(--c-accent-border);
+  color: var(--c-text-on-accent);
+}
+.app-ended { display: flex; align-items: center; gap: var(--sp-2); color: var(--c-text-3); font-size: var(--fs-sm); }
+.app-reason { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
 /* Inline reply anchor: the embedder mounts the thread inside. */
 .doc-anchor {
   display: inline;

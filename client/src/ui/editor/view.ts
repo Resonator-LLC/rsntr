@@ -95,6 +95,7 @@ export class EditorView implements BlipView {
     this.core = new EditorCore(options.doc);
     this.renderer = new Renderer(root, {
       anchors: options.anchors,
+      apps: options.apps,
       attachments: options.attachments,
       waveLinkHref: options.waveLinkHref ?? ((value) => `#${value}`),
     });
@@ -330,7 +331,7 @@ export class EditorView implements BlipView {
       return false;
     }
     const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
-    return el?.closest(".doc") === this.element && el.closest(".doc-anchor") === null;
+    return el?.closest(".doc") === this.element && el.closest(".doc-anchor, .doc-app") === null;
   }
 
   /** The DOM selection as locations, or null if it is not (all) in this view. */

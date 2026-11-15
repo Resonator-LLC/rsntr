@@ -23,7 +23,7 @@ import type {
 import type { DocOp } from "../../model/docop";
 import type { WaveletId } from "../../model/id";
 import { ThreadState } from "../../model/supplement";
-import type { BlipView, DocumentOpEvent, EditorDocument } from "../editor/api";
+import type { AppGadget, BlipView, DocumentOpEvent, EditorDocument } from "../editor/api";
 import { Reader, type ReadingSupplement, SimpleReadingSupplement } from "./reader";
 import { type BlipTree, ROOT_THREAD, Traverser } from "./traversal";
 
@@ -89,6 +89,9 @@ export class BlipVM {
   readonly meta = signal(0);
   /** The containers the editor made for the anchors of inline reply threads. */
   readonly anchors: Signal<ReadonlyMap<string, HTMLElement>> = signal(NO_ANCHORS);
+  /** The containers the editor made for the wave apps of gadgets, by gadget id. */
+  readonly apps: Signal<ReadonlyMap<string, { readonly gadget: AppGadget; readonly container: HTMLElement }>> =
+    signal(new Map());
   /** The blip's document must be rendered now (it is focused, edited, or has the focus inside). */
   readonly needView = signal(false);
   /** The blip's document is rendered. */

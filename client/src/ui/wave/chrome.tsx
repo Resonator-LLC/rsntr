@@ -6,6 +6,7 @@
 // `BlipLinkPopupWidget`, `AttachmentPopupWidget` and their message
 // bundles, Apache License 2.0).
 
+import { sha256 } from "../../model/version";
 import { useContext, useEffect, useRef, useState } from "preact/hooks";
 
 import type { DirectoryEntry, ProbeResult } from "../../net/http";
@@ -570,12 +571,15 @@ function EditingToolbar() {
   }
   // Straight to the system's file chooser; the upload starts once a file
   // is chosen (`AttachmentDialog` shows its progress, or why it failed).
-  const onInsertAttachment = (): void => {
+  const chooseFile = (kind: "attachment" | "app"): void => {
     for (const stale of document.querySelectorAll("input.wave-file-input")) {
       stale.remove();
     }
     const input = document.createElement("input");
     input.type = "file";
+    if (kind === "app") {
+      input.accept = ".zip,application/zip";
+    }
     input.className = "wave-file-input";
     input.hidden = true;
     input.setAttribute("aria-label", "File to upload");
@@ -583,13 +587,15 @@ function EditingToolbar() {
       const file = input.files?.[0];
       input.remove();
       if (file !== undefined) {
-        ui.dialog.value = { kind: "attachment", file };
+        ui.dialog.value = { kind, file };
       }
     });
     input.addEventListener("cancel", () => input.remove());
     document.body.append(input);
     input.click();
   };
+  const onInsertAttachment = (): void => chooseFile("attachment");
+  const onInsertApp = ui.apps !== null && ui.attachments !== null ? (): void => chooseFile("app") : undefined;
   const onInsertInlineReply = (): void => store.inlineReplyAtCaret();
   const onDone = (): void => store.stopEditing();
   const EditorToolbar = editorToolbar();
@@ -599,6 +605,7 @@ function EditingToolbar() {
         <EditorToolbar
           view={view}
           onInsertAttachment={onInsertAttachment}
+          {...(onInsertApp !== undefined ? { onInsertApp } : {})}
           onInsertInlineReply={onInsertInlineReply}
           onDone={onDone}
         />
@@ -856,6 +863,79 @@ function AttachmentDialog({ file, onClose }: { file: File; onClose: () => void }
   );
 }
 
+/** A random gadget id: 12 bytes, base64url. */
+function newGadgetId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `app-${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
+
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Inserts a wave app: uploads its bundle (a zip) as an attachment, inserts
+ * a gadget naming it and its hash at the caret, and allows it for the user
+ * who inserted it.
+ */
+function InsertAppDialog({ file, onClose }: { file: File; onClose: () => void }) {
+  const ui = useUi();
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const attachments = ui.attachments;
+    const apps = ui.apps;
+    const view = ui.store.editingView.peek();
+    if (attachments === null || apps === null || view === null) {
+      setError("Error! The message is no longer being edited.");
+      return;
+    }
+    const attachmentId = ui.newAttachmentId();
+    void (async () => {
+      try {
+        // Hashed here, not with crypto.subtle, which plain-http pages lack.
+        const app = `sha256:${hex(sha256(new Uint8Array(await file.arrayBuffer())))}`;
+        await attachments.upload(attachmentId, file, file.name);
+        if (ui.store.editingView.peek() !== view) {
+          setError("The app was uploaded, but the message is no longer being edited.");
+          return;
+        }
+        const gadgetId = newGadgetId();
+        apps.allow(gadgetId, app);
+        view.exec({ type: "insertApp", gadgetId, app, bundle: attachmentId });
+        onClose();
+      } catch (failure) {
+        if (failure instanceof Error && (failure as { status?: number }).status === 413) {
+          setError(`"${file.name}" (${formatBytes(file.size)}) is too large to upload here.`);
+          return;
+        }
+        const detail = failure instanceof Error && failure.message !== "" ? `: ${failure.message}` : "";
+        setError(`Error! The upload failed${detail}`);
+      }
+    })();
+  }, []);
+  return (
+    <Dialog title="Insert app" onClose={onClose}>
+      <div class="dialog-body">
+        {error === null ? (
+          <div class="wave-upload-status" role="status">
+            <span class="wave-spinner" aria-hidden="true" />
+            Uploading {baseFileName(file.name)}...
+          </div>
+        ) : (
+          <div class="notice notice-error" role="alert">
+            {error}
+          </div>
+        )}
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" onClick={onClose}>
+          {error === null ? "Cancel" : "Close"}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 export function Dialogs() {
   const ui = useUi();
   const dialog = ui.dialog.value;
@@ -896,5 +976,7 @@ export function Dialogs() {
       return <AddParticipantDialog onClose={close} />;
     case "attachment":
       return <AttachmentDialog file={dialog.file} onClose={close} />;
+    case "app":
+      return <InsertAppDialog file={dialog.file} onClose={close} />;
   }
 }

@@ -21,12 +21,21 @@ import {
   type SessionInfo,
   type SocketFactory,
   type StateChange,
+  type StreamHandle,
+  type StreamHandlers,
   WaveHttpApi,
   sessionAuthToken,
   socketUrlFromBaseUrl,
 } from "../net";
 import { Emitter, type Observable } from "../util/events";
-import type { ProfileResponse, SearchResponse } from "../wire";
+import {
+  AppEventRequest,
+  AppEventResponse,
+  AppOpenRequest,
+  AppUpdate,
+  type ProfileResponse,
+  type SearchResponse,
+} from "../wire";
 import { BackoffScheduler, DEFAULT_TIMERS, type Timers } from "./backoffScheduler";
 import { LiveWaveView, type UnsavedState } from "./liveWaveView";
 import { OpenWave } from "./openWave";
@@ -481,6 +490,19 @@ export class WaveClient {
 
   search(query: string, index = 0, numResults = 20): Promise<SearchResponse> {
     return this.api.search.search(query, index, numResults);
+  }
+
+  /**
+   * Opens the view of a gadget's app: `onUpdate` gets its status and, while
+   * it runs, every new render. Throws if not connected.
+   */
+  openApp(request: AppOpenRequest, handlers: StreamHandlers<AppUpdate>): StreamHandle {
+    return this.connected().channel.openStream(AppOpenRequest, request, AppUpdate, handlers);
+  }
+
+  /** Hands a UI event to an app this client has open. */
+  appEvent(request: AppEventRequest): Promise<AppEventResponse> {
+    return this.connected().channel.call(AppEventRequest, request, AppEventResponse);
   }
 }
 

@@ -20,7 +20,8 @@ import { useContext, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 
 import { Avatar } from "../profiles/Avatar";
 import { firstName } from "../profiles/profileStore";
-import type { AnchorHost, BlipView } from "../editor/api";
+import type { AnchorHost, AppHost, BlipView } from "../editor/api";
+import { AppView } from "../waveapps/AppView";
 import { type WaveUi, WaveUiContext } from "./context";
 import { formatFullDate, formatPastDate } from "./dates";
 import { ChevronIcon, EditIcon, MoreIcon, PlusIcon, ReplyIcon } from "./icons";
@@ -104,10 +105,25 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
         }
       },
     };
+    const apps: AppHost = {
+      attach(gadget, container) {
+        const next = new Map(vm.apps.peek());
+        next.set(gadget.id, { gadget, container });
+        vm.apps.value = next;
+      },
+      detach(gadgetId, container) {
+        if (vm.apps.peek().get(gadgetId)?.container === container) {
+          const next = new Map(vm.apps.peek());
+          next.delete(gadgetId);
+          vm.apps.value = next;
+        }
+      },
+    };
     const view = ui.createView({
       host,
       doc: store.documentFor(id),
       anchors,
+      ...(ui.apps !== null ? { apps } : {}),
       ...(ui.attachments !== null ? { attachments: ui.attachments } : {}),
       waveLinkHref: ui.waveLinkHref,
       onKeyDown: ui.onEditorKeyDown,
@@ -146,6 +162,7 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
         view.destroy();
         vm.viewReady.value = false;
         vm.anchors.value = new Map();
+        vm.apps.value = new Map();
       }
     };
   }, [vm]);
@@ -202,6 +219,7 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
   const unread = vm.unread.value;
   const replies = vm.replies.value;
   const anchors = vm.anchors.value;
+  const appContainers = vm.apps.value;
   const viewReady = vm.viewReady.value;
   // Without a focus frame, the root blip is the tab stop of the conversation.
   const tabStop = focused || (store.isRootBlip(id) && store.focusedId.value === null);
@@ -223,6 +241,12 @@ export const BlipItem = memo(function BlipItem({ id }: { id: string }) {
       portals.push(createPortal(<ThreadItem key={reply.threadId} id={reply.threadId} placement="inline" />, container));
     } else if (!reply.anchored || viewReady) {
       below.push(reply.threadId);
+    }
+  }
+
+  if (ui.apps !== null) {
+    for (const { gadget, container } of appContainers.values()) {
+      portals.push(createPortal(<AppView key={`${gadget.id} ${gadget.app}`} gadget={gadget} apps={ui.apps} />, container));
     }
   }
 

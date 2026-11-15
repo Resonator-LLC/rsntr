@@ -3,12 +3,15 @@
 # from a copy of this directory; idempotent. Binaries are installed by
 # deploy.sh, secrets by hand (see README.md).
 #
-#   INSTANCES="rsntr.net:9898:7777 resonator.network:9897:7778" ./setup.sh
+#   INSTANCES="rsntr.net:9898:7777:7779 resonator.network:9897:7778:7780" ./setup.sh
 #
-# Each instance is DOMAIN:HTTP_PORT:FEDERATION_UDP_PORT.
+# Each instance is DOMAIN:HTTP_PORT:FEDERATION_UDP_PORT:WEBRTC_UDP_PORT.
+# PUBLIC_IP (the droplet's, from its metadata by default) is the address
+# browsers reach the WebRTC ports on.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-INSTANCES=${INSTANCES:-"rsntr.net:9898:7777 resonator.network:9897:7778"}
+INSTANCES=${INSTANCES:-"rsntr.net:9898:7777:7779 resonator.network:9897:7778:7780"}
+PUBLIC_IP=${PUBLIC_IP:-$(curl -fsS http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address)}
 RELAY_HOST=${RELAY_HOST:-rly.rsntr.net}
 
 export DEBIAN_FRONTEND=noninteractive
@@ -32,13 +35,14 @@ install -m 644 "$here/Caddyfile" /etc/caddy/Caddyfile
 domains=()
 for instance in $INSTANCES; do domains+=("${instance%%:*}"); done
 for instance in $INSTANCES; do
-  IFS=: read -r domain port fedport <<<"$instance"
+  IFS=: read -r domain port fedport rtcport <<<"$instance"
   others=""
   for other in "${domains[@]}"; do
     [[ "$other" == "$domain" ]] || others+="${others:+, }\"$other\""
   done
   sed -e "s/@DOMAIN@/$domain/g" -e "s/@PORT@/$port/g" -e "s/@FEDPORT@/$fedport/g" \
-    -e "s/@OTHERS@/$others/g" "$here/config/server.toml.in" >"/etc/resonator/$domain.toml"
+    -e "s/@OTHERS@/$others/g" -e "s/@RTCPORT@/$rtcport/g" -e "s/@PUBLIC_IP@/$PUBLIC_IP/g" \
+    "$here/config/server.toml.in" >"/etc/resonator/$domain.toml"
   chmod 644 "/etc/resonator/$domain.toml"
   install -d -m 750 -o resonator -g resonator "/var/lib/resonator/$domain" "/var/backups/resonator/$domain"
 done

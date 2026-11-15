@@ -10,8 +10,8 @@ One droplet (DigitalOcean `rsntr`, fra1, 4 vCPU / 8 GB, Ubuntu 26.04):
 
 | Service | Listens | Public name |
 |---|---|---|
-| `resonator@rsntr.net` | 127.0.0.1:9898, udp 7777 (federation) | `https://rsntr.net` |
-| `resonator@resonator.network` | 127.0.0.1:9897, udp 7778 | `https://resonator.network` |
+| `resonator@rsntr.net` | 127.0.0.1:9898, udp 7777 (federation), udp 7779 (WebRTC) | `https://rsntr.net` |
+| `resonator@resonator.network` | 127.0.0.1:9897, udp 7778, udp 7780 | `https://resonator.network` |
 | `resonator-push` | 127.0.0.1:9900 | `https://psh.rsntr.net` |
 | `iroh-relay` 1.4.1 | 127.0.0.1:3341 (HTTPS), udp 7842 (QUIC address discovery) | `https://rly.rsntr.net` |
 | Caddy | 80, 443 (tcp and udp) | TLS for all of the above |

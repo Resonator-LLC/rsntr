@@ -21,3 +21,11 @@ relay = "https://psh.rsntr.net"
 [apps]
 enabled = true
 max_instances = 16
+
+# Wave app media (microphone, camera, what apps send back) between browsers
+# and this server over WebRTC, on one UDP port; browsers that cannot reach
+# it keep using the client socket.
+[webrtc]
+enabled = true
+listen = "0.0.0.0:@RTCPORT@"
+advertise = "@PUBLIC_IP@:@RTCPORT@"

@@ -58,13 +58,16 @@ test.afterAll(async () => {
   await servers?.stop();
 });
 
-/** Times change from run to run: they are covered, and get one width
- *  (a later hour is wider), so the text beside them does not move. */
-const shot = (page: Page) => ({
-  mask: [page.locator("time"), page.locator(".digest-time, .blip-time")],
-  style:
-    ".digest-time, .blip-time { display: inline-block; flex: none; width: 4.5em; min-width: 4.5em; max-width: 4.5em; overflow: hidden; white-space: nowrap; }",
-});
+/** Times change from run to run: they get one text (a later hour is
+ *  wider, which moves the text beside them) and are covered. */
+const shot = async (page: Page) => {
+  await page.evaluate(() => {
+    for (const time of document.querySelectorAll("time")) {
+      time.textContent = "10:00 AM";
+    }
+  });
+  return { mask: [page.locator("time")] };
+};
 
 async function noSidewaysScroll(page: Page, where: string): Promise<void> {
   const overflow = await page.evaluate(() => {
@@ -113,12 +116,12 @@ for (const [size, { width, height, mobile }] of Object.entries(SIZES)) {
         await signIn(page, anna);
         await expect(page.locator(".digest")).toHaveCount(1);
         await expect(page.locator(".topbar-net")).toHaveText(/Online/);
-        await expect(page).toHaveScreenshot(`${name}-list.png`, shot(page));
+        await expect(page).toHaveScreenshot(`${name}-list.png`, await shot(page));
         await noSidewaysScroll(page, "list");
 
         await page.locator(".digest-link").first().click();
         await expect(page.locator(".blip-main")).toHaveCount(3);
-        await expect(page).toHaveScreenshot(`${name}-wave.png`, shot(page));
+        await expect(page).toHaveScreenshot(`${name}-wave.png`, await shot(page));
         await noSidewaysScroll(page, "wave");
 
         await page.locator(".topbar-net").click();
@@ -128,10 +131,10 @@ for (const [size, { width, height, mobile }] of Object.entries(SIZES)) {
         await expect
           .poll(() => page.locator("img.avatar-xl").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
           .toBe(true);
-        await expect(page).toHaveScreenshot(`${name}-settings.png`, shot(page));
+        await expect(page).toHaveScreenshot(`${name}-settings.png`, await shot(page));
         await noSidewaysScroll(page, "settings");
         await page.locator("[data-section=you]").scrollIntoViewIfNeeded();
-        await expect(page).toHaveScreenshot(`${name}-you.png`, shot(page));
+        await expect(page).toHaveScreenshot(`${name}-you.png`, await shot(page));
         await context.close();
       });
     }

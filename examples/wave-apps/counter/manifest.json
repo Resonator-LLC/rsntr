@@ -1,0 +1,1 @@
+{ "name": "counter", "version": "1", "permissions": ["wave", "kv"] }

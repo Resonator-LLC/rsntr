@@ -1,0 +1,12 @@
+[package]
+name = "resonator-app-sdk"
+description = "Write Resonator wave apps in Rust: the WIT bindings and a view builder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+wit-bindgen = "0.57"

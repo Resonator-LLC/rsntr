@@ -1,0 +1,12 @@
+{
+  "name": "template-js",
+  "private": true,
+  "type": "module",
+  "description": "A Resonator wave app in JavaScript, built with componentize-js",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@bytecodealliance/componentize-js": "0.23.0"
+  }
+}

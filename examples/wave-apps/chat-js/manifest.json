@@ -1,0 +1,1 @@
+{ "name": "chat", "version": "1", "permissions": ["wave", "kv"] }

@@ -33,6 +33,8 @@ import {
   AppEventResponse,
   AppMediaRequest,
   AppOpenRequest,
+  AppRtcRequest,
+  AppRtcResponse,
   AppUpdate,
   type ProfileResponse,
   type SearchResponse,
@@ -509,6 +511,11 @@ export class WaveClient {
   /** Hands an open app a frame of the microphone. */
   appMedia(request: AppMediaRequest): Promise<AppEventResponse> {
     return this.connected().channel.call(AppMediaRequest, request, AppEventResponse);
+  }
+
+  /** Offers an open app a WebRTC connection for its media. */
+  appRtc(request: AppRtcRequest): Promise<AppRtcResponse> {
+    return this.connected().channel.call(AppRtcRequest, request, AppRtcResponse);
   }
 }
 

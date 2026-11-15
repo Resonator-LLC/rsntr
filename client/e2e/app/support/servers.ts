@@ -4,6 +4,7 @@
 // WebSocket. The static server sends the same Content-Security-Policy as
 // resonator does, so the tests also prove that the build obeys it.
 
+import dgram from "node:dgram";
 import { type ChildProcess, spawn } from "node:child_process";
 import {
   existsSync,
@@ -70,6 +71,18 @@ const MIME: Record<string, string> = {
   ".map": "application/json",
   ".webmanifest": "application/manifest+json",
 };
+
+/** A free UDP port on loopback (for the node's WebRTC). */
+function freeUdpPort(): Promise<number> {
+  return new Promise((done, fail) => {
+    const socket = dgram.createSocket("udp4");
+    socket.once("error", fail);
+    socket.bind(0, "127.0.0.1", () => {
+      const { port } = socket.address();
+      socket.close(() => done(port));
+    });
+  });
+}
 
 function freePort(): Promise<number> {
   return new Promise((done, fail) => {
@@ -146,10 +159,18 @@ export class TestServers {
    * hooks (`POST /e2e/...`, on `backendUrl`). `device` runs the server in
    * device mode (`--mode device`: one account, `me@example.com`, signed
    * in by {@link deviceUrl}, contacts instead of the directory). `apps`
-   * turns wave apps on.
+   * turns wave apps on; `webrtc` their media over WebRTC, or with
+   * "unreachable" advertises a port nobody listens on (so browsers fall
+   * back to the socket).
    */
   static async start(
-    options: { hooks?: boolean; device?: boolean; person?: boolean; apps?: boolean } = {},
+    options: {
+      hooks?: boolean;
+      device?: boolean;
+      person?: boolean;
+      apps?: boolean;
+      webrtc?: boolean | "unreachable";
+    } = {},
   ): Promise<TestServers> {
     const person = options.device === true && options.person === true;
     const binary = person ? NODE_BINARY : BINARY;
@@ -176,6 +197,13 @@ export class TestServers {
     }
     if (options.apps === true) {
       env.RESONATOR_APPS_ENABLED = "true";
+    }
+    if (options.webrtc !== undefined && options.webrtc !== false) {
+      const port = await freeUdpPort();
+      const advertised = options.webrtc === "unreachable" ? await freeUdpPort() : port;
+      env.RESONATOR_WEBRTC_ENABLED = "true";
+      env.RESONATOR_WEBRTC_LISTEN = `127.0.0.1:${port}`;
+      env.RESONATOR_WEBRTC_ADVERTISE = `127.0.0.1:${advertised}`;
     }
     // Person mode (with `device`): the device is the first, admin device
     // of a new person, which federation needs; nothing reaches other

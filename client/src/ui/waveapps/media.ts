@@ -11,15 +11,21 @@ const BLOCK = 1024;
 /** How far ahead of now playback starts, to ride out jitter. */
 const LEAD_SECONDS = 0.08;
 
-/** Why the microphone cannot be used here, or null if it can be tried. */
-export function micUnavailable(): string | null {
+/**
+ * Why the microphone cannot be used here, or null if it can be tried;
+ * `codecs` when we encode it ourselves (not over WebRTC).
+ */
+export function micUnavailable(codecs = true): string | null {
   if (typeof window !== "undefined" && !window.isSecureContext) {
     return "The browser allows the microphone only on a secure page: open this page over HTTPS or as localhost.";
   }
   if (typeof navigator === "undefined" || navigator.mediaDevices?.getUserMedia === undefined) {
     return "This browser cannot use a microphone here.";
   }
-  if (typeof AudioEncoder === "undefined" || typeof AudioDecoder === "undefined" || typeof AudioContext === "undefined") {
+  if (
+    codecs &&
+    (typeof AudioEncoder === "undefined" || typeof AudioDecoder === "undefined" || typeof AudioContext === "undefined")
+  ) {
     return "This browser cannot encode sound (it has no WebCodecs audio).";
   }
   return null;
@@ -60,6 +66,8 @@ function unbase64(text: string): Uint8Array {
   return bytes;
 }
 
+export const MIC_CONSTRAINTS: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, channelCount: 1 };
+
 /** The microphone, encoded: each Opus frame goes to `send` as base64. */
 export class Mic {
   private constructor(
@@ -79,9 +87,7 @@ export class Mic {
     const context = new AudioContext({ sampleRate: SAMPLE_RATE });
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-      });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
       await context.resume();
     } catch (error) {
       void context.close();
@@ -236,13 +242,19 @@ export class Speaker {
   }
 }
 
-const VIDEO_WIDTH = 320;
-const VIDEO_HEIGHT = 240;
-const VIDEO_FPS = 15;
+export const VIDEO_WIDTH = 320;
+export const VIDEO_HEIGHT = 240;
+export const VIDEO_FPS = 15;
 /** A key frame this often, so that someone who joins sees a picture soon. */
 const KEY_EVERY = 2 * VIDEO_FPS;
 /** A person's picture goes away after this long without a frame. */
 const TILE_IDLE_MS = 3000;
+
+export const CAMERA_CONSTRAINTS: MediaTrackConstraints = {
+  width: { ideal: VIDEO_WIDTH },
+  height: { ideal: VIDEO_HEIGHT },
+  frameRate: { ideal: VIDEO_FPS },
+};
 
 /** Video codecs by the number in a frame's flags (bits 1-3). */
 const VIDEO_CODECS: readonly { readonly id: number; readonly codec: string; readonly avc?: { format: "annexb" } }[] = [
@@ -250,15 +262,18 @@ const VIDEO_CODECS: readonly { readonly id: number; readonly codec: string; read
   { id: 1, codec: "avc1.42E01F", avc: { format: "annexb" } },
 ];
 
-/** Why the camera cannot be used here, or null if it can be tried. */
-export function cameraUnavailable(): string | null {
+/** Why the camera cannot be used here, or null if it can be tried (see `micUnavailable`). */
+export function cameraUnavailable(codecs = true): string | null {
   if (typeof window !== "undefined" && !window.isSecureContext) {
     return "The browser allows the camera only on a secure page: open this page over HTTPS or as localhost.";
   }
   if (typeof navigator === "undefined" || navigator.mediaDevices?.getUserMedia === undefined) {
     return "This browser cannot use a camera here.";
   }
-  if (typeof VideoEncoder === "undefined" || typeof VideoDecoder === "undefined" || typeof VideoFrame === "undefined") {
+  if (
+    codecs &&
+    (typeof VideoEncoder === "undefined" || typeof VideoDecoder === "undefined" || typeof VideoFrame === "undefined")
+  ) {
     return "This browser cannot encode video (it has no WebCodecs video).";
   }
   return null;
@@ -305,9 +320,7 @@ export class Camera {
     if (chosen === null || config === null) {
       throw new Error("This browser cannot encode VP8 or H.264 video.");
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: VIDEO_WIDTH }, height: { ideal: VIDEO_HEIGHT }, frameRate: { ideal: VIDEO_FPS } },
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: CAMERA_CONSTRAINTS });
     const video = document.createElement("video");
     video.muted = true;
     video.playsInline = true;

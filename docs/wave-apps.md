@@ -123,6 +123,34 @@ is decoded and shown, one picture per channel, next to the person's own.
 Video goes between peers on reliable streams: key frames are too large for
 datagrams.
 
+### Over WebRTC
+
+The above is the fallback. Where the node has `[webrtc]` on and the
+browser has `RTCPeerConnection`, a box with `media` or `camera` also opens
+a WebRTC connection to its own node (signalled with `AppRtcRequest` on
+the socket; the node is ICE-lite, on one UDP port for every session). The
+microphone and camera then go out as tracks (the browser encodes them and
+adapts to the network), and what the app sends back comes in on 8 audio
+and 8 video receiving tracks, the slots: the node gives each app channel
+a slot and says which in `AppUpdate`s with status `slots`. Sound plays in
+`<audio>` elements, so the browser's echo cancellation covers it. The app
+sees the same frames either way. If the connection is not up within 5
+seconds, or breaks, media stays on (or goes back to) the socket; the
+box's `data-media-path` says which (`rtc`, `connecting`, `socket`). The
+localStorage key `resonator.app-media` set to `socket` keeps a browser
+off WebRTC.
+
+```toml
+[webrtc]
+enabled = true
+listen = "0.0.0.0:7779"            # one UDP port
+advertise = "203.0.113.5:7779"     # where browsers reach it
+```
+
+Or `RESONATOR_WEBRTC_ENABLED`, `RESONATOR_WEBRTC_LISTEN` and
+`RESONATOR_WEBRTC_ADVERTISE`. Off by default. The UDP port must be open
+to browsers; there is no TURN, so where UDP is blocked the socket is used.
+
 `getUserMedia` needs a secure page: `localhost`, HTTPS (on a tailnet,
 `tailscale serve` gives a node a real certificate), or the iOS and Android
 apps (which ask the system once).

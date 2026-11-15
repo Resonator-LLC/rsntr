@@ -11,6 +11,9 @@ import {
   AppMediaRequest,
   AppOpenRequest,
   AppPair,
+  AppRtcRequest,
+  AppRtcResponse,
+  AppRtcSlot,
   AppUiNode,
   AppUpdate,
 } from "./app";
@@ -91,6 +94,9 @@ export const ALL_CODECS: readonly MessageCodec<unknown>[] = [
   AppEventRequest,
   AppEventResponse,
   AppMediaRequest,
+  AppRtcSlot,
+  AppRtcRequest,
+  AppRtcResponse,
   // attachment.proto
   AttachmentsResponse,
   AttachmentMetadata,

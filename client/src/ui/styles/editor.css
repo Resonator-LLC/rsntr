@@ -482,5 +482,6 @@ html.lightbox-shown body {
   background: #000;
 }
 .app-video-self { transform: scaleX(-1); }
-.app-video-self[hidden] { display: none; }
+.app-video-self[hidden],
+.app-video-tile[hidden] { display: none; }
 .app-video[hidden] { display: none; }

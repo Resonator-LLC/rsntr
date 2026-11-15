@@ -52,6 +52,17 @@ export const AppUiNode: MessageCodec<AppUiNode> = defineMessage("AppUiNode", [
 
 export type AppStatus = "needs-grant" | "loading" | "running" | "failed" | "stopped";
 
+/** A receiving track of the viewer's WebRTC connection, and the app channel it carries. */
+export interface AppRtcSlot {
+  readonly mid: string;
+  readonly channel: number;
+}
+
+export const AppRtcSlot: MessageCodec<AppRtcSlot> = defineMessage("AppRtcSlot", [
+  field(1, "mid", "required", "string"),
+  field(2, "channel", "required", "int32"),
+]);
+
 export interface AppUpdate {
   readonly status: string;
   readonly reason?: string;
@@ -64,6 +75,8 @@ export interface AppUpdate {
   readonly media: readonly string[];
   /** With status `media`: video for the screen (base64; a channel byte, a flags byte, then a frame). */
   readonly video: readonly string[];
+  /** With status `slots`: which receiving track carries which channel, all of them. */
+  readonly slots: readonly AppRtcSlot[];
 }
 
 export const AppUpdate: MessageCodec<AppUpdate> = defineMessage("AppUpdate", [
@@ -75,6 +88,32 @@ export const AppUpdate: MessageCodec<AppUpdate> = defineMessage("AppUpdate", [
   field(6, "nodes", "repeated", AppUiNode),
   field(7, "media", "repeated", "string"),
   field(8, "video", "repeated", "string"),
+  field(9, "slots", "repeated", AppRtcSlot),
+]);
+
+/** The viewer's WebRTC offer for an app open on this connection. */
+export interface AppRtcRequest {
+  readonly waveId: string;
+  readonly gadgetId: string;
+  /** The SDP offer. */
+  readonly offer: string;
+}
+
+export const AppRtcRequest: MessageCodec<AppRtcRequest> = defineMessage("AppRtcRequest", [
+  field(1, "waveId", "required", "string"),
+  field(2, "gadgetId", "required", "string"),
+  field(3, "offer", "required", "string"),
+]);
+
+export interface AppRtcResponse {
+  /** The SDP answer, unless refused. */
+  readonly answer?: string;
+  readonly errorMessage?: string;
+}
+
+export const AppRtcResponse: MessageCodec<AppRtcResponse> = defineMessage("AppRtcResponse", [
+  field(1, "answer", "optional", "string"),
+  field(2, "errorMessage", "optional", "string"),
 ]);
 
 /**

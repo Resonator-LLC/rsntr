@@ -17,7 +17,15 @@ import type { OpenWave } from "../../client";
 import { InvalidIdError, ModernIdSerialiser, WaveRef, type WaveletId } from "../../model/id";
 import type { StreamHandle, StreamHandlers } from "../../net";
 import type { AttachmentService } from "../../net/http";
-import type { AppEventRequest, AppEventResponse, AppMediaRequest, AppOpenRequest, AppUpdate } from "../../wire";
+import type {
+  AppEventRequest,
+  AppEventResponse,
+  AppMediaRequest,
+  AppOpenRequest,
+  AppRtcRequest,
+  AppRtcResponse,
+  AppUpdate,
+} from "../../wire";
 import { noteAllowed, type WaveAppsUi } from "../waveapps/AppView";
 import type { Route } from "../contracts";
 import type { ProfileStore } from "../profiles/profileStore";
@@ -59,6 +67,7 @@ export interface WaveViewProps {
     open(request: AppOpenRequest, handlers: StreamHandlers<AppUpdate>): StreamHandle;
     event(request: AppEventRequest): Promise<AppEventResponse>;
     media(request: AppMediaRequest): Promise<AppEventResponse>;
+    rtc(request: AppRtcRequest): Promise<AppRtcResponse>;
   } | null;
   /** The seed of the session's id generator, for attachment ids. */
   readonly idSeed: string | null;
@@ -89,6 +98,7 @@ function waveAppsUi(
     open: (request, handlers) => socket.open(request, handlers),
     event: (request) => socket.event(request),
     media: (request) => socket.media(request),
+    rtc: (request) => socket.rtc(request),
     allow: (gadgetId, appId) => {
       noteAllowed(gadgetId);
       wave.writeSupplement((s) => s.setGadgetState(gadgetId, APP_GRANT_KEY, appId));

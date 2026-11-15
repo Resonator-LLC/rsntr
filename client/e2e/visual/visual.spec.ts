@@ -61,9 +61,9 @@ test.afterAll(async () => {
 /** Times change from run to run: they are covered, and get one width
  *  (a later hour is wider), so the text beside them does not move. */
 const shot = (page: Page) => ({
-  mask: [page.locator("time"), page.locator(".digest-date, .blip-time")],
+  mask: [page.locator("time"), page.locator(".digest-time, .blip-time")],
   style:
-    ".digest-date, .blip-time { display: inline-block; flex: none; width: 4.5em; min-width: 4.5em; max-width: 4.5em; overflow: hidden; white-space: nowrap; }",
+    ".digest-time, .blip-time { display: inline-block; flex: none; width: 4.5em; min-width: 4.5em; max-width: 4.5em; overflow: hidden; white-space: nowrap; }",
 });
 
 async function noSidewaysScroll(page: Page, where: string): Promise<void> {

@@ -38,7 +38,7 @@ class MainActivity : Activity() {
     private var loadedUrl: String? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     /** A page's request for the microphone, waiting for the system's answer. */
-    private var micRequest: PermissionRequest? = null
+    private var mediaRequest: PermissionRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -171,14 +171,10 @@ class MainActivity : Activity() {
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, results: IntArray) {
-        if (requestCode == RECORD_AUDIO) {
-            val request = micRequest ?: return
-            micRequest = null
-            if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
-            } else {
-                request.deny()
-            }
+        if (requestCode == MEDIA_CAPTURE) {
+            val request = mediaRequest ?: return
+            mediaRequest = null
+            grantAllowed(request)
             return
         }
         super.onRequestPermissionsResult(requestCode, permissions, results)
@@ -223,22 +219,37 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Grants what Android allows of the page's media request, or denies it. */
+    private fun grantAllowed(request: PermissionRequest) {
+        val allowed = request.resources.filter { resource ->
+            MEDIA_PERMISSIONS[resource]?.let { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED } ?: false
+        }
+        if (allowed.isEmpty()) {
+            request.deny()
+        } else {
+            request.grant(allowed.toTypedArray())
+        }
+    }
+
     private inner class Chrome : WebChromeClient() {
-        // The node's pages may use the microphone (a wave app's Mic
-        // button), once Android allows it; nothing else may.
+        // The node's pages may use the microphone and camera (a wave
+        // app's Mic and camera buttons), once Android allows them; nothing
+        // else may.
         override fun onPermissionRequest(request: PermissionRequest) {
-            val audio = PermissionRequest.RESOURCE_AUDIO_CAPTURE
-            if (!request.resources.contains(audio) || !host.isNodeUrl(request.origin.toString())) {
+            val wanted = request.resources.filter { it in MEDIA_PERMISSIONS }
+            if (wanted.isEmpty() || !host.isNodeUrl(request.origin.toString())) {
                 request.deny()
                 return
             }
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                request.grant(arrayOf(audio))
+            val missing = wanted.map { MEDIA_PERMISSIONS.getValue(it) }
+                .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (missing.isEmpty()) {
+                grantAllowed(request)
                 return
             }
-            micRequest?.deny()
-            micRequest = request
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), RECORD_AUDIO)
+            mediaRequest?.deny()
+            mediaRequest = request
+            requestPermissions(missing.toTypedArray(), MEDIA_CAPTURE)
         }
 
         override fun onShowFileChooser(
@@ -262,6 +273,12 @@ class MainActivity : Activity() {
     companion object {
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val PICK_FILES = 1
-        private const val RECORD_AUDIO = 2
+        private const val MEDIA_CAPTURE = 2
+
+        /** The page's media resources and the Android permission each needs. */
+        private val MEDIA_PERMISSIONS = mapOf(
+            PermissionRequest.RESOURCE_AUDIO_CAPTURE to Manifest.permission.RECORD_AUDIO,
+            PermissionRequest.RESOURCE_VIDEO_CAPTURE to Manifest.permission.CAMERA,
+        )
     }
 }

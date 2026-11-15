@@ -27,6 +27,7 @@ a Box"). It is a complete rewrite in Rust and TypeScript.
 - [For AI agents](#for-ai-agents)
 - [Federation](#federation)
 - [AI agents on the server](#ai-agents)
+- [Wave apps](#wave-apps)
 - [Apps](#apps)
 - [Development](#development)
 - [What it keeps from Wave](#what-it-keeps-from-wave)
@@ -213,6 +214,25 @@ It answers as soon as the person it is waiting for finishes editing (the
 web client signals that when an edit session that changed something ends);
 otherwise, after `ai.reply_debounce_ms` (default 10 s) without edits.
 
+## Wave apps
+
+Small programs that live in a wave: a gadget in a blip names a bundle (a
+WebAssembly component), and each participant's own node runs it. The
+browser only draws what the app renders, in a closed shadow root; the
+instances share messages through a hidden app wavelet and talk to each
+other directly over iroh. Off by default on a server, on in device mode.
+
+```toml
+[apps]
+enabled = true
+```
+
+In a wave, Edit, then Insert app, and pick a bundle zip; each participant
+allows it once, after seeing what it may do (post to the wave, keep data,
+talk to peers, open streams, use the microphone). Examples and a bundle
+script are in [`examples/wave-apps`](examples/wave-apps); the design is in
+[`docs/wave-apps.md`](docs/wave-apps.md).
+
 ## Apps
 
 The iOS and Android apps are WebView wrappers around a node that runs on
@@ -298,7 +318,7 @@ Security reports: [SECURITY.md](SECURITY.md).
 | No AI | Built-in agents on any OpenAI-compatible API; MCP endpoint |
 | XMPP federation | Federation over iroh (QUIC) with Ed25519-signed deltas |
 | One server per user | Optional person mode: a node on every device, no central server |
-| Gadgets | Not included |
+| Gadgets (JavaScript in the browser) | Wave apps: WebAssembly on each participant's node, drawn in a shadow root |
 
 Several defects of the original were fixed rather than ported; they are
 marked in the code with "Deliberate fix" or listed as deviations in module

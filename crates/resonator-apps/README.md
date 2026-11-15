@@ -52,6 +52,9 @@ the zip.
 { "name": "walkie", "version": "1.0", "permissions": ["peers", "streams", "media"], "memory_mb": 32 }
 ```
 
+Apps are written with `crates/resonator-app-sdk` (Rust) or
+componentize-js; see `examples/wave-apps/` and `docs/wave-apps.md`.
+
 ## Test guests
 
 `tests/guests/counter-rs` (Rust, wit-bindgen) and `tests/guests/counter-js`

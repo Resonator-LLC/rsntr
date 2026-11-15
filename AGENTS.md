@@ -21,13 +21,16 @@ Ported from Apache Wave; see NOTICE.
 | `crates/resonator-federation` | Server keys, trust, signed deltas, iroh endpoint, host/replica, person mode, leases. |
 | `crates/resonator-node` | A node in device mode, for embedding. |
 | `crates/resonator-ffi` | UniFFI interface (Swift, Kotlin) over the node; generated bindings in `bindings/`. |
+| `crates/resonator-apps` | The wave app runtime: wasmtime, the WIT world `wit/app.wit`, limits, bundles. Test guests and their builds in `tests/`. |
+| `crates/resonator-app-sdk` | Helpers for wave apps in Rust (guest side, `wasm32-wasip2`). |
 | `crates/resonator-push` | The push relay binary (APNs, FCM). |
 | `crates/resonator` | The `resonator` CLI and server binary. |
 | `crates/rsntr` | `rsntr`, the terminal client: sign-in, then the server's MCP tools. Depends on no workspace crate (builds on Windows). |
 | `client/` | Web client: Preact + signals, Vite, Vitest, Playwright. |
 | `apps/ios`, `apps/android`, `apps/desktop` | WebView wrappers around the embedded node. `apps/desktop` (Tauri) is its own Cargo workspace: build and test it inside that directory. `apps/macos` is a development window on a local server. |
+| `examples/wave-apps/` | Example wave apps (Rust and JavaScript), each its own build; `bundle.sh` packs one. |
 | `deploy/` | Provisioning and deploy scripts of the official servers. |
-| `docs/` | Design documents (federation, devices, push). |
+| `docs/` | Design documents (federation, devices, push, wave apps). |
 
 ## Build and test
 
@@ -93,7 +96,7 @@ cd client && npx playwright install chromium webkit && \
 ## Docs worth reading first
 
 - `README.md`: configuration, federation, agents.
-- `docs/federation-plan.md`, `docs/device-plan.md`, `docs/push-relay.md`.
+- `docs/federation-plan.md`, `docs/device-plan.md`, `docs/push-relay.md`, `docs/wave-apps.md`.
 - `crates/resonator-ffi/README.md`: the app interface and lifecycle.
 - `crates/resonator-federation/HANDOFF.md`, `crates/resonator-agents/HANDOFF.md`:
   state of those crates.

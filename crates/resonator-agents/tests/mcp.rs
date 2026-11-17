@@ -243,6 +243,9 @@ async fn search_read_reply_and_edit_with_a_bearer_token() {
             text.contains(&wave)
         })
         .await;
+    // The digest has the title, so the inbox does not say "(untitled)".
+    let (_, text) = mcp.tool("search_waves", json!({"query": "tomatoes"})).await;
+    assert!(text.contains(r#""title": "Garden plans""#), "{text}");
     let (_, text) = mcp.tool("read_wave", json!({"wave_id": wave})).await;
     assert!(text.contains("Title: Garden plans"), "{text}");
     assert!(

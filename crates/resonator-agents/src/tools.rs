@@ -289,7 +289,19 @@ pub async fn create_wave(
                "blipId": "TBD_blip",
                "modifyAction": {"modifyHow": "INSERT_AFTER", "values": [content]}}),
     )?;
-    let responses = runner.run(vec![create, write]).await;
+    // The title is the first line, but the digest (and so search and the
+    // inbox) reads it from the title annotation, which writing text does
+    // not set.
+    let mut ops = vec![create, write];
+    if !title.trim().is_empty() {
+        ops.push(op(
+            "title",
+            "wavelet.setTitle",
+            json!({"waveId": format!("{domain}/TBD_wave"), "waveletId": format!("{domain}/conv+root"),
+                   "waveletTitle": title.trim()}),
+        )?);
+    }
+    let responses = runner.run(ops).await;
     for response in &responses {
         if let Some(message) = response.error_message() {
             return Err(friendly(message));

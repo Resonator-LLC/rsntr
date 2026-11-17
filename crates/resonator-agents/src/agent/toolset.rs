@@ -73,7 +73,7 @@ pub fn specs(tools: AgentTools) -> Vec<ToolSpec> {
         out.extend([
             spec(
                 "search_waves",
-                "Search the waves you are a participant of. Query words, or in:inbox, with:address, creator:address.",
+                "Search the waves you are a participant of. Query words, or in:inbox, with:address, creator:address, title:word, label:N, after:YYYY-MM-DD, before:YYYY-MM-DD; -term excludes, OR between groups.",
                 json!({"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
             ),
             spec(

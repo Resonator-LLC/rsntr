@@ -52,6 +52,14 @@
   --c-inline-thread: #f3f6fb; /* background of an expanded inline reply */
   --c-code-bg: #f1f3f6;
 
+  /* Ensemble colours: dots and edges, 3:1 on the surfaces. */
+  --c-ens-1: #2563c9;
+  --c-ens-2: #b45309;
+  --c-ens-3: #15803d;
+  --c-ens-4: #be185d;
+  --c-ens-5: #7c3aed;
+  --c-ens-6: #0f766e;
+
   /* Chrome bar at the very top */
   --c-topbar: #1f4f9e;
   --c-topbar-text: #ffffff;
@@ -139,6 +147,13 @@
   --c-selection: #2c4f85;
   --c-inline-thread: #1c222d;
   --c-code-bg: #232a36;
+
+  --c-ens-1: #6ea2f0;
+  --c-ens-2: #f0a43a;
+  --c-ens-3: #4cb85d;
+  --c-ens-4: #f06aa8;
+  --c-ens-5: #a98bf5;
+  --c-ens-6: #2ec4b0;
 
   --c-topbar: #162a4d;
   --c-topbar-text: #f2f5fa;

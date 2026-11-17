@@ -6,13 +6,18 @@
 // Freshness: the store's 15 s poll (the original's), plus a long poll of
 // `/search/changes` that refreshes soon after the server's search index
 // changed; if that endpoint fails, the poll alone remains.
+//
+// Ensembles (not in the original, see `ensembles.ts`): a row of coloured
+// pills under Inbox / Archive / Muted. A pill shows its ensemble's waves in
+// the chosen box; a wave dragged onto a pill (or added from its menu, on a
+// touch screen) gets the ensemble's label.
 
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import type { OpenWave, WaveClient } from "../../client";
 import type { Digest } from "../../wire/search";
 import { ArchiveIcon, InboxIcon, MuteIcon, PlusIcon, SearchIcon } from "../app/icons";
-import { CheckAllIcon } from "../wave/icons";
+import { CheckAllIcon, CloseIcon, EditIcon } from "../wave/icons";
 import type { SearchPanelProps } from "../contracts";
 import { Avatar } from "../profiles/Avatar";
 import type { ProfileStore } from "../profiles/profileStore";
@@ -20,13 +25,25 @@ import { MoreIcon } from "../wave/icons";
 import { Popup } from "../wave/Popup";
 import { formatFullDateTime, formatPastDate } from "./dates";
 import { OpenWaveDigests } from "./liveDigest";
+import {
+  type Box,
+  COLOURS,
+  type Ensemble,
+  EnsembleStore,
+  ensembleQuery,
+  isSqlQuery,
+  nextLabel,
+} from "./ensembles";
 import { DEFAULT_SEARCH, SearchStore, hasMore, resultRange } from "./searchStore";
 
-const FOLDERS: readonly (readonly [string, string])[] = [
-  ["Inbox", "in:inbox"],
-  ["Archive", "in:archive"],
-  ["Muted", "in:mute"],
+const FOLDERS: readonly (readonly [string, string, Box])[] = [
+  ["Inbox", "in:inbox", "inbox"],
+  ["Archive", "in:archive", "archive"],
+  ["Muted", "in:mute", "mute"],
 ];
+
+/** The type of a wave being dragged from the list onto an ensemble. */
+const WAVE_DRAG_TYPE = "application/x-resonator-wave";
 
 /** Long-polls the search change signal; calls `changed` after each change. */
 function watchChanges(changed: () => void): () => void {
@@ -103,6 +120,8 @@ function DigestItem({
   onAction,
   onMenu,
   menuOpen,
+  ensembles,
+  onUnlabel,
 }: {
   digest: Digest;
   profiles: ProfileStore;
@@ -112,7 +131,13 @@ function DigestItem({
   onAction: (waveId: string, action: WaveAction) => void;
   onMenu: (waveId: string, anchor: HTMLElement) => void;
   menuOpen: boolean;
+  ensembles: ReadonlyMap<number, Ensemble>;
+  onUnlabel: (waveId: string, ensemble: Ensemble) => void;
 }) {
+  const labels = (digest.labels ?? []).flatMap((id) => {
+    const ensemble = ensembles.get(id);
+    return ensemble === undefined ? [] : [ensemble];
+  });
   const unread = digest.unreadCount;
   const people = [digest.author, ...digest.participants].filter((p) => p !== "").slice(0, 4);
   const time = Number(digest.lastModified);
@@ -170,6 +195,14 @@ function DigestItem({
         class="digest-link"
         href={href}
         aria-current={selected ? "true" : undefined}
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer?.setData(WAVE_DRAG_TYPE, digest.waveId);
+          event.dataTransfer?.setData("text/plain", digest.waveId);
+          if (event.dataTransfer !== null) {
+            event.dataTransfer.effectAllowed = "link";
+          }
+        }}
         onClick={(event) => {
           if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
             event.preventDefault();
@@ -203,6 +236,25 @@ function DigestItem({
           )}
         </span>
       </a>
+      {labels.length > 0 ? (
+        <span class="digest-labels">
+          {labels.map((ensemble) => (
+            <span key={ensemble.id} class={`ens-chip ens-c${ensemble.colour}`}>
+              <span class="ens-dot" aria-hidden="true" />
+              {ensemble.name}
+              <button
+                type="button"
+                class="ens-chip-x"
+                aria-label={`Take “${title}” out of ${ensemble.name}`}
+                title={`Take out of ${ensemble.name}`}
+                onClick={() => onUnlabel(digest.waveId, ensemble)}
+              >
+                <CloseIcon />
+              </button>
+            </span>
+          ))}
+        </span>
+      ) : null}
       <button
         type="button"
         class="icon-btn digest-more"
@@ -238,7 +290,13 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
     () => new SearchStore({ search: (q, i, n) => client.search(q, i, n), live }),
     [client, live],
   );
+  const ensembleStore = useMemo(() => new EnsembleStore(client), [client]);
   const [draft, setDraft] = useState(store.query.peek());
+  /** The box shown with an ensemble. */
+  const [box, setBox] = useState<Box>("inbox");
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<Ensemble | null>(null);
+  const [dropId, setDropId] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ waveId: string; anchor: HTMLElement } | null>(null);
   const [toast, setToast] = useState<{ text: string; undo: (() => void) | null } | null>(null);
@@ -269,6 +327,13 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
     };
   }, [store, live, client]);
 
+  useEffect(() => {
+    ensembleStore.start().catch((error: unknown) => {
+      console.error("search: cannot load the ensembles", error);
+    });
+    return () => ensembleStore.dispose();
+  }, [ensembleStore]);
+
   const firstToken = useRef(refreshToken);
   useEffect(() => {
     if (refreshToken !== firstToken.current) {
@@ -277,7 +342,18 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
   }, [refreshToken, store]);
 
   const query = store.query.value;
-  const folder = folderOf(query);
+  const ensembles = ensembleStore.list.value;
+  const byId = useMemo(() => new Map(ensembles.map((e) => [e.id, e])), [ensembles]);
+  const active = activeId === null ? null : (byId.get(activeId) ?? null);
+  const folder = active !== null ? `in:${box}` : folderOf(query);
+  // The active ensemble's query follows its edits, also from another device.
+  const activeQuery = active === null ? null : ensembleQuery(active, box);
+  useEffect(() => {
+    if (activeQuery !== null && store.query.peek() !== activeQuery) {
+      setDraft(activeQuery);
+      store.setQuery(activeQuery);
+    }
+  }, [activeQuery, store]);
   const result = store.result.value;
   const status = store.status.value;
   const digests = store.digests.value;
@@ -285,12 +361,27 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
   const submit = (event: Event): void => {
     event.preventDefault();
     const q = draft.trim() === "" ? DEFAULT_SEARCH : draft.trim();
+    setActiveId(null);
     setDraft(q);
     store.setQuery(q);
   };
-  const goFolder = (q: string): void => {
+  const showQuery = (q: string): void => {
     setDraft(q);
     store.setQuery(q);
+  };
+  const goFolder = (q: string, to: Box): void => {
+    setBox(to);
+    if (active === null) {
+      showQuery(q);
+    }
+  };
+  const goEnsemble = (ensemble: Ensemble): void => {
+    if (activeId === ensemble.id) {
+      setActiveId(null);
+      showQuery(`in:${box}`);
+      return;
+    }
+    setActiveId(ensemble.id);
   };
   const showToast = (text: string, undo: (() => void) | null): void => {
     if (toastTimer.current !== null) {
@@ -331,6 +422,65 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
     } finally {
       setBusy(null);
       store.refreshSoon();
+    }
+  };
+
+  /** Puts an ensemble's label on a wave, or takes it off. */
+  const label = async (waveId: string, ensemble: Ensemble, on: boolean, undoable = true): Promise<void> => {
+    setBusy(waveId);
+    try {
+      await withWave(client, waveId, (wave) => {
+        wave.writeSupplement((s) => {
+          if (on) {
+            s.primitive.addFolder(ensemble.id);
+          } else {
+            s.primitive.removeFolder(ensemble.id);
+          }
+        });
+      });
+      showToast(
+        on ? `Added to ${ensemble.name}` : `Taken out of ${ensemble.name}`,
+        undoable
+          ? () => {
+              setToast(null);
+              void label(waveId, ensemble, !on, false);
+            }
+          : null,
+      );
+    } catch (error) {
+      console.error("search: the label change failed", error);
+      showToast("That did not work. Try again.", null);
+    } finally {
+      setBusy(null);
+      store.refreshSoon();
+    }
+  };
+  const countSearch = useCallback((q: string, n: number) => client.search(q, 0, n), [client]);
+  const saveEnsemble = (ensemble: Ensemble): void => {
+    try {
+      ensembleStore.save(ensemble);
+      setEditing(null);
+      setActiveId(ensemble.id);
+    } catch (error) {
+      console.error("search: cannot save the ensemble", error);
+      showToast("The ensemble was not saved. Try again.", null);
+    }
+  };
+  const deleteEnsemble = (ensemble: Ensemble): void => {
+    try {
+      ensembleStore.remove(ensemble.id);
+      setEditing(null);
+      showToast(`Deleted ${ensemble.name}`, () => {
+        setToast(null);
+        saveEnsemble(ensemble);
+      });
+      if (activeId === ensemble.id) {
+        setActiveId(null);
+        showQuery(`in:${box}`);
+      }
+    } catch (error) {
+      console.error("search: cannot delete the ensemble", error);
+      showToast("The ensemble was not deleted. Try again.", null);
     }
   };
 
@@ -378,13 +528,13 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
         </button>
       </div>
       <nav class="search-folders" aria-label="Folders">
-        {FOLDERS.map(([name, value]) => (
+        {FOLDERS.map(([name, value, to]) => (
           <button
             type="button"
             key={value}
             class="search-folder"
-            aria-pressed={query.trim() === value}
-            onClick={() => goFolder(value)}
+            aria-pressed={active !== null ? box === to : query.trim() === value}
+            onClick={() => goFolder(value, to)}
           >
             {name}
           </button>
@@ -393,6 +543,76 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
           {resultRange(result, status)}
         </span>
       </nav>
+      <nav class="ens-row" aria-label="Ensembles">
+        {ensembles.map((ensemble) => (
+          <button
+            type="button"
+            key={ensemble.id}
+            class={`ens-pill ens-c${ensemble.colour} ${dropId === ensemble.id ? "is-drop" : ""}`}
+            aria-pressed={activeId === ensemble.id}
+            title={ensemble.query === "" ? ensemble.name : `${ensemble.name}: ${ensemble.query}`}
+            onClick={() => goEnsemble(ensemble)}
+            onDragOver={(event) => {
+              if (event.dataTransfer?.types.includes(WAVE_DRAG_TYPE)) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "link";
+                setDropId(ensemble.id);
+              }
+            }}
+            onDragLeave={() => setDropId((id) => (id === ensemble.id ? null : id))}
+            onDrop={(event) => {
+              setDropId(null);
+              const waveId = event.dataTransfer?.getData(WAVE_DRAG_TYPE) ?? "";
+              if (waveId !== "") {
+                event.preventDefault();
+                void label(waveId, ensemble, true);
+              }
+            }}
+          >
+            <span class="ens-dot" aria-hidden="true" />
+            {ensemble.name}
+          </button>
+        ))}
+        {active !== null ? (
+          <button
+            type="button"
+            class="icon-btn ens-edit"
+            aria-label={`Edit ${active.name}`}
+            title={`Edit ${active.name}`}
+            onClick={() => setEditing(active)}
+          >
+            <EditIcon />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          class="ens-pill ens-new"
+          disabled={!ensembleStore.ready.value}
+          onClick={() =>
+            setEditing({
+              id: nextLabel(ensembles),
+              name: "",
+              colour: (ensembles.length % COLOURS) + 1,
+              query: active === null && folderOf(query) === null ? query : "",
+            })
+          }
+        >
+          <PlusIcon />
+          Ensemble
+        </button>
+      </nav>
+      {editing !== null ? (
+        <EnsembleEditor
+          key={editing.id}
+          ensemble={editing}
+          isNew={!byId.has(editing.id)}
+          box={box}
+          search={countSearch}
+          onSave={saveEnsemble}
+          onDelete={deleteEnsemble}
+          onCancel={() => setEditing(null)}
+        />
+      ) : null}
       {store.failed.value ? (
         <div class="notice notice-error search-failed" role="alert">
           <span>The search failed.</span>
@@ -418,6 +638,12 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
             }}
             menuOpen={menu?.waveId === digest.waveId}
             onMenu={(waveId, anchor) => setMenu(menu?.waveId === waveId ? null : { waveId, anchor })}
+            ensembles={byId}
+            onUnlabel={(waveId, ensemble) => {
+              if (busy === null) {
+                void label(waveId, ensemble, false);
+              }
+            }}
           />
         ))}
       </ul>
@@ -440,6 +666,15 @@ export function SearchPanel({ client, profiles, selectedWaveId, onSelect, onNewW
         digest={digests.find((d) => d.waveId === menu.waveId) ?? null}
         anchor={menu.anchor}
         folder={folder}
+        ensembles={ensembles}
+        onLabel={(ensemble, on) => {
+          const waveId = menu.waveId;
+          setMenu(null);
+          menu.anchor.focus();
+          if (busy === null) {
+            void label(waveId, ensemble, on);
+          }
+        }}
         onClose={() => setMenu(null)}
         onAction={(action) => {
           const waveId = menu.waveId;
@@ -471,12 +706,16 @@ function DigestMenu({
   digest,
   anchor,
   folder,
+  ensembles,
+  onLabel,
   onClose,
   onAction,
 }: {
   digest: Digest | null;
   anchor: HTMLElement;
   folder: string | null;
+  ensembles: readonly Ensemble[];
+  onLabel: (ensemble: Ensemble, on: boolean) => void;
   onClose: () => void;
   onAction: (action: WaveAction) => void;
 }) {
@@ -508,6 +747,153 @@ function DigestMenu({
           Mark as read
         </button>
       ) : null}
+      {ensembles.map((ensemble) => {
+        const on = (digest.labels ?? []).includes(ensemble.id);
+        return (
+          <button
+            type="button"
+            key={ensemble.id}
+            class={`menu-item ens-c${ensemble.colour}`}
+            role="menuitemcheckbox"
+            aria-checked={on}
+            data-action="ensemble"
+            onClick={() => onLabel(ensemble, !on)}
+          >
+            <span class="ens-dot" aria-hidden="true" />
+            {on ? `In ${ensemble.name}` : `Add to ${ensemble.name}`}
+          </button>
+        );
+      })}
     </Popup>
+  );
+}
+
+/** How many results the editor asks for to count a query's waves. */
+const COUNT_LIMIT = 100;
+
+/** Creates or changes an ensemble: name, colour, query with a live count. */
+function EnsembleEditor({
+  ensemble,
+  isNew,
+  box,
+  search,
+  onSave,
+  onDelete,
+  onCancel,
+}: {
+  ensemble: Ensemble;
+  isNew: boolean;
+  box: Box;
+  search: (query: string, numResults: number) => Promise<{ totalResults: number; digests: readonly Digest[]; error?: string }>;
+  onSave: (ensemble: Ensemble) => void;
+  onDelete: (ensemble: Ensemble) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(ensemble.name);
+  const [colour, setColour] = useState(ensemble.colour);
+  const [query, setQuery] = useState(ensemble.query);
+  const [check, setCheck] = useState<{ text: string; error: boolean } | null>(null);
+  // The live count: the ensemble's waves in the box, a moment after typing.
+  useEffect(() => {
+    let current = true;
+    const timer = setTimeout(() => {
+      const q = ensembleQuery({ ...ensemble, query }, box);
+      search(q, COUNT_LIMIT).then(
+        (answer) => {
+          if (!current) {
+            return;
+          }
+          if (answer.error !== undefined) {
+            setCheck({ text: answer.error, error: true });
+            return;
+          }
+          const n = answer.totalResults < 0 ? `${COUNT_LIMIT}+` : String(answer.digests.length);
+          setCheck({ text: `${n} ${n === "1" ? "wave" : "waves"} in ${box === "mute" ? "muted" : box}`, error: false });
+        },
+        () => current && setCheck({ text: "Cannot check the query now.", error: true }),
+      );
+    }, 400);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [query, box, ensemble, search]);
+  const trimmed = name.trim();
+  return (
+    <form
+      class="ens-editor"
+      aria-label={isNew ? "New ensemble" : `Edit ${ensemble.name}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (trimmed !== "") {
+          onSave({ id: ensemble.id, name: trimmed, colour, query: query.trim() });
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          onCancel();
+        }
+      }}
+    >
+      <label class="ens-field">
+        <span>Name</span>
+        <input
+          class="input"
+          value={name}
+          maxLength={60}
+          autoFocus
+          required
+          onInput={(e) => setName(e.currentTarget.value)}
+        />
+      </label>
+      <fieldset class="ens-colours">
+        <legend>Colour</legend>
+        {Array.from({ length: COLOURS }, (_, i) => i + 1).map((c) => (
+          <label key={c} class={`ens-swatch ens-c${c}`}>
+            <input
+              type="radio"
+              name="ens-colour"
+              value={c}
+              checked={colour === c}
+              onChange={() => setColour(c)}
+            />
+            <span class="ens-dot" />
+            <span class="visually-hidden">Colour {c}</span>
+          </label>
+        ))}
+      </fieldset>
+      <label class="ens-field">
+        <span>Query</span>
+        <textarea
+          class={`input ens-query ${isSqlQuery(query) ? "is-sql" : ""}`}
+          rows={isSqlQuery(query) ? 4 : 2}
+          value={query}
+          spellcheck={false}
+          placeholder="relay with:bob@example.com OR title:lease"
+          onInput={(e) => setQuery(e.currentTarget.value)}
+        />
+      </label>
+      <p class="ens-hint">
+        Waves you drag onto the ensemble are always in it. Words, <code>title:</code>, <code>with:</code>,{" "}
+        <code>creator:</code>, <code>after:YYYY-MM-DD</code>, <code>-word</code> and <code>OR</code> work; so does SQL
+        starting with <code>SELECT wave_id</code>.
+      </p>
+      <p class={`ens-check ${check?.error === true ? "is-error" : ""}`} role="status" aria-live="polite">
+        {check?.text ?? ""}
+      </p>
+      <div class="ens-actions">
+        {!isNew ? (
+          <button type="button" class="btn btn-ghost ens-delete" onClick={() => onDelete(ensemble)}>
+            Delete
+          </button>
+        ) : null}
+        <button type="button" class="btn btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" class="btn btn-primary" disabled={trimmed === ""}>
+          {isNew ? "Create" : "Save"}
+        </button>
+      </div>
+    </form>
   );
 }

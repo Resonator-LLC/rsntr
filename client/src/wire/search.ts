@@ -39,6 +39,11 @@ export interface Digest {
   readonly participants: readonly string[];
   /** The first participant. */
   readonly author: string;
+  /**
+   * The searcher's own labels on the wave (ensembles). Not in the original;
+   * the server leaves the field out when there are none.
+   */
+  readonly labels?: readonly number[];
 }
 
 export const Digest: MessageCodec<Digest> = defineMessage("Digest", [
@@ -50,6 +55,7 @@ export const Digest: MessageCodec<Digest> = defineMessage("Digest", [
   field(6, "blipCount", "required", "int32"),
   field(7, "participants", "repeated", "string"),
   field(8, "author", "required", "string"),
+  field(9, "labels", "sparse", "int32"),
 ]);
 
 export interface SearchResponse {

@@ -267,7 +267,16 @@ export type ScalarKind = "string" | "bool" | "int32" | "int52" | "int64" | "byte
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type FieldKind = ScalarKind | MessageCodec<any>;
 
-export type FieldLabel = "required" | "optional" | "repeated";
+/**
+ * `sparse` is a repeated field this protocol adds to a message of the
+ * original: left out when it is empty or unset, so that the original's
+ * messages are written exactly as before, and unset when it is absent.
+ */
+export type FieldLabel = "required" | "optional" | "repeated" | "sparse";
+
+function isRepeated(label: FieldLabel): boolean {
+  return label === "repeated" || label === "sparse";
+}
 
 /** One field of a message. */
 export interface FieldSpec<K extends string = string> {
@@ -444,13 +453,13 @@ export class MessageCodec<T> {
     }
     for (const field of this.fields) {
       const value = record[field.name];
-      if (field.label !== "repeated" && typeof field.kind !== "string" && value != null) {
+      if (!isRepeated(field.label) && typeof field.kind !== "string" && value != null) {
         field.kind.checkInitialized(value);
       }
     }
     for (const field of this.fields) {
       const value = record[field.name];
-      if (field.label === "repeated" && typeof field.kind !== "string" && Array.isArray(value)) {
+      if (isRepeated(field.label) && typeof field.kind !== "string" && Array.isArray(value)) {
         for (const element of value) {
           field.kind.checkInitialized(element);
         }
@@ -468,13 +477,16 @@ export class MessageCodec<T> {
     let first = true;
     for (const field of this.fields) {
       const value = record[field.name];
-      if (field.label !== "repeated" && value == null) {
+      if (field.label === "sparse" && (value == null || (Array.isArray(value) && value.length === 0))) {
+        continue;
+      }
+      if (!isRepeated(field.label) && value == null) {
         continue;
       }
       out += first ? `"${field.number}":` : `,"${field.number}":`;
       first = false;
       try {
-        if (field.label === "repeated") {
+        if (isRepeated(field.label)) {
           if (!Array.isArray(value)) {
             throw invalid("an array");
           }
@@ -508,8 +520,12 @@ export class MessageCodec<T> {
     for (const field of this.fields) {
       const key = String(field.number);
       const value = Object.hasOwn(json, key) ? json[key] : undefined;
+      if (field.label === "sparse" && value == null) {
+        // Left out by the original and when empty: stays unset.
+        continue;
+      }
       try {
-        if (field.label === "repeated") {
+        if (isRepeated(field.label)) {
           const elements: unknown[] = [];
           if (value != null) {
             if (!Array.isArray(value)) {

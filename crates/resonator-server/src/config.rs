@@ -191,6 +191,9 @@ pub struct Config {
     pub search_digest_cache_size: usize,
     /// Most results one search request may ask for.
     pub search_max_results: usize,
+    /// Whether a search starting with `SELECT ` runs as SQL over the
+    /// user's own data (sessions, and tokens with the `sql` scope).
+    pub search_sql_enabled: bool,
     /// Most bytes of attachments one user may have uploaded; 0 for no
     /// limit.
     pub attachment_user_quota: u64,
@@ -393,6 +396,7 @@ impl Default for Config {
             search_index_debounce_ms: 500,
             search_digest_cache_size: 10_000,
             search_max_results: 1000,
+            search_sql_enabled: true,
             attachment_user_quota: 1024 * 1024 * 1024,
             robot_api_enabled: true,
             robot_registration_enabled: true,
@@ -590,6 +594,9 @@ pub struct Overrides {
     /// Most results one search request may ask for.
     #[arg(long, env = "RESONATOR_SEARCH_MAX_RESULTS", value_name = "N")]
     pub search_max_results: Option<usize>,
+    /// Whether searches starting with `SELECT ` run as SQL.
+    #[arg(long, env = "RESONATOR_SEARCH_SQL_ENABLED", value_name = "BOOL")]
+    pub search_sql_enabled: Option<bool>,
     /// Most bytes of attachments one user may have uploaded (0: no limit).
     #[arg(long, env = "RESONATOR_ATTACHMENT_USER_QUOTA", value_name = "BYTES")]
     pub attachment_user_quota: Option<u64>,
@@ -786,6 +793,7 @@ impl Config {
             search_index_debounce_ms,
             search_digest_cache_size,
             search_max_results,
+            search_sql_enabled,
             attachment_user_quota,
             robot_api_enabled,
             robot_registration_enabled,

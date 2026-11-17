@@ -503,6 +503,22 @@ CREATE TABLE app_kv (
 ) WITHOUT ROWID;
 "#,
     },
+    Migration {
+        name: "search labels",
+        sql: r#"
+-- The labels (folder ids of the supplement) in a user-data wavelet: the
+-- ensembles its owner put the wave in. Searched with `label:`.
+CREATE TABLE search_labels (
+    udw   INTEGER NOT NULL REFERENCES search_wavelets(id) ON DELETE CASCADE,
+    label INTEGER NOT NULL,
+    PRIMARY KEY (udw, label)
+) WITHOUT ROWID;
+CREATE INDEX search_labels_label ON search_labels(label);
+
+-- Index every user-data wavelet again, so that its labels are read.
+UPDATE search_wavelets SET version = -1 WHERE kind = 2;
+"#,
+    },
 ];
 
 const INITIAL: Migration = Migration {

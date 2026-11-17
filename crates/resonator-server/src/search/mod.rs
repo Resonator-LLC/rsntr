@@ -45,9 +45,20 @@
 //! * The user's own user-data wavelet is always used for the unread
 //!   counts. The original drops it when a `creator:` or `with:` filter
 //!   does not match it, and then reports every blip as unread.
+//! * The query language has more (see [`query`]): `label:`, `after:`,
+//!   `before:`, `title:`, `-` before a token or word to exclude, and `OR`
+//!   between groups of tokens. A wave matches a query with several groups
+//!   if it matches any group; the groups are searched one by one and the
+//!   results merged. Exclusions look only at wavelets the user may see.
+//! * SQL mode ([`sql`]): over HTTP, for sessions and tokens with the `sql`
+//!   scope, a query starting with `SELECT ` runs as SQL over a private
+//!   copy of the user's own data. Its errors are returned in
+//!   [`SearchResult::error`]. Robots and agents never get it.
+//! * Digests carry the searcher's own labels (supplement folder ids).
 
 pub mod index;
 pub mod query;
+pub mod sql;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -70,7 +81,7 @@ use thiserror::Error;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use self::index::{Folder, IndexQuery, IndexStore, KIND_CONVERSATIONAL, WaveletEntry};
-use self::query::{TokenQueryType, build_validated_participant_ids, compare, parse_query};
+use self::query::{TokenQueryType, build_validated_participant_ids, compare, parse_queries};
 use crate::config::Config;
 use crate::frontend::{DefaultPolicy, WaveletPolicy};
 use crate::storage::{StorageError, WaveletDeltaRecord};
@@ -98,6 +109,10 @@ pub struct SearchResult {
     /// How many waves the index has for the query in all. Not exact while
     /// the index is catching up.
     pub total_results: usize,
+    /// Why the query found nothing, for SQL mode (`no such column: x`).
+    /// Invalid token queries find nothing without an error, as in the
+    /// original.
+    pub error: Option<String>,
 }
 
 /// Failure of a search. An invalid query is not a failure: it finds
@@ -134,6 +149,8 @@ pub struct SearchSettings {
     pub debounce: Duration,
     /// Digests kept in memory.
     pub digest_cache_size: usize,
+    /// Whether SQL mode is available ([`sql`]).
+    pub sql_enabled: bool,
 }
 
 impl Default for SearchSettings {
@@ -148,6 +165,7 @@ impl SearchSettings {
             fulltext_enabled: config.search_fulltext_enabled,
             debounce: Duration::from_millis(config.search_index_debounce_ms.max(1)),
             digest_cache_size: config.search_digest_cache_size,
+            sql_enabled: config.search_sql_enabled,
         }
     }
 }
@@ -248,6 +266,7 @@ struct Inner {
     fts: AtomicU8,
     cache: Mutex<DigestCache>,
     generations: Generations,
+    sql: sql::SqlSearch,
     bus_subscription: Mutex<Option<SubscriptionId>>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
@@ -381,6 +400,7 @@ impl SearchService {
                 users: Mutex::new(HashMap::new()),
                 changed: Notify::new(),
             },
+            sql: sql::SqlSearch::default(),
             bus_subscription: Mutex::new(None),
             tasks: Mutex::new(Vec::new()),
             settings,
@@ -806,112 +826,255 @@ impl SearchProvider for SearchService {
         start_at: usize,
         num_results: usize,
     ) -> Result<SearchResult, SearchError> {
+        self.search_as(user, query, start_at, num_results, false)
+            .await
+    }
+}
+
+/// Whether a query is for SQL mode: it starts with `SELECT `, in any case.
+pub fn is_sql_query(query: &str) -> bool {
+    let query = query.trim_start();
+    query
+        .get(..7)
+        .is_some_and(|start| start.eq_ignore_ascii_case("select "))
+}
+
+impl SearchService {
+    /// Like [`SearchProvider::search`]; with `allow_sql`, a query starting
+    /// with `SELECT ` runs in SQL mode ([`sql`]) over the user's own data.
+    /// Only the HTTP endpoint allows it, for sessions and tokens with the
+    /// `sql` scope; robots and agents searching in process never do.
+    pub async fn search_as(
+        &self,
+        user: &ParticipantId,
+        query: &str,
+        start_at: usize,
+        num_results: usize,
+        allow_sql: bool,
+    ) -> Result<SearchResult, SearchError> {
         let inner = &self.inner;
-        let nothing = || SearchResult {
+        let nothing = |error: Option<String>| SearchResult {
             query: query.to_owned(),
             digests: Vec::new(),
             total_results: 0,
+            error,
         };
-        let parsed = match parse_query(query) {
-            Ok(parsed) => parsed,
+        if allow_sql && is_sql_query(query) {
+            if !inner.settings.sql_enabled {
+                return Ok(nothing(Some(
+                    "SQL search is turned off on this server.".to_owned(),
+                )));
+            }
+            self.wait_until_indexed().await;
+            let generation = self.generation(user);
+            let found = inner
+                .sql
+                .run(
+                    inner.server.database(),
+                    user,
+                    inner.shared.as_ref(),
+                    inner.full_text(),
+                    &generation,
+                    query,
+                )
+                .await;
+            let waves = match found {
+                Ok(waves) => waves,
+                Err(sql::SqlError::Query(message)) => {
+                    tracing::debug!(%user, %message, "SQL search failed");
+                    return Ok(nothing(Some(message)));
+                }
+                Err(sql::SqlError::Storage(error)) => return Err(error.into()),
+            };
+            // Everything the user can see, shared waves included; the
+            // live check below still decides.
+            let criteria = Arc::new(Criteria {
+                user: user.clone(),
+                shared: inner.shared.clone(),
+                is_all: true,
+                with: Vec::new(),
+                creators: Vec::new(),
+            });
+            let shared = inner.shared.as_ref().map(|s| s.address().to_owned());
+            return self
+                .page(query, &criteria, shared, waves, start_at, num_results)
+                .await;
+        }
+
+        let groups = match parse_queries(query) {
+            Ok(groups) => groups,
             Err(error) => {
                 // Invalid query: empty result, as in the original.
                 tracing::debug!(%user, %error, "invalid search query");
-                return Ok(nothing());
+                return Ok(nothing(None));
             }
         };
         let local_domain = user.domain();
-        let participants =
-            |kind| build_validated_participant_ids(parsed.values(kind), local_domain);
-        let (Ok(with), Ok(creators)) = (
-            participants(TokenQueryType::With),
-            participants(TokenQueryType::Creator),
-        ) else {
-            tracing::debug!(%user, query, "invalid participant in search query");
-            return Ok(nothing());
-        };
-        let Some(wave_ids) = parse_wave_ids(parsed.values(TokenQueryType::Id), local_domain) else {
-            tracing::debug!(%user, query, "invalid wave id in search query");
-            return Ok(nothing());
-        };
-        let text = index::fts_query(&parsed.text);
-        if text.is_some() {
-            // Just after start-up the full-text table may not be there yet.
-            let mut waited = Duration::ZERO;
-            while inner.fts.load(Ordering::Relaxed) == FTS_PENDING && waited < INDEX_WAIT {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                waited += Duration::from_millis(10);
+        let address = |id: &ParticipantId| id.address().to_owned();
+        let user_data = build_user_data_wavelet_id(user).ok();
+        let mut index_queries = Vec::with_capacity(groups.len());
+        let mut criteria = None;
+        let mut any_all = false;
+        let mut orderings = Vec::new();
+        for parsed in &groups {
+            let participants = |kind, negated: bool| {
+                let values = if negated {
+                    parsed.negated_values(kind)
+                } else {
+                    parsed.values(kind)
+                };
+                build_validated_participant_ids(values, local_domain)
+            };
+            let (Ok(with), Ok(creators), Ok(not_with), Ok(not_creators)) = (
+                participants(TokenQueryType::With, false),
+                participants(TokenQueryType::Creator, false),
+                participants(TokenQueryType::With, true),
+                participants(TokenQueryType::Creator, true),
+            ) else {
+                tracing::debug!(%user, query, "invalid participant in search query");
+                return Ok(nothing(None));
+            };
+            let (Some(wave_ids), Some(not_wave_ids)) = (
+                parse_wave_ids(parsed.values(TokenQueryType::Id), local_domain),
+                parse_wave_ids(parsed.negated_values(TokenQueryType::Id), local_domain),
+            ) else {
+                tracing::debug!(%user, query, "invalid wave id in search query");
+                return Ok(nothing(None));
+            };
+            let text = index::fts_query_in(&parsed.text, &parsed.title);
+            let not_text = index::fts_any(&parsed.negated_text, &parsed.negated_title);
+            if text.is_some() || not_text.is_some() {
+                // Just after start-up the full-text table may not be there yet.
+                let mut waited = Duration::ZERO;
+                while inner.fts.load(Ordering::Relaxed) == FTS_PENDING && waited < INDEX_WAIT {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    waited += Duration::from_millis(10);
+                }
+                if !inner.full_text() {
+                    return Ok(nothing(None));
+                }
             }
-            if !inner.full_text() {
-                return Ok(nothing());
+            let is_all = !parsed.has(TokenQueryType::In);
+            any_all |= is_all;
+            let folders = |values: &[String]| -> Vec<Folder> {
+                values
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<&str>>()
+                    .into_iter()
+                    .filter_map(|folder| match folder {
+                        "inbox" => Some(Folder::Inbox),
+                        "archive" => Some(Folder::Archive),
+                        "mute" | "muted" => Some(Folder::Mute),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            for order in parsed.orderings() {
+                if !orderings.contains(&order) {
+                    orderings.push(order);
+                }
             }
+            let shared = inner
+                .shared
+                .as_ref()
+                .filter(|_| is_all)
+                .map(|shared| shared.address().to_owned());
+            index_queries.push(IndexQuery {
+                user: address(user),
+                shared,
+                user_data: user_data.clone(),
+                folders: folders(parsed.values(TokenQueryType::In)),
+                with: with.iter().map(address).collect(),
+                creators: creators.iter().map(address).collect(),
+                wave_ids,
+                text,
+                labels: parsed.labels(false),
+                after: parsed.after(),
+                before: parsed.before(),
+                not_folders: folders(parsed.negated_values(TokenQueryType::In)),
+                not_with: not_with.iter().map(address).collect(),
+                not_creators: not_creators.iter().map(address).collect(),
+                not_wave_ids,
+                not_labels: parsed.labels(true),
+                not_text,
+            });
+            // One group keeps the original's live check of `with:` and
+            // `creator:`; for several, the index has applied the filters
+            // and the live look checks access only.
+            criteria = Some(Criteria {
+                user: user.clone(),
+                shared: inner.shared.clone(),
+                is_all,
+                with,
+                creators,
+            });
         }
-        let is_all = !parsed.has(TokenQueryType::In);
-        let folders: BTreeSet<&str> = parsed
-            .values(TokenQueryType::In)
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let folders = folders
-            .into_iter()
-            .filter_map(|folder| match folder {
-                "inbox" => Some(Folder::Inbox),
-                "archive" => Some(Folder::Archive),
-                "mute" | "muted" => Some(Folder::Mute),
-                _ => None,
-            })
-            .collect();
-        let criteria = Arc::new(Criteria {
-            user: user.clone(),
-            shared: inner.shared.clone(),
-            is_all,
-            with,
-            creators,
-        });
+        let criteria = match (groups.len(), criteria) {
+            (1, Some(criteria)) => criteria,
+            _ => Criteria {
+                user: user.clone(),
+                shared: inner.shared.clone(),
+                is_all: any_all,
+                with: Vec::new(),
+                creators: Vec::new(),
+            },
+        };
         let shared = inner
             .shared
             .as_ref()
-            .filter(|_| is_all)
+            .filter(|_| criteria.is_all)
             .map(|shared| shared.address().to_owned());
-        let address = |id: &ParticipantId| id.address().to_owned();
 
         self.wait_until_indexed().await;
-        let mut waves = inner
-            .store
-            .find_waves(IndexQuery {
-                user: address(user),
-                shared: shared.clone(),
-                user_data: build_user_data_wavelet_id(user).ok(),
-                folders,
-                with: criteria.with.iter().map(address).collect(),
-                creators: criteria.creators.iter().map(address).collect(),
-                wave_ids,
-                text,
-            })
-            .await?;
-        let orderings = parsed.orderings();
+        let mut found: HashMap<WaveId, query::SortKeys> = HashMap::new();
+        for index_query in index_queries {
+            for keys in inner.store.find_waves(index_query).await? {
+                found.entry(keys.wave_id.clone()).or_insert(keys);
+            }
+        }
+        let mut waves: Vec<query::SortKeys> = found.into_values().collect();
         waves.sort_by(|a, b| compare(&orderings, a, b));
-        let total_results = waves.len();
+        let waves = waves.into_iter().map(|keys| keys.wave_id).collect();
+        self.page(
+            query,
+            &Arc::new(criteria),
+            shared,
+            waves,
+            start_at,
+            num_results,
+        )
+        .await
+    }
 
-        // Digests for the page asked for. A wave the live check drops
-        // (the index was behind) is made up for from further down.
+    /// The digests of the page of `waves` from `start_at`. A wave the live
+    /// check drops (the index was behind) is made up for from further down.
+    async fn page(
+        &self,
+        query: &str,
+        criteria: &Arc<Criteria>,
+        shared: Option<String>,
+        waves: Vec<WaveId>,
+        start_at: usize,
+        num_results: usize,
+    ) -> Result<SearchResult, SearchError> {
+        let inner = &self.inner;
+        let user = &criteria.user;
+        let total_results = waves.len();
         let mut digests = Vec::new();
         let mut position = start_at;
         while digests.len() < num_results && position < waves.len() {
             let end = waves
                 .len()
                 .min(position.saturating_add(num_results - digests.len()));
-            let page: Vec<WaveId> = waves[position..end]
-                .iter()
-                .map(|keys| keys.wave_id.clone())
-                .collect();
+            let page: Vec<WaveId> = waves[position..end].to_vec();
             let views = inner
                 .store
                 .wavelets_in_view(page.clone(), user, shared.clone())
                 .await?;
             let mut built = futures_util::stream::iter(page.into_iter().zip(views))
                 .map(|(wave_id, wavelets)| {
-                    let (service, criteria) = (self.clone(), Arc::clone(&criteria));
+                    let (service, criteria) = (self.clone(), Arc::clone(criteria));
                     async move { service.digest(&criteria, &wave_id, wavelets).await }
                 })
                 .buffered(DIGEST_CONCURRENCY);
@@ -925,6 +1088,7 @@ impl SearchProvider for SearchService {
             query: query.to_owned(),
             digests,
             total_results,
+            error: None,
         })
     }
 }

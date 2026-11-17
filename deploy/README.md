@@ -48,6 +48,12 @@ ssh root@<ip> systemctl reload caddy       # retry certificates right away
 
 - **Deploy:** `deploy/deploy.sh root@rsntr.net`. It keeps the old binaries
   as `.prev` and rolls back when a health check fails.
+- **SQL search is off** on the official servers, through a systemd
+  drop-in rather than the config file (an older binary, which a rollback
+  installs, would not start with the key in the file):
+  `/etc/systemd/system/resonator@.service.d/search-sql.conf` with
+  `Environment=RESONATOR_SEARCH_SQL_ENABLED=false`. Remove it and
+  restart to turn SQL search on.
 - **Logs:** `journalctl -u resonator@rsntr.net -f`, `-u resonator-push`,
   `-u iroh-relay`, `-u caddy`.
 - **Backups:** daily per domain to `/var/backups/resonator/<domain>`,

@@ -21,7 +21,7 @@ import {
   makeWaveletConversational,
   title as titles,
 } from "../model/conversation";
-import { LINE_TAGNAME, type MutableDocument } from "../model/doc";
+import { type DocView, LINE_TAGNAME, type MutableDocument } from "../model/doc";
 import type { DocInitialization } from "../model/docop";
 import { type IdGeneratorImpl, ParticipantId, type WaveId, type WaveletId } from "../model/id";
 import {
@@ -453,6 +453,28 @@ export class OpenWave {
   markRead(): void {
     this.ensureUserData();
     this.supplement.markAsRead();
+  }
+
+  /**
+   * A document of the viewer's own user-data wavelet, such as the
+   * settings documents kept there; null if the wave has no such wavelet.
+   */
+  userDataDocument(docId: string): DocView | null {
+    return this.view.userData()?.documentView(docId) ?? null;
+  }
+
+  /**
+   * Edits a document of the viewer's own user-data wavelet, which is
+   * created if the wave has none yet. For documents other than the
+   * supplement's.
+   */
+  editUserDataDocument<R>(docId: string, edit: (doc: MutableDocument) => R): R {
+    this.ensureUserData();
+    const userData = this.view.userData();
+    if (userData === null) {
+      throw new Error(`wave ${this.waveId} has no user-data wavelet`);
+    }
+    return userData.editDocument(docId, edit);
   }
 
   /** Any other change of the supplement (follow, archive, folders, thread state...). */

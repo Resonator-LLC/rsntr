@@ -107,7 +107,7 @@ const TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "search_waves",
         writes: false,
-        description: "Search your waves. The query is words to find, and/or in:inbox, with:name@domain, creator:name@domain. Returns wave ids, titles, snippets, unread counts.",
+        description: "Search your waves. The query is words to find, and/or in:inbox, with:name@domain, creator:name@domain, title:word, label:N, after:YYYY-MM-DD, before:YYYY-MM-DD; -term excludes, OR between groups. Returns wave ids, titles, snippets, unread counts.",
         schema: || {
             json!({"type": "object", "properties": {
             "query": {"type": "string"},

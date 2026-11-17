@@ -364,13 +364,22 @@ function stringField(
   return value;
 }
 
+/**
+ * A search response with why the query found nothing, if the server said
+ * (SQL mode errors such as `no such column: x`).
+ */
+export type SearchAnswer = SearchResponse & { readonly error?: string };
+
+/** The header carrying a search error, percent-encoded UTF-8. */
+export const SEARCH_ERROR_HEADER = "x-resonator-search-error";
+
 /** Searches the signed-in user's waves. */
 export interface SearchService {
   /**
    * The digests `index .. index + numResults` of the waves matching
    * `query` (such as `in:inbox`).
    */
-  search(query: string, index: number, numResults: number): Promise<SearchResponse>;
+  search(query: string, index: number, numResults: number): Promise<SearchAnswer>;
 }
 
 /**
@@ -387,11 +396,25 @@ export class HttpSearchService implements SearchService {
     return `/search/?query=${encodeURIComponent(query)}&index=${index}&numResults=${numResults}`;
   }
 
-  search(query: string, index: number, numResults: number): Promise<SearchResponse> {
-    return this.transport.getMessage(
-      HttpSearchService.path(query, index, numResults),
-      SearchResponse,
-    );
+  async search(query: string, index: number, numResults: number): Promise<SearchAnswer> {
+    const response = await this.transport.expectOk(HttpSearchService.path(query, index, numResults));
+    let message: SearchResponse;
+    try {
+      message = SearchResponse.decode(parseJson(response.text));
+    } catch (error) {
+      throw new InvalidResponseError(response.url, response.text, error);
+    }
+    const header = response.headers.get(SEARCH_ERROR_HEADER);
+    if (header === null) {
+      return message;
+    }
+    let error = header;
+    try {
+      error = decodeURIComponent(header);
+    } catch {
+      // Shown as it came.
+    }
+    return { ...message, error };
   }
 }
 

@@ -67,9 +67,17 @@ impl Scopes {
     pub const READ: Scopes = Scopes(1);
     /// Submit deltas and change the account's settings.
     pub const WRITE: Scopes = Scopes(2);
+    /// Read and write; what a token gets when none are named. Not `SQL`.
     pub const ALL: Scopes = Scopes(3);
+    /// Run searches in SQL mode (`crate::search::sql`). Sessions may
+    /// always; a token only with this scope, named when it is made.
+    pub const SQL: Scopes = Scopes(4);
 
-    const NAMES: [(Scopes, &'static str); 2] = [(Scopes::READ, "read"), (Scopes::WRITE, "write")];
+    const NAMES: [(Scopes, &'static str); 3] = [
+        (Scopes::READ, "read"),
+        (Scopes::WRITE, "write"),
+        (Scopes::SQL, "sql"),
+    ];
 
     pub fn contains(self, other: Scopes) -> bool {
         self.0 & other.0 == other.0
@@ -169,6 +177,12 @@ impl Identity {
     /// account's tokens.
     pub fn is_session(&self) -> bool {
         matches!(self.credential, Credential::Session(_))
+    }
+
+    /// Whether this identity may search in SQL mode: a session, or a
+    /// token with the `sql` scope.
+    pub fn may_search_sql(&self) -> bool {
+        self.is_session() || self.scopes.contains(Scopes::SQL)
     }
 }
 

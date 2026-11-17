@@ -17,6 +17,7 @@ import {
   RpcChannel,
   type RpcChannelOptions,
   type RpcFatalError,
+  type SearchAnswer,
   type SearchService,
   type SessionInfo,
   type SocketFactory,
@@ -37,7 +38,6 @@ import {
   AppRtcResponse,
   AppUpdate,
   type ProfileResponse,
-  type SearchResponse,
 } from "../wire";
 import { BackoffScheduler, DEFAULT_TIMERS, type Timers } from "./backoffScheduler";
 import { LiveWaveView, type UnsavedState } from "./liveWaveView";
@@ -491,7 +491,7 @@ export class WaveClient {
     return this.api.search;
   }
 
-  search(query: string, index = 0, numResults = 20): Promise<SearchResponse> {
+  search(query: string, index = 0, numResults = 20): Promise<SearchAnswer> {
     return this.api.search.search(query, index, numResults);
   }
 

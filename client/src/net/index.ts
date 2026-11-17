@@ -35,6 +35,8 @@ export {
   type AttachmentService,
   type FetchResult,
   type RegisterResult,
+  type SearchAnswer,
+  SEARCH_ERROR_HEADER,
   type SearchService,
   type DirectoryEntry,
   type ProbeResult,

@@ -181,3 +181,81 @@ pub async fn mute(server: &WaveServer, user: &ParticipantId, wave: &WaveId) {
 pub async fn follow(server: &WaveServer, user: &ParticipantId, wave: &WaveId) {
     edit_supplement(server, user, wave, |s| s.follow().expect("follow")).await;
 }
+
+/// Adds a label (a folder id of the user-data supplement) to a wave for
+/// `user`, without moving it, as the client does for ensembles.
+pub async fn add_label(server: &WaveServer, user: &ParticipantId, wave: &WaveId, label: i32) {
+    use resonator_model::supplement::PrimitiveSupplement;
+    edit_supplement_state(server, user, wave, |state| {
+        state.add_folder(label).expect("add folder");
+    })
+    .await;
+}
+
+/// Edits `user`'s user-data wavelet of a wave through the primitive
+/// supplement, creating the wavelet if need be.
+pub async fn edit_supplement_state(
+    server: &WaveServer,
+    user: &ParticipantId,
+    wave: &WaveId,
+    edit: impl FnOnce(&mut WaveletBasedSupplement<'_>),
+) {
+    let udw_name = WaveletName::of(
+        wave.clone(),
+        build_user_data_wavelet_id(user).expect("user data wavelet id"),
+    );
+    let existing = server.get_snapshot(&udw_name).await.expect("snapshot");
+    let mut udw = match existing {
+        Some(committed) => OpBasedWavelet::new(committed.snapshot, user.clone(), now()),
+        None => {
+            let data = WaveletData::empty(
+                &udw_name,
+                user.clone(),
+                HashedVersionFactory::create_version_zero(&udw_name),
+                now(),
+            );
+            let mut udw = OpBasedWavelet::new(data, user.clone(), now());
+            udw.add_participant(user).expect("participant");
+            udw
+        }
+    };
+    {
+        let mut state = WaveletBasedSupplement::create(&mut udw).expect("supplement");
+        edit(&mut state);
+    }
+    if let Some(delta) = udw.take_delta() {
+        server
+            .submit_delta(&udw_name, &delta)
+            .await
+            .expect("submit");
+    }
+}
+
+/// Adds a private conversation wavelet `wavelet` (such as `conv+priv`) to
+/// an existing wave, with one blip of `text`, on which only `author` and
+/// `others` are.
+pub async fn create_private_wavelet(
+    server: &WaveServer,
+    author: &ParticipantId,
+    wave: &WaveId,
+    wavelet: &str,
+    others: &[&ParticipantId],
+    text: &str,
+) {
+    let mut ids = id_generator(&format!("{}{wavelet}", wave.id()));
+    let mut view = WaveView::new(wave.clone(), author.clone(), now());
+    let data = view
+        .create_wavelet(WaveletId::of(wave.domain(), wavelet).expect("wavelet id"))
+        .expect("wavelet");
+    make_wavelet_conversational(data).expect("manifest");
+    let mut conversation = WaveletBasedConversation::new(data, &mut ids).expect("conversation");
+    conversation
+        .append_blip_with_content("", Some(&blip_content(text)))
+        .expect("blip");
+    for other in others {
+        conversation.add_participant(other).expect("participant");
+    }
+    for (name, delta) in view.take_deltas() {
+        server.submit_delta(&name, &delta).await.expect("submit");
+    }
+}

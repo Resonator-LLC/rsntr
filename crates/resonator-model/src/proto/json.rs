@@ -306,7 +306,9 @@ mod kind {
 }
 
 /// Implements [`JsonMessage`]. Each field is `number => name: label kind`
-/// where the label is `one` (optional or required) or `many` (repeated).
+/// where the label is `one` (optional or required), `many` (repeated) or
+/// `sparse` (repeated, left out when empty: for fields this protocol adds
+/// to the original's messages, so that their encoding stays the same).
 macro_rules! json_message {
     ($type:ty, $name:literal { $($number:literal => $field:ident: $label:ident $kind:ident),* $(,)? }) => {
         impl JsonMessage for $type {
@@ -358,6 +360,14 @@ macro_rules! json_message {
             kind::$kind::write(value, $out);
         }
         $out.push(']');
+    };
+    (@write sparse $kind:ident, $value:expr, $number:literal, $out:ident, $first:ident) => {
+        if !$value.is_empty() {
+            json_message!(@write many $kind, $value, $number, $out, $first);
+        }
+    };
+    (@read sparse $kind:ident, $target:expr, $value:ident, $number:literal) => {
+        json_message!(@read many $kind, $target, $value, $number);
     };
     (@read one $kind:ident, $target:expr, $value:ident, $number:literal) => {
         $target = Some(
@@ -568,6 +578,7 @@ json_message!(Digest, "Digest" {
     6 => blip_count: one int32,
     7 => participants: many string,
     8 => author: one string,
+    9 => labels: sparse int32,
 });
 
 // Wave apps (not in the original protocol).

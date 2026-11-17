@@ -138,6 +138,7 @@ export function digestOfWave(wave: OpenWave, evenIfClosed = false): Digest | nul
     blipCount: blips.length,
     participants: others,
     author,
+    labels: [...new Set(wave.supplement.folders())].sort((a, b) => a - b),
   };
 }
 
@@ -312,6 +313,8 @@ export class OpenWaveDigests implements LiveDigests {
       wave.events.on("opened", invalidate),
       wave.supplement.events.on("maybeBlipReadChanged", invalidate),
       wave.supplement.events.on("maybeWaveletReadChanged", invalidate),
+      wave.supplement.events.on("folderAdded", invalidate),
+      wave.supplement.events.on("folderRemoved", invalidate),
     );
     return tracked;
   }

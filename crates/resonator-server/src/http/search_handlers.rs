@@ -19,7 +19,7 @@ use resonator_model::proto::search::search_response::Digest as ProtoDigest;
 use serde_json::json;
 
 use super::{AppState, Context, failure, internal_error, json};
-use crate::search::{SearchProvider, SearchResult};
+use crate::search::SearchResult;
 
 type Params = Query<HashMap<String, String>>;
 
@@ -40,6 +40,9 @@ const DEFAULT_CHANGES_WAIT_SECS: u64 = 30;
 pub(crate) const GENERATION_HEADER: &str = "x-resonator-search-generation";
 /// The header carrying the number of waves the index has for the query.
 pub(crate) const TOTAL_HEADER: &str = "x-resonator-search-total";
+/// The header carrying why a query found nothing (SQL mode errors, such as
+/// `no such column: x`), percent-encoded UTF-8.
+pub(crate) const ERROR_HEADER: &str = "x-resonator-search-error";
 
 /// The wave id as the original's `ApiIdSerializer` writes it.
 fn wave_id_text(digest: &Digest) -> String {
@@ -65,6 +68,7 @@ fn proto_digest(digest: &Digest) -> ProtoDigest {
         blip_count: Some(narrow(digest.blip_count)),
         participants,
         author: Some(author),
+        labels: digest.labels.clone(),
     }
 }
 
@@ -87,6 +91,26 @@ pub(crate) fn search_response(
         total_results: Some(total),
         digests: result.digests.iter().map(proto_digest).collect(),
     }
+}
+
+/// Every byte outside unreserved ASCII and space as `%XX`, so any message
+/// fits in a header.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if out.len() > 4000 {
+            break;
+        }
+        if c.is_ascii_alphanumeric() || " -_.~:,;()'".contains(c) {
+            out.push(c);
+        } else {
+            let mut buffer = [0; 4];
+            for byte in c.encode_utf8(&mut buffer).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    out
 }
 
 struct Request {
@@ -128,19 +152,30 @@ async fn run(
     let generation = state.search.generation(&identity.participant);
     let result = state
         .search
-        .search(
+        .search_as(
             &identity.participant,
             &request.query,
             request.index,
             request.num_results,
+            identity.may_search_sql(),
         )
         .await
         .map_err(internal_error)?;
     Ok((request, result, generation))
 }
 
-fn with_search_headers(mut response: Response, generation: &str, total: usize) -> Response {
+fn with_search_headers(
+    mut response: Response,
+    generation: &str,
+    result: &SearchResult,
+) -> Response {
+    let total = result.total_results;
     let headers = response.headers_mut();
+    if let Some(error) = &result.error
+        && let Ok(value) = HeaderValue::from_str(&percent_encode(error))
+    {
+        headers.insert(HeaderName::from_static(ERROR_HEADER), value);
+    }
     if let Ok(value) = HeaderValue::from_str(generation) {
         headers.insert(HeaderName::from_static(GENERATION_HEADER), value);
     }
@@ -176,7 +211,7 @@ pub(super) async fn search(
             )
                 .into_response(),
             &generation,
-            result.total_results,
+            &result,
         ),
         Err(error) => internal_error(error),
     }
@@ -208,13 +243,14 @@ pub(super) async fn notification(
                 "unreadCount": digest.unread_count,
                 "blipCount": digest.blip_count,
                 "participants": digest.participants,
+                "labels": digest.labels,
             })
         })
         .collect();
     with_search_headers(
         json(StatusCode::OK, serde_json::Value::Array(digests)),
         &generation,
-        result.total_results,
+        &result,
     )
 }
 
@@ -277,6 +313,7 @@ mod tests {
             created: 1000,
             unread_count: 2,
             blip_count: 3,
+            labels: Vec::new(),
         }
     }
 
@@ -287,6 +324,7 @@ mod tests {
                 .map(|i| digest(&format!("w+{i}"), &["a@example.com", "b@example.com"]))
                 .collect(),
             total_results: count,
+            error: None,
         }
     }
 

@@ -39,6 +39,10 @@ pub struct Digest {
     pub created: i64,
     pub unread_count: usize,
     pub blip_count: usize,
+    /// The participant's own labels on the wave (folder ids of their
+    /// user-data supplement), ascending. An addition to the original, for
+    /// ensembles.
+    pub labels: Vec<i32>,
 }
 
 /// Java's `String.trim`: strips characters up to U+0020 from both ends.
@@ -239,6 +243,7 @@ pub fn generate_digest(
         created: conversation_wavelet.creation_time(),
         unread_count,
         blip_count,
+        labels: Vec::new(),
     })
 }
 
@@ -267,6 +272,7 @@ pub fn generate_empty_or_unknown_digest(wave_id: &WaveId, wavelets: &[&WaveletDa
             created: -1,
             unread_count: 0,
             blip_count: 0,
+            labels: Vec::new(),
         };
     }
     let mut last_modified = -1;
@@ -288,6 +294,7 @@ pub fn generate_empty_or_unknown_digest(wave_id: &WaveId, wavelets: &[&WaveletDa
         created,
         unread_count: 0,
         blip_count: documents,
+        labels: Vec::new(),
     }
 }
 
@@ -342,7 +349,10 @@ pub fn build_digest_with_supplement(
         None => PrimitiveSupplementImpl::new(),
     };
     let supplement = SupplementImpl::new(state);
-    build_digest(participant, wave_id, wavelets, |_, conversation, blip| {
+    let mut labels = supplement.folders();
+    labels.sort_unstable();
+    labels.dedup();
+    let mut digest = build_digest(participant, wave_id, wavelets, |_, conversation, blip| {
         conversation.blip_data(blip.id()).is_some_and(|data| {
             // Versions are narrowed as the original's `(int)` cast does.
             supplement.is_blip_unread(
@@ -351,5 +361,7 @@ pub fn build_digest_with_supplement(
                 data.last_modified_version() as i32,
             )
         })
-    })
+    });
+    digest.labels = labels;
+    digest
 }

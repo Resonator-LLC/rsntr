@@ -296,3 +296,197 @@
     gap: var(--sp-2);
   }
 }
+
+/* ---- Ensembles ---- */
+
+.ens-c1 { --ens: var(--c-ens-1); }
+.ens-c2 { --ens: var(--c-ens-2); }
+.ens-c3 { --ens: var(--c-ens-3); }
+.ens-c4 { --ens: var(--c-ens-4); }
+.ens-c5 { --ens: var(--c-ens-5); }
+.ens-c6 { --ens: var(--c-ens-6); }
+
+.ens-dot {
+  flex: none;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--ens, var(--c-text-3));
+}
+
+.ens-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.ens-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 1.75rem;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-round);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ens-pill:hover {
+  background: var(--c-surface-2);
+}
+.ens-pill[aria-pressed="true"] {
+  border-color: var(--ens);
+  box-shadow: inset 0 0 0 1px var(--ens);
+  color: var(--c-text);
+  font-weight: 600;
+}
+.ens-pill.is-drop {
+  border-color: var(--ens);
+  border-style: dashed;
+  background: var(--c-accent-soft);
+}
+.ens-new {
+  border-style: dashed;
+  color: var(--c-text-3);
+}
+.ens-new .icon {
+  width: 1rem;
+  height: 1rem;
+}
+.ens-edit .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+/* The labels of a wave, on a line of their own under the digest. */
+.digest {
+  flex-wrap: wrap;
+}
+.digest-labels {
+  order: 3;
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-3) var(--sp-2) calc(var(--sp-3) * 2 + var(--avatar-sm) * 2);
+  margin-top: calc(var(--sp-2) * -1);
+}
+.ens-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 0 0 var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-round);
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+.ens-chip-x {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--c-text-3);
+  cursor: pointer;
+}
+.ens-chip-x:hover {
+  background: var(--c-surface-3);
+  color: var(--c-text);
+}
+.ens-chip-x .icon {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.ens-editor {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface-2);
+}
+.ens-field {
+  display: grid;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+}
+.ens-query {
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.ens-colours {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+}
+.ens-colours legend {
+  float: left;
+  margin-inline-end: var(--sp-2);
+}
+.ens-swatch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.ens-swatch input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.ens-swatch .ens-dot {
+  width: 1rem;
+  height: 1rem;
+}
+.ens-swatch:has(input:checked) {
+  box-shadow: inset 0 0 0 2px var(--ens);
+}
+.ens-swatch:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+.ens-hint,
+.ens-check {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.ens-check.is-error {
+  color: var(--c-danger);
+  font-family: var(--font-mono);
+}
+.ens-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+.ens-delete {
+  margin-inline-end: auto;
+  color: var(--c-danger);
+}
+.menu-item .ens-dot {
+  margin-inline: 0.3rem;
+}

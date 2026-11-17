@@ -524,6 +524,7 @@ fn golden_inputs() -> Vec<(&'static str, Vec<u8>)> {
                     blip_count: Some(7),
                     participants: vec!["bob@example.com".to_owned(), "@example.com".to_owned()],
                     author: Some("alice@example.com".to_owned()),
+                    labels: Vec::new(),
                 },
                 Digest {
                     title: Some(String::new()),
@@ -534,6 +535,7 @@ fn golden_inputs() -> Vec<(&'static str, Vec<u8>)> {
                     blip_count: Some(0),
                     participants: Vec::new(),
                     author: Some("nobody@example.com".to_owned()),
+                    labels: Vec::new(),
                 },
             ],
         },

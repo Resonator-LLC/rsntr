@@ -15,6 +15,21 @@
 //! to the full-text index. A term may end in `*` for a prefix match, and a
 //! double-quoted string (which may contain spaces and colons) is one
 //! phrase.
+//!
+//! # Additions to the original
+//!
+//! * `label:<n>`: the wave carries label `n` in the user's supplement (the
+//!   folder ids of the original, used for ensembles).
+//! * `after:YYYY-MM-DD` and `before:YYYY-MM-DD`: last modified on or after
+//!   the start of that day (UTC), or before it.
+//! * `title:word`: a free-text term that must be in the title.
+//! * A leading `-` negates a token: `-with:bob`, `-in:mute`, `-word`. It
+//!   applies to `in`, `with`, `creator`, `id`, `label`, `title` and free
+//!   text; a negated `orderby`, `after` or `before` is invalid. In the
+//!   original a leading `-` on a free-text term was punctuation.
+//! * The bare token `OR` splits a query into groups; a wave matches if it
+//!   matches any group ([`parse_queries`]). In the original `OR` was a
+//!   free-text term.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -30,15 +45,23 @@ pub enum TokenQueryType {
     With,
     Creator,
     Id,
+    Label,
+    After,
+    Before,
+    Title,
 }
 
 impl TokenQueryType {
-    pub const ALL: [TokenQueryType; 5] = [
+    pub const ALL: [TokenQueryType; 9] = [
         TokenQueryType::In,
         TokenQueryType::OrderBy,
         TokenQueryType::With,
         TokenQueryType::Creator,
         TokenQueryType::Id,
+        TokenQueryType::Label,
+        TokenQueryType::After,
+        TokenQueryType::Before,
+        TokenQueryType::Title,
     ];
 
     pub fn token(self) -> &'static str {
@@ -48,6 +71,10 @@ impl TokenQueryType {
             TokenQueryType::With => "with",
             TokenQueryType::Creator => "creator",
             TokenQueryType::Id => "id",
+            TokenQueryType::Label => "label",
+            TokenQueryType::After => "after",
+            TokenQueryType::Before => "before",
+            TokenQueryType::Title => "title",
         }
     }
 
@@ -122,6 +149,15 @@ pub struct ParsedQuery {
     pub tokens: BTreeMap<TokenQueryType, Vec<String>>,
     /// The free-text terms; a wave must match all of them.
     pub text: Vec<TextTerm>,
+    /// The terms of `title:`; the title must have all of them.
+    pub title: Vec<TextTerm>,
+    /// The values of negated tokens (`-with:bob`): a wave matching any of
+    /// them is left out.
+    pub negated: BTreeMap<TokenQueryType, Vec<String>>,
+    /// Negated free-text terms (`-word`).
+    pub negated_text: Vec<TextTerm>,
+    /// Negated title terms (`-title:word`).
+    pub negated_title: Vec<TextTerm>,
 }
 
 impl ParsedQuery {
@@ -131,6 +167,37 @@ impl ParsedQuery {
 
     pub fn has(&self, kind: TokenQueryType) -> bool {
         self.tokens.contains_key(&kind)
+    }
+
+    /// The values of a negated key.
+    pub fn negated_values(&self, kind: TokenQueryType) -> &[String] {
+        self.negated.get(&kind).map_or(&[], Vec::as_slice)
+    }
+
+    /// The labels of `label:` tokens, or of negated ones.
+    pub fn labels(&self, negated: bool) -> Vec<i64> {
+        let values = if negated {
+            self.negated_values(TokenQueryType::Label)
+        } else {
+            self.values(TokenQueryType::Label)
+        };
+        values.iter().filter_map(|v| v.parse().ok()).collect()
+    }
+
+    /// The latest `after:` as milliseconds since the epoch.
+    pub fn after(&self) -> Option<i64> {
+        self.values(TokenQueryType::After)
+            .iter()
+            .filter_map(|v| parse_date_millis(v))
+            .max()
+    }
+
+    /// The earliest `before:` as milliseconds since the epoch.
+    pub fn before(&self) -> Option<i64> {
+        self.values(TokenQueryType::Before)
+            .iter()
+            .filter_map(|v| parse_date_millis(v))
+            .min()
     }
 
     /// The orderings asked for, the primary one first; empty for the
@@ -185,13 +252,50 @@ fn tokenize(query: &str) -> Vec<(String, bool)> {
     tokens
 }
 
-/// Parses a query (`QueryHelper.parseQuery`). The empty query has no
-/// tokens.
+/// Parses a query (`QueryHelper.parseQuery`) without splitting it at
+/// `OR`, which is then a free-text term. The empty query has no tokens.
 pub fn parse_query(query: &str) -> Result<ParsedQuery, InvalidQuery> {
-    // Java's `trim` strips everything up to U+0020.
-    let query = query.trim_matches(|c: char| c <= ' ');
+    parse_tokens(tokenize(trim_java(query)))
+}
+
+/// Parses a query that may have `OR` groups: one [`ParsedQuery`] per
+/// group, at least one. An empty group (`OR` at either end, or two in a
+/// row) makes the query invalid.
+pub fn parse_queries(query: &str) -> Result<Vec<ParsedQuery>, InvalidQuery> {
+    let mut groups = vec![Vec::new()];
+    for (token, quoted) in tokenize(trim_java(query)) {
+        if !quoted && token == "OR" {
+            groups.push(Vec::new());
+        } else if let Some(group) = groups.last_mut() {
+            group.push((token, quoted));
+        }
+    }
+    if groups.len() > 1 && groups.iter().any(Vec::is_empty) {
+        return Err(InvalidQuery("Empty group around OR".to_owned()));
+    }
+    groups.into_iter().map(parse_tokens).collect()
+}
+
+/// Java's `trim` strips everything up to U+0020.
+fn trim_java(query: &str) -> &str {
+    query.trim_matches(|c: char| c <= ' ')
+}
+
+/// A free-text term, `None` if it is empty.
+fn text_term(token: &str) -> Option<TextTerm> {
+    let (text, prefix) = match token.strip_suffix('*') {
+        Some(stem) => (stem, true),
+        None => (token, false),
+    };
+    (!text.is_empty()).then(|| TextTerm {
+        text: text.to_owned(),
+        prefix,
+    })
+}
+
+fn parse_tokens(tokens: Vec<(String, bool)>) -> Result<ParsedQuery, InvalidQuery> {
     let mut parsed = ParsedQuery::default();
-    for (token, quoted) in tokenize(query) {
+    for (token, quoted) in tokens {
         if quoted {
             if !token.trim().is_empty() {
                 parsed.text.push(TextTerm {
@@ -201,16 +305,21 @@ pub fn parse_query(query: &str) -> Result<ParsedQuery, InvalidQuery> {
             }
             continue;
         }
+        if token == "-" {
+            // A lone minus negates nothing.
+            continue;
+        }
+        let (negated, token) = match token.strip_prefix('-') {
+            Some(rest) if !rest.is_empty() => (true, rest.to_owned()),
+            _ => (false, token),
+        };
         if !token.contains(':') {
-            let (text, prefix) = match token.strip_suffix('*') {
-                Some(stem) => (stem, true),
-                None => (token.as_str(), false),
-            };
-            if !text.is_empty() {
-                parsed.text.push(TextTerm {
-                    text: text.to_owned(),
-                    prefix,
-                });
+            if let Some(term) = text_term(&token) {
+                if negated {
+                    parsed.negated_text.push(term);
+                } else {
+                    parsed.text.push(term);
+                }
             }
             continue;
         }
@@ -223,17 +332,87 @@ pub fn parse_query(query: &str) -> Result<ParsedQuery, InvalidQuery> {
             return Err(InvalidQuery(format!("Invalid query param: {token}")));
         };
         let value = pair[1];
-        if kind == TokenQueryType::OrderBy && OrderBy::from_token(value).is_none() {
-            return Err(InvalidQuery(format!(
-                "Invalid orderby query value: {value}"
-            )));
+        match kind {
+            TokenQueryType::OrderBy if OrderBy::from_token(value).is_none() => {
+                return Err(InvalidQuery(format!(
+                    "Invalid orderby query value: {value}"
+                )));
+            }
+            TokenQueryType::Label if value.parse::<i32>().is_err() => {
+                return Err(InvalidQuery(format!("Invalid label: {value}")));
+            }
+            TokenQueryType::After | TokenQueryType::Before
+                if parse_date_millis(value).is_none() =>
+            {
+                return Err(InvalidQuery(format!(
+                    "Invalid date: {value} (use YYYY-MM-DD)"
+                )));
+            }
+            _ => {}
         }
-        let values = parsed.tokens.entry(kind).or_default();
+        if negated
+            && matches!(
+                kind,
+                TokenQueryType::OrderBy | TokenQueryType::After | TokenQueryType::Before
+            )
+        {
+            return Err(InvalidQuery(format!("Cannot negate {}:", kind.token())));
+        }
+        if kind == TokenQueryType::Title {
+            let Some(term) = text_term(value) else {
+                continue;
+            };
+            if negated {
+                parsed.negated_title.push(term);
+            } else {
+                parsed.title.push(term);
+            }
+            continue;
+        }
+        let map = if negated {
+            &mut parsed.negated
+        } else {
+            &mut parsed.tokens
+        };
+        let values = map.entry(kind).or_default();
         if !values.iter().any(|existing| existing == value) {
             values.push(value.to_owned());
         }
     }
     Ok(parsed)
+}
+
+/// `YYYY-MM-DD` as milliseconds since the epoch at the start of that day
+/// in UTC; `None` if it is not a valid date.
+pub fn parse_date_millis(text: &str) -> Option<i64> {
+    let mut parts = text.split('-');
+    let (year, month, day) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() || year.len() != 4 || month.len() != 2 || day.len() != 2 {
+        return None;
+    }
+    let year: i64 = year.parse().ok()?;
+    let month: i64 = month.parse().ok()?;
+    let day: i64 = day.parse().ok()?;
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if day < 1 || day > days_in_month {
+        return None;
+    }
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400_000)
 }
 
 /// The participants named by the values of a `with:` or `creator:` filter
@@ -379,12 +558,11 @@ mod tests {
             ":",
             "IN:inbox",
             "tag:x",
+            "label:x",
+            "after:2026-13-01",
+            "before:yesterday",
         ] {
-            assert_eq!(
-                parse_query(bad).unwrap_err(),
-                InvalidQuery(format!("Invalid query param: {bad}")),
-                "{bad}"
-            );
+            assert!(parse_query(bad).is_err(), "{bad}");
         }
         // `"in:inbox:".split(":")` drops the empty string at the end.
         let parsed = parse_query("in:inbox:").unwrap();
@@ -440,6 +618,73 @@ mod tests {
         assert_eq!(build(&[]).unwrap(), Vec::<String>::new());
         assert!(build(&["a@b@c"]).is_err());
         assert!(build(&["bob@"]).is_err());
+    }
+
+    #[test]
+    fn unknown_keys_report_the_token() {
+        assert_eq!(
+            parse_query("tag:x").unwrap_err(),
+            InvalidQuery("Invalid query param: tag:x".to_owned())
+        );
+    }
+
+    #[test]
+    fn labels_dates_and_titles() {
+        let parsed =
+            parse_query("label:3 label:-2 after:2026-11-01 before:2026-11-16 title:relay*")
+                .unwrap();
+        assert_eq!(parsed.labels(false), [3, -2]);
+        assert_eq!(parsed.after(), Some(1_793_491_200_000));
+        assert_eq!(parsed.before(), Some(1_794_787_200_000));
+        assert_eq!(
+            parsed.title,
+            [TextTerm {
+                text: "relay".to_owned(),
+                prefix: true
+            }]
+        );
+        assert!(parsed.text.is_empty());
+        assert_eq!(parse_date_millis("1970-01-01"), Some(0));
+        assert_eq!(parse_date_millis("2024-02-29"), Some(1_709_164_800_000));
+        assert_eq!(parse_date_millis("2023-02-29"), None);
+        assert_eq!(parse_date_millis("2026-1-01"), None);
+    }
+
+    #[test]
+    fn negation() {
+        let parsed =
+            parse_query("-with:bob -in:mute -label:4 -spam -title:draft hello - -").unwrap();
+        assert_eq!(parsed.negated_values(TokenQueryType::With), ["bob"]);
+        assert_eq!(parsed.negated_values(TokenQueryType::In), ["mute"]);
+        assert_eq!(parsed.labels(true), [4]);
+        assert_eq!(parsed.negated_text[0].text, "spam");
+        assert_eq!(parsed.negated_title[0].text, "draft");
+        assert_eq!(parsed.text.len(), 1);
+        assert!(parsed.tokens.is_empty());
+        for bad in [
+            "-orderby:dateasc",
+            "-after:2026-01-01",
+            "-before:2026-01-01",
+        ] {
+            assert!(parse_query(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn or_groups() {
+        let groups = parse_queries("in:inbox label:3 OR in:inbox with:bob relay").unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].labels(false), [3]);
+        assert_eq!(values(&groups[1], TokenQueryType::With), ["bob"]);
+        assert_eq!(parse_queries("relay").unwrap().len(), 1);
+        assert_eq!(parse_queries("").unwrap(), [ParsedQuery::default()]);
+        // A quoted or lower-case or is text.
+        assert_eq!(parse_queries("a \"OR\" or b").unwrap().len(), 1);
+        for bad in ["OR a", "a OR", "a OR OR b", "OR"] {
+            assert!(parse_queries(bad).is_err(), "{bad}");
+        }
+        // Without groups, OR is a word.
+        assert_eq!(parse_query("a OR b").unwrap().text.len(), 3);
     }
 
     fn keys(id: &str, last_modified: i64, created: i64, creator: Option<&str>) -> SortKeys {

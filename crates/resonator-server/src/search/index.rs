@@ -98,32 +98,54 @@ pub fn fts_normalize(text: &str) -> String {
     out
 }
 
+/// One term as an FTS5 phrase, limited to `column` if given. Nothing a
+/// user types can leave the phrase.
+fn fts_phrase(term: &TextTerm, column: Option<&str>) -> String {
+    let mut phrase = String::new();
+    if let Some(column) = column {
+        phrase.push_str(column);
+        phrase.push_str(" : ");
+    }
+    phrase.push('"');
+    for c in fts_normalize(&term.text).chars() {
+        if c == '"' {
+            // A quote is punctuation to the tokenizer anyway.
+            phrase.push(' ');
+        } else {
+            phrase.push(c);
+        }
+    }
+    phrase.push('"');
+    if term.prefix {
+        phrase.push('*');
+    }
+    phrase
+}
+
 /// The FTS5 query for free-text terms: every term a phrase, all of them
 /// required. `None` if there are no terms.
 pub fn fts_query(terms: &[TextTerm]) -> Option<String> {
-    if terms.is_empty() {
-        return None;
-    }
-    let mut query = String::new();
-    for term in terms {
-        if !query.is_empty() {
-            query.push(' ');
-        }
-        query.push('"');
-        for c in fts_normalize(&term.text).chars() {
-            if c == '"' {
-                // A quote is punctuation to the tokenizer anyway.
-                query.push(' ');
-            } else {
-                query.push(c);
-            }
-        }
-        query.push('"');
-        if term.prefix {
-            query.push('*');
-        }
-    }
-    Some(query)
+    fts_query_in(terms, &[])
+}
+
+/// Like [`fts_query`], with title terms that must be in the title.
+pub fn fts_query_in(terms: &[TextTerm], title: &[TextTerm]) -> Option<String> {
+    let phrases: Vec<String> = terms
+        .iter()
+        .map(|term| fts_phrase(term, None))
+        .chain(title.iter().map(|term| fts_phrase(term, Some("title"))))
+        .collect();
+    (!phrases.is_empty()).then(|| phrases.join(" "))
+}
+
+/// The FTS5 query matching any of the terms (anywhere) or title terms.
+pub fn fts_any(terms: &[TextTerm], title: &[TextTerm]) -> Option<String> {
+    let phrases: Vec<String> = terms
+        .iter()
+        .map(|term| fts_phrase(term, None))
+        .chain(title.iter().map(|term| fts_phrase(term, Some("title"))))
+        .collect();
+    (!phrases.is_empty()).then(|| phrases.join(" OR "))
 }
 
 /// The state a user keeps in a user-data wavelet, as far as searching
@@ -134,6 +156,8 @@ pub(crate) struct UserState {
     pub followed: Option<bool>,
     /// The version at which each conversational wavelet was archived.
     pub archive: Vec<(WaveletId, i32)>,
+    /// The labels (supplement folder ids) the user gave the wave.
+    pub labels: Vec<i32>,
 }
 
 /// What the index holds about a wavelet.
@@ -183,6 +207,7 @@ impl WaveletEntry {
                     })
                     .filter(|(_, version)| *version != NO_VERSION)
                     .collect(),
+                labels: supplement.folders(),
             }
         });
         let text = (with_text && conversational).then(|| {
@@ -326,6 +351,14 @@ fn write_entry(
             )?
             .execute(params![id, wavelet.domain(), wavelet.id(), archived_at])?;
         }
+        conn.prepare_cached("DELETE FROM search_labels WHERE udw = ?1")?
+            .execute([id])?;
+        for label in &state.labels {
+            conn.prepare_cached(
+                "INSERT OR IGNORE INTO search_labels (udw, label) VALUES (?1, ?2)",
+            )?
+            .execute(params![id, label])?;
+        }
     }
 
     if fts && let Some((title, content)) = &entry.text {
@@ -364,6 +397,20 @@ pub(crate) struct IndexQuery {
     pub wave_ids: Vec<WaveId>,
     /// The FTS5 query, if there are free-text terms.
     pub text: Option<String>,
+    /// The wave must carry every one of these labels.
+    pub labels: Vec<i64>,
+    /// Last modified at or after, and before, these times (ms).
+    pub after: Option<i64>,
+    pub before: Option<i64>,
+    /// Negated filters: a wave matching any of them is left out. They look
+    /// only at the wavelets the user can see.
+    pub not_folders: Vec<Folder>,
+    pub not_with: Vec<String>,
+    pub not_creators: Vec<String>,
+    pub not_wave_ids: Vec<WaveId>,
+    pub not_labels: Vec<i64>,
+    /// An FTS5 query; a wave with a visible wavelet matching it is left out.
+    pub not_text: Option<String>,
 }
 
 /// A folder an `in:` token names.
@@ -372,6 +419,60 @@ pub(crate) enum Folder {
     Inbox,
     Archive,
     Mute,
+}
+
+/// SQL: the wavelet with id `{wavelet}` is visible to the user bound as
+/// `?1`, or to the shared domain participant bound as `?{shared}`. This is
+/// the rule of [`IndexStore::wavelets_in_view`]; every query that reads
+/// the index for a user goes through it.
+pub(crate) fn visible_sql(wavelet: &str, shared: Option<usize>) -> String {
+    match shared {
+        Some(n) => format!(
+            "{wavelet} IN (SELECT wavelet FROM search_participants \
+             WHERE participant = ?1 OR participant = ?{n})"
+        ),
+        None => {
+            format!("{wavelet} IN (SELECT wavelet FROM search_participants WHERE participant = ?1)")
+        }
+    }
+}
+
+/// SQL: the user-data wavelet row `u` is the one of the user bound as `?1`
+/// (`?{domain}` and `?{id}` bind its wavelet id) in the wave of row `w`.
+fn own_udw_sql(domain: usize, id: usize) -> String {
+    format!(
+        "u.wave_domain = w.wave_domain AND u.wave_id = w.wave_id \
+         AND u.wavelet_domain = ?{domain} AND u.wavelet_id = ?{id} AND u.creator = ?1"
+    )
+}
+
+/// SQL: where the wave of row `w` is for the user bound as `?1`: muted
+/// (2) if they unfollowed it; else archived (1) if there are conversations
+/// and each was archived at its current version or later; else in the
+/// inbox (0), as is every wave they have no user-data wavelet of.
+pub(crate) fn box_state_sql(udw_domain: usize, udw_id: usize) -> String {
+    let udw = own_udw_sql(udw_domain, udw_id);
+    // The conversations the user is on.
+    let conversations = "FROM search_wavelets c \
+         WHERE c.wave_domain = w.wave_domain AND c.wave_id = w.wave_id \
+         AND c.has_conversation = 1 AND EXISTS (SELECT 1 FROM search_participants p \
+         WHERE p.participant = ?1 AND p.wavelet = c.id)";
+    format!(
+        "COALESCE((SELECT CASE WHEN u.followed = 0 THEN 2 \
+         WHEN EXISTS (SELECT 1 {conversations}) AND NOT EXISTS (SELECT 1 \
+         {conversations} AND NOT EXISTS (SELECT 1 FROM search_archive a \
+         WHERE a.udw = u.id AND a.wavelet_domain = c.wavelet_domain \
+         AND a.wavelet_id = c.wavelet_id AND a.version >= c.version)) THEN 1 \
+         ELSE 0 END FROM search_wavelets u WHERE {udw}), 0)"
+    )
+}
+
+fn folder_code(folder: Folder) -> i64 {
+    match folder {
+        Folder::Inbox => 0,
+        Folder::Archive => 1,
+        Folder::Mute => 2,
+    }
 }
 
 impl IndexStore {
@@ -520,24 +621,20 @@ impl IndexStore {
     ) -> Result<Vec<SortKeys>, StorageError> {
         self.db
             .read(move |conn| {
-                let mut sql = String::from(
-                    "SELECT w.wave_domain, w.wave_id, \
-                     MAX(CASE WHEN w.kind = 1 THEN w.last_modified ELSE -1 END), \
-                     MAX(w.created), \
-                     MAX(CASE WHEN w.is_root = 1 THEN w.creator END) \
-                     FROM search_wavelets w WHERE w.id IN (SELECT wavelet FROM search_participants \
-                     WHERE participant = ?1",
-                );
                 let mut values: Vec<Value> = vec![query.user.clone().into()];
                 let mut bind = |value: Value| {
                     values.push(value);
                     values.len()
                 };
-                if let Some(shared) = &query.shared {
-                    let n = bind(shared.clone().into());
-                    let _ = write!(sql, " OR participant = ?{n}");
-                }
-                sql.push(')');
+                let shared = query.shared.clone().map(|shared| bind(shared.into()));
+                let mut sql = format!(
+                    "SELECT w.wave_domain, w.wave_id, \
+                     MAX(CASE WHEN w.kind = 1 THEN w.last_modified ELSE -1 END), \
+                     MAX(w.created), \
+                     MAX(CASE WHEN w.is_root = 1 THEN w.creator END) \
+                     FROM search_wavelets w WHERE {}",
+                    visible_sql("w.id", shared)
+                );
                 for creator in &query.creators {
                     let n = bind(creator.clone().into());
                     let _ = write!(sql, " AND w.creator = ?{n}");
@@ -569,8 +666,60 @@ impl IndexStore {
                         " AND w.id IN (SELECT rowid FROM search_text WHERE search_text MATCH ?{n})"
                     );
                 }
+                for wave_id in &query.not_wave_ids {
+                    let domain = bind(wave_id.domain().to_owned().into());
+                    let id = bind(wave_id.id().to_owned().into());
+                    let _ = write!(
+                        sql,
+                        " AND NOT (w.wave_domain = ?{domain} AND w.wave_id = ?{id})"
+                    );
+                }
                 sql.push_str(" GROUP BY w.wave_domain, w.wave_id HAVING MAX(w.kind = 1) = 1");
-                if !query.folders.is_empty() {
+                if let Some(after) = query.after {
+                    let n = bind(after.into());
+                    let _ = write!(
+                        sql,
+                        " AND MAX(CASE WHEN w.kind = 1 THEN w.last_modified ELSE -1 END) >= ?{n}"
+                    );
+                }
+                if let Some(before) = query.before {
+                    let n = bind(before.into());
+                    let _ = write!(
+                        sql,
+                        " AND MAX(CASE WHEN w.kind = 1 THEN w.last_modified ELSE -1 END) < ?{n}"
+                    );
+                }
+                // A visible wavelet of the same wave as `w`, as `x`.
+                let visible_x = format!(
+                    "FROM search_wavelets x WHERE x.wave_domain = w.wave_domain \
+                     AND x.wave_id = w.wave_id AND {}",
+                    visible_sql("x.id", shared)
+                );
+                for with in &query.not_with {
+                    let n = bind(with.clone().into());
+                    let _ = write!(
+                        sql,
+                        " AND NOT EXISTS (SELECT 1 {visible_x} AND EXISTS (SELECT 1 \
+                         FROM search_participants p WHERE p.participant = ?{n} AND p.wavelet = x.id))"
+                    );
+                }
+                for creator in &query.not_creators {
+                    let n = bind(creator.clone().into());
+                    let _ = write!(sql, " AND NOT EXISTS (SELECT 1 {visible_x} AND x.creator = ?{n})");
+                }
+                if let Some(text) = &query.not_text {
+                    let n = bind(text.clone().into());
+                    let _ = write!(
+                        sql,
+                        " AND NOT EXISTS (SELECT 1 {visible_x} AND x.id IN \
+                         (SELECT rowid FROM search_text WHERE search_text MATCH ?{n}))"
+                    );
+                }
+                let needs_udw = !query.folders.is_empty()
+                    || !query.not_folders.is_empty()
+                    || !query.labels.is_empty()
+                    || !query.not_labels.is_empty();
+                if needs_udw {
                     // The user's own user-data wavelet of the wave.
                     let (domain, id) = query
                         .user_data
@@ -578,37 +727,27 @@ impl IndexStore {
                         .map_or(("", ""), |udw| (udw.domain(), udw.id()));
                     let udw_domain = bind(domain.to_owned().into());
                     let udw_id = bind(id.to_owned().into());
-                    let udw = format!(
-                        "u.wave_domain = w.wave_domain AND u.wave_id = w.wave_id \
-                         AND u.wavelet_domain = ?{udw_domain} AND u.wavelet_id = ?{udw_id} \
-                         AND u.creator = ?1"
-                    );
-                    // The conversations the user is on.
-                    let conversations = "FROM search_wavelets c \
-                         WHERE c.wave_domain = w.wave_domain AND c.wave_id = w.wave_id \
-                         AND c.has_conversation = 1 AND EXISTS (SELECT 1 FROM search_participants p \
-                         WHERE p.participant = ?1 AND p.wavelet = c.id)";
-                    // Where the wave is for the user, from their
-                    // user-data wavelet: muted (2) if they unfollowed it;
-                    // else archived (1) if there are conversations and
-                    // each was archived at its current version or later;
-                    // else in the inbox (0), as is every wave they have
-                    // no user-data wavelet of.
-                    let state = format!(
-                        "COALESCE((SELECT CASE WHEN u.followed = 0 THEN 2 \
-                         WHEN EXISTS (SELECT 1 {conversations}) AND NOT EXISTS (SELECT 1 \
-                         {conversations} AND NOT EXISTS (SELECT 1 FROM search_archive a \
-                         WHERE a.udw = u.id AND a.wavelet_domain = c.wavelet_domain \
-                         AND a.wavelet_id = c.wavelet_id AND a.version >= c.version)) THEN 1 \
-                         ELSE 0 END FROM search_wavelets u WHERE {udw}), 0)"
-                    );
+                    let state = box_state_sql(udw_domain, udw_id);
                     for folder in &query.folders {
-                        let code = match folder {
-                            Folder::Inbox => 0,
-                            Folder::Archive => 1,
-                            Folder::Mute => 2,
-                        };
-                        let _ = write!(sql, " AND {state} = {code}");
+                        let _ = write!(sql, " AND {state} = {}", folder_code(*folder));
+                    }
+                    for folder in &query.not_folders {
+                        let _ = write!(sql, " AND {state} != {}", folder_code(*folder));
+                    }
+                    let udw = own_udw_sql(udw_domain, udw_id);
+                    let labelled = |n: usize| {
+                        format!(
+                            "EXISTS (SELECT 1 FROM search_wavelets u JOIN search_labels l \
+                             ON l.udw = u.id WHERE {udw} AND l.label = ?{n})"
+                        )
+                    };
+                    for label in &query.labels {
+                        let n = bind((*label).into());
+                        let _ = write!(sql, " AND {}", labelled(n));
+                    }
+                    for label in &query.not_labels {
+                        let n = bind((*label).into());
+                        let _ = write!(sql, " AND NOT {}", labelled(n));
                     }
                 }
                 let mut statement = conn.prepare_cached(&sql)?;
@@ -650,16 +789,16 @@ impl IndexStore {
         let user = user.address().to_owned();
         self.db
             .read(move |conn| {
-                let mut statement = conn.prepare_cached(
+                // A NULL shared participant matches nobody.
+                let mut statement = conn.prepare_cached(&format!(
                     "SELECT w.wavelet_domain, w.wavelet_id FROM search_wavelets w \
-                     WHERE w.wave_domain = ?1 AND w.wave_id = ?2 AND EXISTS (SELECT 1 \
-                     FROM search_participants p WHERE p.wavelet = w.id \
-                     AND (p.participant = ?3 OR p.participant = ?4))",
-                )?;
+                     WHERE w.wave_domain = ?3 AND w.wave_id = ?4 AND {}",
+                    visible_sql("w.id", Some(2))
+                ))?;
                 let mut result = Vec::with_capacity(waves.len());
                 for wave in &waves {
                     let rows = statement
-                        .query_map(params![wave.domain(), wave.id(), user, shared], |row| {
+                        .query_map(params![user, shared, wave.domain(), wave.id()], |row| {
                             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                         })?;
                     let mut wavelets = Vec::new();

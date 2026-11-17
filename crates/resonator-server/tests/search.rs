@@ -25,7 +25,10 @@ use serde_json::Value;
 
 use common::{DOMAIN, add_participant, delta, no_op, participant, remove_participant};
 use net::TestServer;
-use waves::{append_blip, archive, create_wave, follow, mark_read, mute, root_name, wave_id};
+use waves::{
+    add_label, append_blip, archive, create_private_wavelet, create_wave, follow, mark_read, mute,
+    root_name, wave_id,
+};
 
 fn user(name: &str) -> ParticipantId {
     participant(&format!("{name}@{DOMAIN}"))
@@ -781,10 +784,16 @@ async fn full_text_finds_words_in_any_script_and_only_what_one_may_read() {
         ("quick creator:alice with:bob", &["w+fox"]),
         ("quick creator:bob", &[]),
         ("in:archive quick", &[]),
-        // Operators of the index's own query language are just text.
-        ("quick OR nothing", &[]),
+        // Operators of the index's own query language are just text; only
+        // a bare upper-case OR between groups is an operator of ours.
+        ("quick or nothing", &[]),
+        ("quick OR nothing", &["w+fox"]),
+        ("nothing OR quick creator:bob", &[]),
+        ("\"quick OR nothing\"", &[]),
         ("NOT", &[]),
-        ("title:quick", &[]),
+        ("quick -creator:alice", &[]),
+        ("quick -nothing", &["w+fox"]),
+        ("quick -fox", &[]),
         ("***", &[]),
     ];
     for (query, expected) in cases {
@@ -1325,5 +1334,245 @@ async fn registration_succeeds_when_the_welcome_wave_cannot_be_made() {
         TestServer::start_with(|config| config.welcome_wave_id = "not a wave id".to_owned()).await;
     let cookie = server.user("alice").await;
     assert!(found_for(&server, &cookie, "").await.is_empty());
+    server.shutdown().await;
+}
+
+// ---- Ensembles: labels, OR, negation, dates, titles and SQL mode ----
+
+/// A search with a cookie or a bearer token: the ids found, sorted, and
+/// the error header, if any.
+async fn search_with(
+    server: &TestServer,
+    cookie: Option<&str>,
+    bearer: Option<&str>,
+    query: &str,
+) -> (Vec<String>, Option<String>) {
+    let mut request = server
+        .http
+        .get(server.url("/search/"))
+        .query(&[("query", query), ("numResults", "100")]);
+    if let Some(cookie) = cookie {
+        request = request.header("Cookie", cookie);
+    }
+    if let Some(token) = bearer {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.expect("search request");
+    assert_eq!(response.status(), 200, "search '{query}'");
+    let error = response
+        .headers()
+        .get("x-resonator-search-error")
+        .map(|value| value.to_str().unwrap().to_owned());
+    let text = response.text().await.unwrap();
+    let mut ids = found(&from_json(&text).unwrap());
+    ids.sort();
+    (ids, error)
+}
+
+#[tokio::test]
+async fn labels_or_groups_negation_dates_and_titles() {
+    let server = TestServer::start().await;
+    let (alice_cookie, bob_cookie) = (server.user("alice").await, server.user("bob").await);
+    let (alice, bob) = (user("alice"), user("bob"));
+    let waves = server.app().server();
+    create_wave(waves, &alice, "w+one", &[&bob], "Relay load").await;
+    create_wave(waves, &alice, "w+two", &[&bob], "Office lease").await;
+    create_wave(waves, &alice, "w+three", &[], "Relay notes").await;
+    append_blip(waves, &alice, &wave_id("w+three"), "about the lease").await;
+    // The same label number means different things to different users.
+    add_label(waves, &alice, &wave_id("w+two"), 7).await;
+    add_label(waves, &bob, &wave_id("w+one"), 7).await;
+    // Text is indexed after a short delay.
+    server.app().state().search.flush().await;
+
+    let sorted = |mut ids: Vec<String>| {
+        ids.sort();
+        ids
+    };
+    let cases: &[(&str, &[&str])] = &[
+        ("label:7", &["w+two"]),
+        ("label:8", &[]),
+        ("in:inbox label:7", &["w+two"]),
+        ("label:7 OR relay", &["w+one", "w+three", "w+two"]),
+        ("relay OR relay", &["w+one", "w+three"]),
+        ("relay -label:7", &["w+one", "w+three"]),
+        ("-label:7", &["w+one", "w+three"]),
+        ("-with:bob", &["w+three"]),
+        ("-creator:alice", &[]),
+        ("lease -relay", &["w+two"]),
+        ("lease", &["w+three", "w+two"]),
+        ("title:lease", &["w+two"]),
+        ("title:relay", &["w+one", "w+three"]),
+        ("-title:relay", &["w+two"]),
+        ("after:2000-01-01", &["w+one", "w+three", "w+two"]),
+        ("before:2000-01-01", &[]),
+        ("after:2999-01-01 OR label:7", &["w+two"]),
+        ("-in:inbox", &[]),
+        ("label:x", &[]),
+        ("OR", &[]),
+    ];
+    for (query, expected) in cases {
+        let ids = sorted(found_for(&server, &alice_cookie, query).await);
+        assert_eq!(&ids, expected, "alice searching '{query}'");
+    }
+    assert_eq!(found_for(&server, &bob_cookie, "label:7").await, ["w+one"]);
+    assert_eq!(
+        sorted(found_for(&server, &bob_cookie, "-label:7").await),
+        ["w+two"]
+    );
+
+    // Digests carry the searcher's own labels only.
+    let response = search(&server, &alice_cookie, "with:bob").await;
+    for digest in &response.digests {
+        let expected: &[i32] = if digest.wave_id.as_deref() == Some("example.com/w+two") {
+            &[7]
+        } else {
+            &[]
+        };
+        assert_eq!(digest.labels, expected, "{:?}", digest.wave_id);
+    }
+    let response = search(&server, &bob_cookie, "label:7").await;
+    assert_eq!(response.digests[0].labels, [7]);
+    let notification: Value = server
+        .get("/notification/?query=label:7", Some(&alice_cookie))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(notification[0]["labels"], serde_json::json!([7]));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn sql_mode_sees_only_what_the_user_may_read() {
+    let server = TestServer::start().await;
+    let (alice_cookie, bob_cookie, carol_cookie) = (
+        server.user("alice").await,
+        server.user("bob").await,
+        server.user("carol").await,
+    );
+    let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+    let waves = server.app().server();
+    let shared = create_wave(waves, &alice, "w+shared", &[&bob], "Shared plan").await;
+    // A private reply in the same wave, which bob is not on.
+    create_private_wavelet(
+        waves,
+        &alice,
+        &shared,
+        "conv+priv",
+        &[&carol],
+        "secret zebra",
+    )
+    .await;
+    create_wave(waves, &alice, "w+diary", &[], "Alice diary zebra").await;
+    add_label(waves, &alice, &shared, 5).await;
+    add_label(waves, &bob, &shared, 9).await;
+    server.app().state().search.flush().await;
+
+    let sql = |cookie: &str, query: &str| {
+        let (cookie, query) = (cookie.to_owned(), query.to_owned());
+        let server = &server;
+        async move { search_with(server, Some(&cookie), None, &query).await }
+    };
+    let ok = |result: (Vec<String>, Option<String>)| {
+        assert_eq!(result.1, None);
+        result.0
+    };
+    // Bob sees the shared wave, and nothing of alice's private reply,
+    // alice's diary or alice's labels.
+    assert_eq!(
+        ok(sql(&bob_cookie, "SELECT wave_id FROM waves").await),
+        ["w+shared"]
+    );
+    let hidden = [
+        "SELECT wave_id FROM texts WHERE texts MATCH 'zebra'",
+        "SELECT wave_id FROM texts WHERE content LIKE '%secret%'",
+        "SELECT wave_id FROM participants WHERE address LIKE 'carol@%'",
+        "SELECT wave_id FROM labels WHERE label = 5",
+        "SELECT wave_id FROM waves WHERE wave_id LIKE '%diary%'",
+    ];
+    for query in hidden {
+        assert!(ok(sql(&bob_cookie, query).await).is_empty(), "bob: {query}");
+    }
+    assert_eq!(
+        ok(sql(&bob_cookie, "SELECT wave_id FROM labels WHERE label = 9").await),
+        ["w+shared"]
+    );
+    assert_eq!(
+        ok(sql(
+            &bob_cookie,
+            "select wave_id from waves where title = 'Shared plan'"
+        )
+        .await),
+        ["w+shared"]
+    );
+    // Carol is on the private reply only, and finds it.
+    assert_eq!(
+        ok(sql(
+            &carol_cookie,
+            "SELECT wave_id FROM texts WHERE texts MATCH 'zebra'"
+        )
+        .await),
+        ["w+shared"]
+    );
+    assert!(ok(sql(&carol_cookie, "SELECT wave_id FROM labels").await).is_empty());
+    // Alice sees all of hers.
+    assert_eq!(
+        ok(sql(
+            &alice_cookie,
+            "SELECT wave_id FROM texts WHERE texts MATCH 'zebra'"
+        )
+        .await),
+        ["w+diary", "w+shared"]
+    );
+    assert_eq!(
+        ok(sql(&alice_cookie, "SELECT wave_id FROM labels WHERE label = 5").await),
+        ["w+shared"]
+    );
+    assert_eq!(
+        ok(sql(
+            &alice_cookie,
+            "SELECT wave_id FROM waves WHERE box = 'inbox' AND wave_id NOT IN \
+             (SELECT wave_id FROM participants WHERE address = 'bob@example.com')"
+        )
+        .await),
+        ["w+diary"]
+    );
+
+    // Errors come back in a header; nothing else of the server is in reach.
+    for (query, message) in [
+        ("SELECT nope FROM waves", "no such column"),
+        ("SELECT * FROM accounts", "no such table"),
+        ("SELECT * FROM search_wavelets", "no such table"),
+        ("SELECT * FROM main.deltas", "no such table"),
+        ("SELECT * FROM pragma_table_info('waves')", "Only SELECT"),
+        ("SELECT wave_id FROM waves; SELECT 1", "one statement"),
+        ("SELECT 1", "first column"),
+    ] {
+        let (ids, error) = sql(&alice_cookie, query).await;
+        assert!(ids.is_empty(), "{query}");
+        let error = error.unwrap_or_else(|| panic!("no error for {query}"));
+        assert!(error.contains(message), "{query}: {error}");
+    }
+
+    // Tokens need the sql scope; without it the query is plain words.
+    let (read, _) = server
+        .create_token(&alice_cookie, "reader", &["read"])
+        .await;
+    let (sql_token, _) = server
+        .create_token(&alice_cookie, "sql", &["read", "sql"])
+        .await;
+    assert_eq!(
+        search_with(&server, None, Some(&read), "SELECT wave_id FROM waves").await,
+        (Vec::new(), None)
+    );
+    assert_eq!(
+        search_with(&server, None, Some(&sql_token), "SELECT wave_id FROM waves").await,
+        (vec!["w+diary".to_owned(), "w+shared".to_owned()], None)
+    );
+    // Robots and agents searching in process never get SQL mode.
+    let result = library_search(&server, &alice, "SELECT wave_id FROM waves", 0, 10).await;
+    assert_eq!(result.total_results, 0);
+    assert_eq!(result.error, None);
     server.shutdown().await;
 }

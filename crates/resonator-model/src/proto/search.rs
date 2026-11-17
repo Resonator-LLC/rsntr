@@ -63,6 +63,10 @@ pub mod search_response {
         /// Required. The first participant.
         #[prost(string, optional, tag = "8")]
         pub author: Option<String>,
+        /// The searcher's own labels on the wave (ensembles). Not in the
+        /// original.
+        #[prost(int32, repeated, tag = "9")]
+        pub labels: Vec<i32>,
     }
     wave_message!(Digest {
         required: [

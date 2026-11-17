@@ -192,7 +192,7 @@ impl AppSession {
 
     /// Whether the instance still runs.
     /// Hands a frame of the viewer's microphone (or, with `video`, camera)
-    /// to the app; it needs the `media` (or `camera`) permission.
+    /// to the app; it needs the `media` (or `camera` or `video`) permission.
     pub fn media(&self, frame: Vec<u8>, video: bool) -> Result<(), String> {
         self.manager
             .viewer_media(&self.key, &self.running, frame, video)

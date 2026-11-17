@@ -51,7 +51,7 @@ shows "Apps are off" and nothing runs.
 | `streams` | open reliable or datagram streams to them |
 | `media` | hear the microphone while the person turns it on, and play sound |
 | `camera` | see the camera while the person turns it on, and show video |
-| `video` | show video, without the camera (no camera button) |
+| `video` | show video, with no camera button |
 
 ## Instances and limits
 
@@ -123,7 +123,8 @@ reliable stream it opens to `viewer` (a channel byte, then a camera frame)
 is decoded and shown, one picture per channel, next to the person's own.
 With `video` and not `camera`, the app's video is shown the same way but
 there is no camera button and no picture of the person's own: for an app
-that only plays video (a door camera, say). `media` and `video` together
+that only plays video (a door camera, say). Frames from the viewer are
+still taken, so a node can feed the app from its own source. `media` and `video` together
 give a Mic button and video. A picture from the app fills the width of the
 box, at the frame's own aspect ratio.
 Video goes between peers on reliable streams: key frames are too large for

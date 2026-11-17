@@ -26,7 +26,7 @@ pub enum Permission {
     Media,
     /// The viewer's camera, and video shown to the viewer.
     Camera,
-    /// Video shown to the viewer, without their camera.
+    /// As `Camera`, but the web client offers no camera of the viewer's.
     Video,
 }
 

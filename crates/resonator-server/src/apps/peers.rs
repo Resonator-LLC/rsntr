@@ -18,9 +18,10 @@
 //!   byte, then an encoded frame: bit 0 a key frame, bits 1-3 the codec,
 //!   0 VP8 and 1 H.264); what the app writes on a reliable stream it opens
 //!   to it is shown to them (a channel byte, then a camera frame).
-//! - `video`: only the second half of `camera`: what the app writes on a
-//!   reliable stream it opens to the viewer is shown to them. Their camera
-//!   stays out of reach.
+//! - `video`: as `camera`, but the web client offers no camera button and
+//!   no picture of the person's own: for apps that show video from
+//!   elsewhere. Frames still come in from the viewer, so a node's own
+//!   source (a camera account fed by a host process) can use it.
 
 use async_trait::async_trait;
 use resonator_apps::StreamMode;
@@ -370,15 +371,21 @@ impl AppManager {
         if !self.is_current(key, running) {
             return Err("the app stopped".to_owned());
         }
-        let (permission, refusal) = if video {
+        // `video` takes frames too: a node's own source (a camera account)
+        // feeds them this way. The web client offers no camera to it.
+        let (granted, refusal) = if video {
             (
-                resonator_apps::Permission::Camera,
+                grants(running, resonator_apps::Permission::Camera)
+                    || grants(running, resonator_apps::Permission::Video),
                 "the app takes no camera",
             )
         } else {
-            (resonator_apps::Permission::Media, "the app takes no media")
+            (
+                grants(running, resonator_apps::Permission::Media),
+                "the app takes no media",
+            )
         };
-        if !grants(running, permission) {
+        if !granted {
             return Err(refusal.to_owned());
         }
         let opened = {

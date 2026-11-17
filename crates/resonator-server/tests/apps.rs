@@ -660,6 +660,43 @@ async fn camera_frames_reach_the_app_and_video_comes_back_to_the_screen() {
 }
 
 #[tokio::test]
+async fn a_video_app_fed_by_its_node_shows_the_frames() {
+    // A camera account: the node feeds the app's viewer frames, and with
+    // `video` alone they reach the app and come back as video.
+    let (server, wave, app, bundle) = setup_with(
+        300,
+        bundle_of("walkie-cam", WALKIE_CAM, r#"["peers","streams","video"]"#),
+    )
+    .await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let mut signals = alices.signals();
+    let echo = alices
+        .render(0)
+        .await
+        .unwrap()
+        .iter()
+        .position(|n| n.text.as_deref() == Some("Echo: off"))
+        .unwrap() as u32;
+    alices.event(0, press(echo)).await.unwrap();
+    alices.media(vec![1, 7, 8, 9], true).unwrap();
+    let video = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            if let Ok(AppSignal::Video(frame)) = signals.recv().await {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("no video came back");
+    assert_eq!(video, [0, 1, 7, 8, 9]);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn apps_without_the_camera_permission_take_no_video() {
     let (server, wave, app, bundle) = setup_with(
         300,
@@ -677,9 +714,10 @@ async fn apps_without_the_camera_permission_take_no_video() {
 }
 
 #[tokio::test]
-async fn apps_with_video_show_video_but_take_no_camera() {
+async fn apps_with_video_show_video_and_take_frames_but_no_sound() {
     // `video` without `camera`: what the app writes on a reliable stream
-    // to the viewer is shown, but the viewer's camera stays out of reach.
+    // to the viewer is shown, and frames from the viewer (a node's own
+    // source) reach it; without `media` sound does not.
     let (server, wave, app, bundle) = setup_with(
         300,
         bundle_of("peers", PEERS, r#"["peers","streams","video"]"#),
@@ -691,7 +729,7 @@ async fn apps_with_video_show_video_but_take_no_camera() {
     allow(&server, &alice, &wave, &app).await;
     let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
     let mut signals = alices.signals();
-    assert!(alices.media(vec![1, 2, 3], true).is_err());
+    assert!(alices.media(vec![1, 2, 3], true).is_ok());
     assert!(alices.media(vec![1, 2, 3], false).is_err());
     // The viewer is its one peer; "streams" writes "r:hi" to it.
     wait_for_view(&alices, "the viewer", |(peers, _)| peers == "1").await;

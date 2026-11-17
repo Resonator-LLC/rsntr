@@ -761,7 +761,6 @@ const PREF_LABELS = {
   motion: { system: "As the system", reduce: "Reduce" },
   spacing: { normal: "Normal", reading: "More, for reading" },
   targets: { normal: "Normal", large: "Large" },
-  announce: { all: "All", replies: "Replies to me", none: "None" },
 } as const;
 
 const PREF_NAMES: Record<keyof typeof PREF_LABELS, string> = {
@@ -771,7 +770,6 @@ const PREF_NAMES: Record<keyof typeof PREF_LABELS, string> = {
   motion: "Motion",
   spacing: "Text spacing",
   targets: "Buttons",
-  announce: "Read out new messages",
 };
 
 /** Text size, theme, contrast, motion, spacing, targets and links. */
@@ -805,7 +803,6 @@ function Accessibility({ prefs, onShortcuts }: { readonly prefs: PrefsStore; rea
       {select("motion")}
       {select("spacing")}
       {select("targets")}
-      {select("announce")}
       <div class="settings-row">
         <label class="settings-check">
           <input

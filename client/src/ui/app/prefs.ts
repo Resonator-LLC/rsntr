@@ -9,7 +9,6 @@
 // - data-spacing: normal | reading
 // - data-targets: normal | large
 // - data-underline-links: present when on
-// - data-announce: all | replies | none (new messages, for screen readers)
 //
 // "system" values follow the media queries and change with them. Native
 // apps may set --system-text-scale on <html> (the system text size).
@@ -24,7 +23,6 @@ export interface Prefs {
   readonly spacing: "normal" | "reading";
   readonly targets: "normal" | "large";
   readonly underlineLinks: boolean;
-  readonly announce: "all" | "replies" | "none";
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -35,7 +33,6 @@ export const DEFAULT_PREFS: Prefs = {
   spacing: "normal",
   targets: "normal",
   underlineLinks: false,
-  announce: "all",
 };
 
 /** The choices of every preference but the switch, in display order. */
@@ -46,7 +43,6 @@ export const CHOICES = {
   textSize: ["system", "100", "125", "150", "200"],
   spacing: ["normal", "reading"],
   targets: ["normal", "large"],
-  announce: ["all", "replies", "none"],
 } as const satisfies { [K in keyof Prefs]?: readonly Prefs[K][] };
 
 const KEY = "resonator.prefs";
@@ -73,7 +69,6 @@ export function parsePrefs(text: string | null): Prefs {
     spacing: pick("spacing"),
     targets: pick("targets"),
     underlineLinks: r.underlineLinks === true,
-    announce: pick("announce"),
   };
 }
 
@@ -94,7 +89,6 @@ export function attributes(prefs: Prefs, system: SystemPrefs): Record<string, st
     "data-spacing": prefs.spacing,
     "data-targets": prefs.targets,
     "data-underline-links": prefs.underlineLinks ? "" : null,
-    "data-announce": prefs.announce,
   };
 }
 

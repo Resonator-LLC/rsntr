@@ -518,12 +518,7 @@ describe("SettingsPage", () => {
     await click(section.querySelector("input[data-pref=underlineLinks]"));
     expect(html.hasAttribute("data-underline-links")).toBe(true);
     expect(prefs.prefs.value).toMatchObject({ textSize: "150", contrast: "more", underlineLinks: true });
-    const announce = section.querySelector<HTMLSelectElement>("select[data-pref=announce]")!;
-    await act(async () => {
-      announce.value = "replies";
-      announce.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect(html.getAttribute("data-announce")).toBe("replies");
+    expect(section.querySelector("[data-pref=announce]")).toBeNull();
     await click(section.querySelector("[data-action=shortcuts]"));
     expect(shortcuts).toBe(1);
     stop();

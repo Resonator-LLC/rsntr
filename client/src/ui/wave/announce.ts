@@ -1,12 +1,9 @@
 // Screen-reader announcements of messages others add to the open wave
 // ("Ben replied to you"), batched over a short time so a burst is one
 // announcement ("3 new messages from Ben and Anna"). Own messages, from
-// this or another device, are never announced. What is announced follows
-// the Accessibility setting (data-announce on <html>, see prefs.ts).
+// this or another device, are never announced.
 
 import { type Signal, signal } from "@preact/signals";
-
-export type AnnounceMode = "all" | "replies" | "none";
 
 /** A new message: its author, and the author of the message it answers. */
 export interface Arrival {
@@ -18,15 +15,9 @@ export interface Arrival {
 export function announcementText(
   arrivals: readonly Arrival[],
   viewer: string | null,
-  mode: AnnounceMode,
   name: (address: string) => string,
 ): string | null {
-  if (mode === "none") {
-    return null;
-  }
-  const kept = arrivals.filter(
-    (a) => a.author !== viewer && (mode === "all" || (viewer !== null && a.parentAuthor === viewer)),
-  );
+  const kept = arrivals.filter((a) => a.author !== viewer);
   if (kept.length === 0) {
     return null;
   }
@@ -52,14 +43,7 @@ export interface AnnouncerOptions {
   readonly describe: (blipId: string) => Arrival | null;
   readonly viewer: string | null;
   readonly name: (address: string) => string;
-  readonly mode?: () => AnnounceMode;
   readonly delayMs?: number;
-}
-
-/** The mode chosen in Settings; "all" without one. */
-export function documentAnnounceMode(): AnnounceMode {
-  const value = typeof document === "undefined" ? null : document.documentElement.getAttribute("data-announce");
-  return value === "replies" || value === "none" ? value : "all";
 }
 
 export class Announcer {
@@ -83,7 +67,7 @@ export class Announcer {
     const ids = this.pending;
     this.pending = [];
     const arrivals = ids.map(this.options.describe).filter((a): a is Arrival => a !== null);
-    const text = announcementText(arrivals, this.options.viewer, (this.options.mode ?? documentAnnounceMode)(), this.options.name);
+    const text = announcementText(arrivals, this.options.viewer, this.options.name);
     if (text !== null) {
       this.flip = !this.flip;
       this.text.value = this.flip ? text : `${text} `;

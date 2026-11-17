@@ -51,6 +51,7 @@ shows "Apps are off" and nothing runs.
 | `streams` | open reliable or datagram streams to them |
 | `media` | hear the microphone while the person turns it on, and play sound |
 | `camera` | see the camera while the person turns it on, and show video |
+| `video` | show video, without the camera (no camera button) |
 
 ## Instances and limits
 
@@ -95,7 +96,7 @@ The Log button in the app box shows the messages read-only.
 - `<participant>/<device>` for one on another node, reached over the iroh
   ALPN `resonator/app/1`;
 - `viewer` (`local`), the browser in front of this node, for apps with
-  `media` or `camera`.
+  `media`, `camera` or `video`.
 
 On `resonator/app/1` every stream starts with a length-prefixed JSON
 header (`hello`, `bye`, `send`, `open`). The connection's key must speak
@@ -120,13 +121,18 @@ reliable stream from `viewer`, each a flags byte (bit 0 a key frame, bits
 1-3 the codec: 0 VP8, 1 H.264) and the frame. What the app writes on a
 reliable stream it opens to `viewer` (a channel byte, then a camera frame)
 is decoded and shown, one picture per channel, next to the person's own.
+With `video` and not `camera`, the app's video is shown the same way but
+there is no camera button and no picture of the person's own: for an app
+that only plays video (a door camera, say). `media` and `video` together
+give a Mic button and video. A picture from the app fills the width of the
+box, at the frame's own aspect ratio.
 Video goes between peers on reliable streams: key frames are too large for
 datagrams.
 
 ### Over WebRTC
 
 The above is the fallback. Where the node has `[webrtc]` on and the
-browser has `RTCPeerConnection`, a box with `media` or `camera` also opens
+browser has `RTCPeerConnection`, a box with `media`, `camera` or `video` also opens
 a WebRTC connection to its own node (signalled with `AppRtcRequest` on
 the socket; the node is ICE-lite, on one UDP port for every session). The
 microphone and camera then go out as tracks (the browser encodes them and

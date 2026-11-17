@@ -463,10 +463,13 @@ html.lightbox-shown body {
 .app-media-note { flex: 1 1 12rem; min-width: 0; color: var(--c-text-3); overflow-wrap: anywhere; }
 .app-media-note.app-media-error { color: var(--c-danger); }
 
-/* Video of an app with camera: the person's own picture and one per channel. */
+/* Video of an app with camera or video: the person's own picture (small)
+   and one per channel. A channel fills the width at its frame's aspect
+   ratio; several share a row when there is room. */
 .app-video {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--c-border);
@@ -475,13 +478,23 @@ html.lightbox-shown body {
 .app-video-tiles { display: contents; }
 .app-video-self,
 .app-video-tile {
-  width: 160px;
-  height: 120px;
-  object-fit: cover;
   border-radius: var(--radius-1);
   background: #000;
 }
-.app-video-self { transform: scaleX(-1); }
+.app-video-self {
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+.app-video-tile {
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  max-height: 75vh;
+  object-fit: contain;
+}
 .app-video-self[hidden],
 .app-video-tile[hidden] { display: none; }
 .app-video[hidden] { display: none; }

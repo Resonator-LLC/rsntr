@@ -26,6 +26,8 @@ pub enum Permission {
     Media,
     /// The viewer's camera, and video shown to the viewer.
     Camera,
+    /// Video shown to the viewer, without their camera.
+    Video,
 }
 
 impl Permission {
@@ -38,6 +40,7 @@ impl Permission {
             Permission::Streams => "streams",
             Permission::Media => "media",
             Permission::Camera => "camera",
+            Permission::Video => "video",
         }
     }
 }

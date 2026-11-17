@@ -58,6 +58,21 @@ const CAM_BUNDLE = zip([
   ["app.wasm", WALKIE_CAM],
 ]);
 
+// The same app with `video` and nothing to capture: it only shows video.
+const VIDEO_BUNDLE = zip([
+  [
+    "manifest.json",
+    Buffer.from(
+      JSON.stringify({
+        name: "walkie-video",
+        version: "1",
+        permissions: ["peers", "streams", "video"],
+      }),
+    ),
+  ],
+  ["app.wasm", WALKIE_CAM],
+]);
+
 let servers: TestServers;
 
 test.beforeAll(async () => {
@@ -189,7 +204,12 @@ for (const path of ["rtc", "socket"] as const) {
         timeout: 15_000,
       })
       .toBeGreaterThan(5);
-    await expect(box.locator('.app-video-tile[data-channel="0"]')).toBeVisible();
+    const tile = box.locator('.app-video-tile[data-channel="0"]');
+    await expect(tile).toBeVisible();
+    // The app's picture fills the box, at the frame's aspect ratio.
+    const size = await tile.boundingBox();
+    expect(size!.width).toBeGreaterThan(400);
+    expect(Math.abs(size!.width / size!.height - 4 / 3)).toBeLessThan(0.05);
     if (path === "rtc") {
       await shoot(page, "apps-03-camera");
     }
@@ -200,6 +220,19 @@ for (const path of ["rtc", "socket"] as const) {
     await close();
   });
 }
+
+test("an app with video and no camera has no buttons for the camera or microphone", async ({ browser }) => {
+  const { page, problems, close } = await openPage(browser, servers.deviceUrl!, "rtc");
+  test.skip(!(await supports(page, "rtc", "video")), "this browser cannot do WebRTC");
+  const box = await insertApp(page, "Door", "walkie-video.zip", VIDEO_BUNDLE);
+  // Connected for the app's video, but nothing of ours to turn on.
+  await expect(box).toHaveAttribute("data-media-path", "rtc", { timeout: 15_000 });
+  await expect(box.locator(".app-media")).toHaveCount(0);
+  await expect(box.locator(".app-camera-button, .app-mic-button, .app-video-self")).toHaveCount(0);
+  await expect(box.locator(".app-video .app-video-tiles")).toHaveCount(1);
+  expect(problems).toEqual([]);
+  await close();
+});
 
 test("where the WebRTC port cannot be reached, sound goes over the socket", async ({ browser }) => {
   const unreachable = await TestServers.start({

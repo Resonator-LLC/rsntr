@@ -41,11 +41,13 @@ export interface RtcCounts {
 export interface RtcOptions {
   /** Sends the offer to the node; resolves with its answer. */
   readonly signal: (offer: string) => Promise<AppRtcResponse>;
-  /** Whether the app has the camera: a camera track and video slots. */
+  /** Whether the app has the camera: a camera track. */
   readonly camera: boolean;
+  /** Whether the app shows video (`camera` or `video`): video slots. */
+  readonly video: boolean;
   /** Where the <audio> elements go (hidden). */
   readonly audioHost: HTMLElement;
-  /** Where the video tiles go; null without the camera. */
+  /** Where the video tiles go; null without video. */
   readonly videoHost: HTMLElement | null;
   readonly onCounts: (counts: RtcCounts) => void;
   /** Sound would not start without a click. */
@@ -79,7 +81,7 @@ export class AppRtc {
     const camera = options.camera ? pc.addTransceiver("video", { direction: "sendonly" }).sender : null;
     for (let i = 0; i < RTC_SLOTS; i++) {
       pc.addTransceiver("audio", { direction: "recvonly" });
-      if (options.camera) {
+      if (options.video) {
         pc.addTransceiver("video", { direction: "recvonly" });
       }
     }

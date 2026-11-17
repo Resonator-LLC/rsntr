@@ -7,8 +7,8 @@
 //! A peer's id is `<participant>` for an instance on this node and
 //! `<participant>/<device key>` for one on another device.
 //!
-//! An app with the `media` or `camera` permission also has the peer
-//! `viewer` (marked `local`): the person in front of this node.
+//! An app with the `media`, `camera` or `video` permission also has the
+//! peer `viewer` (marked `local`): the person in front of this node.
 //!
 //! - `media`: their microphone comes as a datagram stream from it (one
 //!   Opus frame per datagram); what the app sends it, or writes on a
@@ -18,6 +18,9 @@
 //!   byte, then an encoded frame: bit 0 a key frame, bits 1-3 the codec,
 //!   0 VP8 and 1 H.264); what the app writes on a reliable stream it opens
 //!   to it is shown to them (a channel byte, then a camera frame).
+//! - `video`: only the second half of `camera`: what the app writes on a
+//!   reliable stream it opens to the viewer is shown to them. Their camera
+//!   stays out of reach.
 
 use async_trait::async_trait;
 use resonator_apps::StreamMode;
@@ -333,14 +336,15 @@ impl AppManager {
         }
     }
 
-    /// Gives an app with the `media` or `camera` permission its `viewer`
-    /// peer.
+    /// Gives an app with the `media`, `camera` or `video` permission its
+    /// `viewer` peer.
     pub(super) fn announce_viewer(&self, key: &AppKey) {
         let Some(running) = lock(&self.0.instances).get(key).cloned() else {
             return;
         };
         if !grants(&running, resonator_apps::Permission::Media)
             && !grants(&running, resonator_apps::Permission::Camera)
+            && !grants(&running, resonator_apps::Permission::Video)
         {
             return;
         }
@@ -633,9 +637,11 @@ impl AppManager {
         let has_viewer = lock(&running.peers).viewer.is_some();
         match effect {
             Effect::Open { to, stream, mode } if to == VIEWER && has_viewer => {
-                // Reliable streams carry video, for an app with `camera`.
+                // Reliable streams carry video, for an app with `camera` or
+                // `video`.
                 let video = matches!(mode, StreamMode::Reliable)
-                    && grants(&running, resonator_apps::Permission::Camera);
+                    && (grants(&running, resonator_apps::Permission::Camera)
+                        || grants(&running, resonator_apps::Permission::Video));
                 let tx: Arc<dyn StreamTx> = Arc::new(ViewerTx {
                     signals: running.signals.clone(),
                     video,

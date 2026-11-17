@@ -98,6 +98,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   streams: "open streams to other devices",
   media: "hear your microphone while you turn it on, and play sound",
   camera: "see your camera while you turn it on, and show video",
+  video: "show video",
 };
 
 export function shortHash(appId: string): string {
@@ -326,6 +327,8 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
 
   const hasMedia = state.permissions.includes("media");
   const hasCamera = state.permissions.includes("camera");
+  // Shows the app's video; only `camera` also has the person's own.
+  const hasVideo = hasCamera || state.permissions.includes("video");
 
   // A WebRTC connection for a running app with media, where it can be had.
   useEffect(() => {
@@ -333,7 +336,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
     const audioHost = boxRef.current;
     if (
       state.status !== "running" ||
-      !(hasMedia || hasCamera) ||
+      !(hasMedia || hasVideo) ||
       signal === undefined ||
       audioHost === null ||
       rtcRef.current !== null ||
@@ -346,6 +349,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
     AppRtc.connect({
       signal: (offer) => signal({ waveId: apps.waveId, gadgetId: gadget.id, offer }),
       camera: hasCamera,
+      video: hasVideo,
       audioHost,
       videoHost: tilesRef.current,
       onCounts: showCounts,
@@ -384,7 +388,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
     return () => {
       cancelled = true;
     };
-  }, [state.status, hasMedia, hasCamera, attempt]);
+  }, [state.status, hasMedia, hasCamera, hasVideo, attempt]);
 
   const allow = (): void => {
     allowedAt.current = Date.now();
@@ -523,7 +527,7 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
       ref={boxRef}
       class={`app-box app-${state.status}`}
       data-gadget={gadget.id}
-      data-media-path={hasMedia || hasCamera ? rtcState : undefined}
+      data-media-path={hasMedia || hasVideo ? rtcState : undefined}
     >
       <div class="app-header">
         <span class="app-name">{name}</span>
@@ -604,9 +608,11 @@ export function AppView({ gadget, apps }: { readonly gadget: AppGadget; readonly
           </span>
         </div>
       ) : null}
-      {hasCamera ? (
+      {hasVideo ? (
         <div class="app-video" hidden={state.status !== "running"}>
-          <video ref={previewRef} class="app-video-self" muted playsInline aria-label="You" hidden={camera !== "on"} />
+          {hasCamera ? (
+            <video ref={previewRef} class="app-video-self" muted playsInline aria-label="You" hidden={camera !== "on"} />
+          ) : null}
           <div ref={tilesRef} class="app-video-tiles" />
         </div>
       ) : null}

@@ -368,6 +368,7 @@ pub(super) async fn rtc(
     let permissions = &session.manifest().permissions;
     if !permissions.contains(&resonator_apps::Permission::Media)
         && !permissions.contains(&resonator_apps::Permission::Camera)
+        && !permissions.contains(&resonator_apps::Permission::Video)
     {
         return answer(None, Some("the app has no media".to_owned()));
     }

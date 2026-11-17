@@ -32,7 +32,7 @@ so they are about 12 MB.
 A zip with two files:
 
 - `manifest.json`: `name`, `version`, `permissions` (any of `wave`, `kv`,
-  `peers`, `streams`, `media`, `camera`) and optionally `memory_mb` (64 by default,
+  `peers`, `streams`, `media`, `camera`, `video`) and optionally `memory_mb` (64 by default,
   up to 256).
 - `app.wasm`: a WebAssembly component of the world `wave-app` in
   [`crates/resonator-apps/wit/app.wit`](../../crates/resonator-apps/wit/app.wit).

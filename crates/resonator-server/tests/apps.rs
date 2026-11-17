@@ -676,6 +676,39 @@ async fn apps_without_the_camera_permission_take_no_video() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn apps_with_video_show_video_but_take_no_camera() {
+    // `video` without `camera`: what the app writes on a reliable stream
+    // to the viewer is shown, but the viewer's camera stays out of reach.
+    let (server, wave, app, bundle) = setup_with(
+        300,
+        bundle_of("peers", PEERS, r#"["peers","streams","video"]"#),
+    )
+    .await;
+    insert_gadget(&server, &wave, &app, &bundle).await;
+    let apps = apps(&server);
+    let alice = user("alice");
+    allow(&server, &alice, &wave, &app).await;
+    let alices = apps.open(&alice, &wave, GADGET).await.unwrap();
+    let mut signals = alices.signals();
+    assert!(alices.media(vec![1, 2, 3], true).is_err());
+    assert!(alices.media(vec![1, 2, 3], false).is_err());
+    // The viewer is its one peer; "streams" writes "r:hi" to it.
+    wait_for_view(&alices, "the viewer", |(peers, _)| peers == "1").await;
+    alices.event(0, press(4)).await.unwrap();
+    let frame = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            if let Ok(AppSignal::Video(frame)) = signals.recv().await {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("no video for the screen");
+    assert_eq!(frame, b"r:hi");
+    server.shutdown().await;
+}
+
 /// A browser's side of a WebRTC connection to an app, for the tests: it
 /// sends a microphone and a camera and receives on 8 + 8 slots, as the
 /// web client does.
